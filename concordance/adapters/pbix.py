@@ -19,8 +19,33 @@ import pandas as pd
 from pbixray import PBIXRay
 
 from concordance.fingerprint import fingerprint_dax, fingerprint_parts, fingerprint_text
-from concordance.model import Column, Measure, Relationship, SemanticModel, Table
+from concordance.model import (
+    Column,
+    CoverageGap,
+    Hierarchy,
+    HierarchyLevel,
+    Measure,
+    Relationship,
+    SemanticModel,
+    Table,
+)
 from concordance.normalize.dax import extract_references
+
+#: Model features PBIXRay surfaces that this adapter does not yet turn into
+#: graph objects. All three sample models report zero rows *and no columns* for
+#: every one of these, so their schemas cannot be learned from the data on hand
+#: -- writing extraction code against a guessed column layout would be exactly
+#: the kind of confident-but-wrong work this project is meant to catch. Instead
+#: their presence is counted and reported, so an unseen model that does use them
+#: produces a visible gap rather than a silently incomplete graph.
+_UNEXTRACTED_FEATURES: tuple[tuple[str, str], ...] = (
+    ("tmschema_kpis", "KPI objects"),
+    ("rls", "row-level security roles"),
+    ("ols", "object-level security"),
+    ("tmschema_calculation_groups", "calculation groups"),
+    ("tmschema_calculation_items", "calculation items"),
+    ("tmschema_perspectives", "perspectives"),
+)
 
 #: Power BI creates a hidden date table per date column, plus a template table.
 #: They carry no business meaning and would otherwise swamp the documentation.
@@ -85,9 +110,81 @@ class PbixAdapter:
         ]
 
         model.relationships = self._build_relationships(raw)
+        model.hierarchies = self._build_hierarchies(raw)
+        model.coverage_gaps = self._coverage_gaps(raw)
         return model
 
     # -- pieces -------------------------------------------------------------
+
+    def _build_hierarchies(self, raw: PBIXRay) -> list[Hierarchy]:
+        """Assemble hierarchies from their separately-stored levels.
+
+        PBIXRay keeps hierarchies and their levels in two tables joined on
+        HierarchyID, with levels ordered by Ordinal. Order is load-bearing: a
+        drill path of Year -> Quarter -> Month is a different hierarchy from
+        Month -> Quarter -> Year, so it is part of the fingerprint.
+        """
+        levels_by_hierarchy: dict[str, list[HierarchyLevel]] = {}
+        for row in _rows(_safe(raw, "tmschema_levels")):
+            key = str(row.get("HierarchyID", "")).strip()
+            if not key:
+                continue
+            levels_by_hierarchy.setdefault(key, []).append(
+                HierarchyLevel(
+                    ordinal=int(row.get("Ordinal", 0) or 0),
+                    name=str(row.get("Name", "")).strip(),
+                    column=str(row.get("ColumnName", "")).strip(),
+                )
+            )
+
+        out: list[Hierarchy] = []
+        for row in _rows(_safe(raw, "tmschema_hierarchies")):
+            table = str(row.get("TableName", "")).strip()
+            name = str(row.get("Name", "")).strip()
+            if not table or not name:
+                continue
+
+            key = str(row.get("ID", "")).strip()
+            levels = tuple(
+                sorted(levels_by_hierarchy.get(key, []), key=lambda level: level.ordinal)
+            )
+            out.append(
+                Hierarchy(
+                    table=table,
+                    name=name,
+                    levels=levels,
+                    fingerprint=fingerprint_parts(
+                        table,
+                        name,
+                        *(f"{lv.ordinal}:{lv.name}:{lv.column}" for lv in levels),
+                    ),
+                    is_hidden=bool(int(row.get("IsHidden", 0) or 0)),
+                    display_folder=_optional(row.get("DisplayFolder")),
+                    description=_optional(row.get("Description")),
+                )
+            )
+        return out
+
+    def _coverage_gaps(self, raw: PBIXRay) -> list[CoverageGap]:
+        """Report model features present in the source but not yet extracted."""
+        gaps: list[CoverageGap] = []
+        for attribute, label in _UNEXTRACTED_FEATURES:
+            frame = _safe(raw, attribute)
+            if frame is None:
+                continue
+            try:
+                count = len(frame)
+            except TypeError:
+                continue
+            if count:
+                gaps.append(
+                    CoverageGap(
+                        feature=label,
+                        count=count,
+                        reason="present in the model but not yet extracted by this adapter",
+                    )
+                )
+        return gaps
 
     def _power_query_by_table(self, raw: PBIXRay) -> dict[str, str]:
         out: dict[str, str] = {}
@@ -228,11 +325,26 @@ class PbixAdapter:
         return out
 
 
+def _safe(raw: PBIXRay, attribute: str):
+    """Read an optional PBIXRay table, tolerating absence.
+
+    Not every .pbix carries every TMSCHEMA table, and the library version in use
+    may not expose every attribute. A missing optional feature must degrade to
+    "nothing to extract" rather than failing the whole extraction.
+    """
+    try:
+        return getattr(raw, attribute, None)
+    except Exception:
+        return None
+
+
 def _rows(frame) -> list[dict]:
     """Normalise a PBIXRay dataframe into plain dicts."""
     if frame is None:
         return []
     if isinstance(frame, pd.DataFrame):
+        # An empty frame may also carry no columns at all, in which case
+        # to_dict would produce nothing useful anyway.
         return [] if frame.empty else frame.to_dict("records")
     return list(frame)
 

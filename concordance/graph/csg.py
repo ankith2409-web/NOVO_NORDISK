@@ -38,6 +38,10 @@ def measure_id(table: str, name: str) -> str:
     return f"measure:{table}[{name}]"
 
 
+def hierarchy_id(table: str, name: str) -> str:
+    return f"hierarchy:{table}[{name}]"
+
+
 @dataclass
 class UnresolvedReference:
     """A dependency naming an object that is not in the model.
@@ -105,6 +109,7 @@ class SemanticGraph:
             )
             self.graph.add_edge(table_id(measure.table), node, kind=EdgeKind.DEFINES)
 
+        self._add_hierarchies()
         self._link_measure_dependencies()
         self._link_calculated_columns()
 
@@ -164,6 +169,51 @@ class SemanticGraph:
                     continue
                 if target != source:  # a measure referencing itself adds nothing
                     self.graph.add_edge(source, target, kind=EdgeKind.REFERENCES)
+
+    def _add_hierarchies(self) -> None:
+        """Add hierarchies and bind each level to the column that supplies it."""
+        columns = {
+            (c.table.casefold(), c.name.casefold()): column_id(c.table, c.name)
+            for c in self.model.columns
+        }
+
+        for hierarchy in self.model.hierarchies:
+            node = hierarchy_id(hierarchy.table, hierarchy.name)
+            self.graph.add_node(
+                node,
+                kind=ObjectKind.HIERARCHY.value,
+                name=hierarchy.name,
+                table=hierarchy.table,
+                fingerprint=hierarchy.fingerprint,
+                path=hierarchy.path,
+                levels=[
+                    {"ordinal": lv.ordinal, "name": lv.name, "column": lv.column}
+                    for lv in hierarchy.levels
+                ],
+                is_hidden=hierarchy.is_hidden,
+                display_folder=hierarchy.display_folder,
+                description=hierarchy.description,
+            )
+            self.graph.add_edge(
+                table_id(hierarchy.table), node, kind=EdgeKind.CONTAINS
+            )
+
+            # Each level depends on a real column, so changing that column shows
+            # up in the hierarchy's impact set like any other dependency.
+            for level in hierarchy.levels:
+                target = columns.get(
+                    (hierarchy.table.casefold(), level.column.casefold())
+                )
+                if target is None:
+                    self.unresolved.append(
+                        UnresolvedReference(
+                            node,
+                            f"{hierarchy.table}[{level.column}]",
+                            "hierarchy level column not found in table",
+                        )
+                    )
+                    continue
+                self.graph.add_edge(node, target, kind=EdgeKind.REFERENCES)
 
     @staticmethod
     def _why_unresolved(
@@ -272,6 +322,7 @@ class SemanticGraph:
             **{f"node:{k}": v for k, v in sorted(kinds.items())},
             **{f"edge:{k}": v for k, v in sorted(edges.items())},
             "unresolved_references": len(self.unresolved),
+            "coverage_gaps": len(self.model.coverage_gaps),
         }
 
     def to_dict(self) -> dict:
@@ -295,6 +346,13 @@ class SemanticGraph:
             "unresolved": [
                 {"source": u.source, "target": u.target, "reason": u.reason}
                 for u in self.unresolved
+            ],
+            # Carried into the serialised graph so that anything consuming it
+            # downstream -- document generation, drift comparison -- can see what
+            # this extraction did not cover, instead of assuming completeness.
+            "coverage_gaps": [
+                {"feature": g.feature, "count": g.count, "reason": g.reason}
+                for g in self.model.coverage_gaps
             ],
             "stats": self.stats(),
         }

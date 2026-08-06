@@ -66,6 +66,18 @@ def cmd_inspect(args: argparse.Namespace) -> int:
             f"   {join['cardinality']} {join['cross_filter']}{state}"
         )
 
+    if model.hierarchies:
+        print(f"\nHierarchies ({len(model.hierarchies)}, "
+              f"{len(model.user_hierarchies())} on user tables)")
+        print("-" * 64)
+        for hierarchy in model.hierarchies:
+            system = any(
+                t.is_system and t.name == hierarchy.table for t in model.tables
+            )
+            marker = "  (system)" if system else ""
+            print(f"  {short(hierarchy.fingerprint)}  "
+                  f"{hierarchy.qualified_name:<38} {hierarchy.path}{marker}")
+
     print(f"\nMeasures ({len(model.measures)})")
     print("-" * 64)
     for measure in sorted(model.measures, key=lambda m: (m.table, m.name))[: args.limit]:
@@ -79,6 +91,18 @@ def cmd_inspect(args: argparse.Namespace) -> int:
         print("-" * 64)
         for ref in graph.unresolved[:10]:
             print(f"  {ref.source}  ->  {ref.target}   ({ref.reason})")
+
+    # Printed last and unconditionally labelled, because an unnoticed coverage
+    # gap is worse than a noisy one: it makes an incomplete graph look finished.
+    if model.coverage_gaps:
+        print(f"\nNOT EXTRACTED ({len(model.coverage_gaps)} feature types present "
+              f"in this model)")
+        print("-" * 64)
+        for gap in model.coverage_gaps:
+            print(f"  {gap.count:>4}  {gap.feature}")
+        print("  These exist in the source model and are absent from the graph.")
+    else:
+        print("\nCoverage: no unextracted model features detected.")
 
     print()
     return 0

@@ -18,6 +18,7 @@ class ObjectKind(Enum):
     MEASURE = "measure"
     CALCULATED_COLUMN = "calculated_column"
     RELATIONSHIP = "relationship"
+    HIERARCHY = "hierarchy"
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,56 @@ class Table:
     power_query: str | None = None
 
 
+@dataclass(frozen=True)
+class HierarchyLevel:
+    """One rung of a drill-down path, bound to the column that supplies it."""
+
+    ordinal: int
+    name: str
+    column: str
+
+
+@dataclass(frozen=True)
+class Hierarchy:
+    """A named drill-down path over columns of one table.
+
+    Part of the semantic layer a BRD has to describe -- "users drill Category ->
+    Subcategory -> Product" is a business requirement, not an implementation
+    detail -- so it belongs in the graph alongside measures and joins.
+    """
+
+    table: str
+    name: str
+    levels: tuple[HierarchyLevel, ...]
+    fingerprint: str
+    is_hidden: bool = False
+    display_folder: str | None = None
+    description: str | None = None
+
+    @property
+    def qualified_name(self) -> str:
+        return f"{self.table}[{self.name}]"
+
+    @property
+    def path(self) -> str:
+        return " -> ".join(level.name for level in self.levels)
+
+
+@dataclass(frozen=True)
+class CoverageGap:
+    """A model feature the source reports but this adapter does not yet extract.
+
+    Recorded so that incomplete extraction is *visible* rather than silent. A
+    graph that quietly omits a model's KPIs looks identical to one from a model
+    that has none, and documentation generated from it would be confidently
+    wrong -- exactly the failure mode this project exists to prevent.
+    """
+
+    feature: str
+    count: int
+    reason: str
+
+
 @dataclass
 class SemanticModel:
     """One extracted model, ready to be turned into a graph."""
@@ -100,9 +151,15 @@ class SemanticModel:
     columns: list[Column] = field(default_factory=list)
     measures: list[Measure] = field(default_factory=list)
     relationships: list[Relationship] = field(default_factory=list)
+    hierarchies: list[Hierarchy] = field(default_factory=list)
+    coverage_gaps: list[CoverageGap] = field(default_factory=list)
 
     def user_tables(self) -> list[Table]:
         return [t for t in self.tables if not t.is_system]
+
+    def user_hierarchies(self) -> list[Hierarchy]:
+        system = {t.name for t in self.tables if t.is_system}
+        return [h for h in self.hierarchies if h.table not in system]
 
     def summary(self) -> dict[str, int]:
         return {
@@ -112,4 +169,6 @@ class SemanticModel:
             "calculated_columns": sum(1 for c in self.columns if c.is_calculated),
             "measures": len(self.measures),
             "relationships": len(self.relationships),
+            "hierarchies": len(self.hierarchies),
+            "user_hierarchies": len(self.user_hierarchies()),
         }
