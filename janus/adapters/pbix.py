@@ -93,8 +93,8 @@ class PbixAdapter:
         out: dict[str, str] = {}
         for row in _rows(raw.power_query):
             name = str(row.get("TableName", "")).strip()
-            if name:
-                out[name] = str(row.get("Expression", ""))
+            if name and _present(row.get("Expression")):
+                out[name] = str(row.get("Expression"))
         return out
 
     def _calculated_column_expressions(self, raw: PBIXRay) -> dict[tuple[str, str], str]:
@@ -157,7 +157,14 @@ class PbixAdapter:
     def _build_measure(self, row: dict, known_measures: set[str]) -> Measure:
         table = str(row.get("TableName", "")).strip()
         name = str(row.get("Name", "")).strip()
-        expression = str(row.get("Expression", "") or "")
+        # `row.get("Expression") or ""` looks safe but is not: a pandas NaN is
+        # truthy in Python, so a genuinely missing expression would silently
+        # become the literal three-character string "nan" instead of an empty
+        # one, and get fingerprinted as if it were real DAX. None of the three
+        # sample models trigger this, but a broken or placeholder measure in an
+        # unseen dataset could -- so a missing expression is treated as broken
+        # rather than guessed at.
+        expression = str(row.get("Expression")) if _present(row.get("Expression")) else ""
 
         refs = extract_references(expression)
 
