@@ -1,4 +1,4 @@
-# JANUS
+# Concordance
 
 **Novo Nordisk GBS Hackathon 2026 — Problem Statement 5**
 An AI agent with a chatbot interface that automates BRD/FRD creation, extracts Power BI
@@ -11,7 +11,7 @@ Team lead: HB Mrudhal Ankith · Faculty: Dr. R Ruhin Kouser, Dr. Shambhavi
 ## The idea
 
 Requirements documents and the models they describe drift apart the moment someone edits a
-measure, and nothing notices. JANUS binds each requirement to the implementation object that
+measure, and nothing notices. Concordance binds each requirement to the implementation object that
 satisfies it using a **fingerprint of the normalised DAX**, so documentation becomes something a
 machine can check rather than prose that quietly goes stale.
 
@@ -43,7 +43,7 @@ therefore cannot be resolved from a `.pbix` at all.
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 
-.venv/bin/python -m janus.cli inspect data/models/Sales_Returns_Sample.pbix
+.venv/bin/python -m concordance.cli inspect data/models/Sales_Returns_Sample.pbix
 .venv/bin/python -m pytest tests/ -q
 ```
 
@@ -66,16 +66,16 @@ model at all and always run.
 ## Commands
 
 ```bash
-janus inspect  <model.pbix>            # tables, joins, measures, unresolved references
-janus extract  <model.pbix> [-o path]  # write the semantic graph as JSON
-janus explain  <model.pbix> <measure>  # expression, canonical form, dependencies, impact
-janus verify   <model.pbix> <measure>  # prove the fingerprint on real model content
+concordance inspect  <model.pbix>            # tables, joins, measures, unresolved references
+concordance extract  <model.pbix> [-o path]  # write the semantic graph as JSON
+concordance explain  <model.pbix> <measure>  # expression, canonical form, dependencies, impact
+concordance verify   <model.pbix> <measure>  # prove the fingerprint on real model content
 ```
 
 `explain` resolves dependencies transitively:
 
 ```
-$ janus explain data/models/Sales_Returns_Sample.pbix "Last 2 Months Net Sales"
+$ concordance explain data/models/Sales_Returns_Sample.pbix "Last 2 Months Net Sales"
 
 expression  : [Net Sales]+[Net Sales PM]
 depends on (5):
@@ -107,7 +107,7 @@ string literal is not a comment, and treating it as one silently corrupts the ex
 ## Layout
 
 ```
-janus/
+concordance/
   normalize/dax.py     DAX lexer and canonicaliser — the fingerprint depends on this
   fingerprint.py       SHA-256 over canonical form
   model.py             platform-independent object model
@@ -116,7 +116,7 @@ janus/
     pbix.py            Power BI, via PBIXRay (MIT)
   graph/csg.py         the Canonical Semantic Graph
   cli.py
-tests/                 54 tests, run against the real .pbix files
+tests/                 58 tests, run against the real .pbix files
 data/models/           three Microsoft sample models
 ```
 
@@ -134,6 +134,14 @@ All three are pinned by regression tests in `tests/test_reference_resolution.py`
 - **Date-hierarchy syntax.** In `'Calendar'[Date].[Month]`, the `[Month]` is a level on
   `Calendar[Date]`, not an object of its own. The level still changes the fingerprint, so it is
   kept in the canonical form and skipped only during dependency extraction.
+
+A fourth defect surfaced later, in a post-push audit rather than from a failing test — worth
+naming differently because it was found by reasoning about the code, not by a model exposing it.
+`row.get("Expression") or ""` looks like a safe default; it isn't, because a pandas NaN is truthy
+in Python, so a genuinely missing expression would silently become the literal string `"nan"` and
+get fingerprinted as if it were real DAX. None of the three sample models happen to have a measure
+with a missing expression — pinned in `tests/test_nan_handling.py` with a synthetic row rather
+than waiting for a file that triggers it.
 
 ## Next
 

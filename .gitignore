@@ -6,7 +6,7 @@ __pycache__/
 build/
 dist/
 
-# Generated graphs — reproducible from data/models via `janus extract`
+# Generated graphs — reproducible from data/models via `concordance extract`
 data/out/
 
 # Sample .pbix models (~16MB of binaries). Kept out of version control; place

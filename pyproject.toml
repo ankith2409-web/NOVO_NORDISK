@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "janus"
+name = "concordance"
 version = "0.1.0"
 description = "Bi-directional traceability between business requirements and enterprise semantic layers"
 readme = "README.md"
@@ -18,10 +18,10 @@ dependencies = [
 dev = ["pytest>=8.0"]
 
 [project.scripts]
-janus = "janus.cli:main"
+concordance = "concordance.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["janus*"]
+include = ["concordance*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

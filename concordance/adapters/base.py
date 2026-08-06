@@ -1,6 +1,6 @@
 """The adapter contract.
 
-A source platform joins JANUS by implementing this one method. Nothing
+A source platform joins Concordance by implementing this one method. Nothing
 downstream knows or cares where a model came from, which is the property that
 makes Snowflake and Databricks additive rather than structural work.
 """
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from janus.model import SemanticModel
+from concordance.model import SemanticModel
 
 
 @runtime_checkable

@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from janus.adapters.pbix import PbixAdapter
-from janus.graph.csg import SemanticGraph, measure_id
+from concordance.adapters.pbix import PbixAdapter
+from concordance.graph.csg import SemanticGraph, measure_id
 
 MODEL = Path("data/models/Sales_Returns_Sample.pbix")
 
@@ -93,7 +93,7 @@ def test_date_hierarchy_level_is_not_treated_as_a_separate_object(
 
 def test_hierarchy_level_still_affects_the_fingerprint() -> None:
     """Skipping the level for dependencies must not make .[Month] and .[Year] equal."""
-    from janus.fingerprint import fingerprint_dax
+    from concordance.fingerprint import fingerprint_dax
 
     month = fingerprint_dax("CALCULATE([S], ALL('Calendar'[Date].[Month]))")
     year = fingerprint_dax("CALCULATE([S], ALL('Calendar'[Date].[Year]))")

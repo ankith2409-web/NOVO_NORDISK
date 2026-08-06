@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 
-from janus.normalize.dax import canonicalise
+from concordance.normalize.dax import canonicalise
 
 #: Characters of hex shown in reports and diffs. The full digest is what gets
 #: stored and compared; this is only for humans reading a drift table.

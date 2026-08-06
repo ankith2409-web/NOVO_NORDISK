@@ -13,7 +13,7 @@ corruption a fingerprint-based drift system cannot tolerate.
 
 from __future__ import annotations
 
-from janus.adapters.pbix import PbixAdapter
+from concordance.adapters.pbix import PbixAdapter
 
 
 def test_nan_expression_becomes_empty_not_the_string_nan() -> None:
@@ -32,12 +32,12 @@ def test_nan_expression_becomes_empty_not_the_string_nan() -> None:
     # An empty expression must not be quietly fingerprinted as if it meant
     # something -- it should still hash (nothing downstream may crash on it),
     # just not to whatever "nan" would have hashed to.
-    from janus.fingerprint import fingerprint_dax
+    from concordance.fingerprint import fingerprint_dax
     assert measure.fingerprint == fingerprint_dax("")
 
 
 def test_the_trap_this_guards_against_is_real() -> None:
-    """Documents *why* `x or default` was wrong, independent of any JANUS code.
+    """Documents *why* `x or default` was wrong, independent of any Concordance code.
 
     `float("nan")` is truthy in Python, so `nan or ""` returns the NaN itself
     rather than falling through to the default -- the opposite of what the

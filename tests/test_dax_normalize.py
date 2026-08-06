@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from janus.normalize.dax import Kind, canonicalise, extract_references, tokenize
+from concordance.normalize.dax import Kind, canonicalise, extract_references, tokenize
 
 
 # -- things that must NOT change the canonical form -------------------------

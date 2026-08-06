@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 import networkx as nx
 
-from janus.model import ObjectKind, SemanticModel
+from concordance.model import ObjectKind, SemanticModel
 
 
 class EdgeKind:
@@ -177,7 +177,7 @@ class SemanticGraph:
         return "column not found in table"
 
     def _link_calculated_columns(self) -> None:
-        from janus.normalize.dax import extract_references
+        from concordance.normalize.dax import extract_references
 
         columns = {
             (c.table.casefold(), c.name.casefold()): column_id(c.table, c.name)

@@ -18,9 +18,9 @@ from pathlib import Path
 import pandas as pd
 from pbixray import PBIXRay
 
-from janus.fingerprint import fingerprint_dax, fingerprint_parts, fingerprint_text
-from janus.model import Column, Measure, Relationship, SemanticModel, Table
-from janus.normalize.dax import extract_references
+from concordance.fingerprint import fingerprint_dax, fingerprint_parts, fingerprint_text
+from concordance.model import Column, Measure, Relationship, SemanticModel, Table
+from concordance.normalize.dax import extract_references
 
 #: Power BI creates a hidden date table per date column, plus a template table.
 #: They carry no business meaning and would otherwise swamp the documentation.

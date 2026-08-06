@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from janus.adapters.pbix import PbixAdapter
-from janus.fingerprint import fingerprint_dax
-from janus.graph.csg import SemanticGraph, measure_id
+from concordance.adapters.pbix import PbixAdapter
+from concordance.fingerprint import fingerprint_dax
+from concordance.graph.csg import SemanticGraph, measure_id
 
 MODELS = Path("data/models")
 SAMPLES = ["Sales_Returns_Sample", "AdventureWorks_Sales", "Supply_Chain_Sample"]

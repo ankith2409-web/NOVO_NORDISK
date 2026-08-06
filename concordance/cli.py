@@ -1,9 +1,9 @@
 """Command line entry point.
 
-``janus extract``  -- turn a .pbix into a semantic graph on disk
-``janus inspect``  -- show what was extracted, without writing anything
-``janus explain``  -- show one object's expression, fingerprint and dependencies
-``janus verify``   -- prove the fingerprint scheme on a real measure
+``concordance extract``  -- turn a .pbix into a semantic graph on disk
+``concordance inspect``  -- show what was extracted, without writing anything
+``concordance explain``  -- show one object's expression, fingerprint and dependencies
+``concordance verify``   -- prove the fingerprint scheme on a real measure
 """
 
 from __future__ import annotations
@@ -13,10 +13,10 @@ import json
 import sys
 from pathlib import Path
 
-from janus.adapters.pbix import PbixAdapter
-from janus.fingerprint import fingerprint_dax, short
-from janus.graph.csg import SemanticGraph, measure_id
-from janus.normalize.dax import canonicalise
+from concordance.adapters.pbix import PbixAdapter
+from concordance.fingerprint import fingerprint_dax, short
+from concordance.graph.csg import SemanticGraph, measure_id
+from concordance.normalize.dax import canonicalise
 
 
 def _load(path: str) -> SemanticGraph:
@@ -184,7 +184,7 @@ def _mutate(expr: str) -> str | None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="janus",
+        prog="concordance",
         description="Extract a canonical semantic graph from a Power BI model.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
