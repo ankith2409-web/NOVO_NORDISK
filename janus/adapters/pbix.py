@@ -1,0 +1,245 @@
+"""Power BI .pbix adapter, built on PBIXRay (MIT).
+
+PBIXRay decodes the compressed VertiPaq model inside a .pbix; this module turns
+what it surfaces into canonical objects and attaches a fingerprint to each one.
+
+Two Power BI details are handled here rather than leaking downstream:
+auto-generated date tables are marked as system objects so they do not pollute
+generated documentation, and unqualified ``[Name]`` references are resolved
+against the model's real measure names to tell a measure reference from a
+same-table column reference.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pandas as pd
+from pbixray import PBIXRay
+
+from janus.fingerprint import fingerprint_dax, fingerprint_parts, fingerprint_text
+from janus.model import Column, Measure, Relationship, SemanticModel, Table
+from janus.normalize.dax import extract_references
+
+#: Power BI creates a hidden date table per date column, plus a template table.
+#: They carry no business meaning and would otherwise swamp the documentation.
+_SYSTEM_TABLE = re.compile(
+    r"^(DateTableTemplate_|LocalDateTable_)[0-9a-fA-F-]+$"
+)
+
+
+class PbixAdapter:
+    """Extracts a semantic model from a .pbix file."""
+
+    source_type = "pbix"
+
+    def extract(self, source: str) -> SemanticModel:
+        path = Path(source)
+        if not path.exists():
+            raise FileNotFoundError(f"no such .pbix file: {source}")
+
+        raw = PBIXRay(str(path))
+        model = SemanticModel(
+            name=path.stem,
+            source_path=str(path),
+            source_type=self.source_type,
+        )
+
+        power_query = self._power_query_by_table(raw)
+        calc_columns = self._calculated_column_expressions(raw)
+
+        model.columns = self._build_columns(raw, calc_columns)
+        measure_rows = _rows(raw.dax_measures)
+
+        # PBIXRay lists only tables that store data, so a table holding nothing
+        # but measures -- "Analysis DAX" and "Design DAX" in the Sales & Returns
+        # model, 58 measures between them -- never appears. Left uncorrected the
+        # graph grows attribute-less placeholder nodes where those tables should
+        # be, and every measure they contain is orphaned from its parent.
+        declared = list(raw.tables)
+        known = {name.casefold() for name in declared}
+        measure_hosts = {
+            str(r.get("TableName", "")).strip()
+            for r in measure_rows
+            if str(r.get("TableName", "")).strip()
+        }
+        with_columns = {c.table.casefold() for c in model.columns}
+        implied = sorted(t for t in measure_hosts if t.casefold() not in known)
+
+        for name in declared + implied:
+            model.tables.append(
+                Table(
+                    name=name,
+                    fingerprint=fingerprint_text(name),
+                    is_system=bool(_SYSTEM_TABLE.match(name)),
+                    is_measure_only=name.casefold() not in with_columns,
+                    power_query=power_query.get(name),
+                )
+            )
+        known_measures = {
+            str(r.get("Name", "")).strip().casefold() for r in measure_rows
+        }
+        model.measures = [
+            self._build_measure(r, known_measures) for r in measure_rows
+        ]
+
+        model.relationships = self._build_relationships(raw)
+        return model
+
+    # -- pieces -------------------------------------------------------------
+
+    def _power_query_by_table(self, raw: PBIXRay) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for row in _rows(raw.power_query):
+            name = str(row.get("TableName", "")).strip()
+            if name:
+                out[name] = str(row.get("Expression", ""))
+        return out
+
+    def _calculated_column_expressions(self, raw: PBIXRay) -> dict[tuple[str, str], str]:
+        out: dict[tuple[str, str], str] = {}
+        for row in _rows(raw.dax_columns):
+            table = str(row.get("TableName", "")).strip()
+            column = str(row.get("ColumnName", "")).strip()
+            expr = row.get("Expression")
+            if table and column and _present(expr):
+                out[(table, column)] = str(expr)
+        return out
+
+    def _build_columns(
+        self, raw: PBIXRay, calc: dict[tuple[str, str], str]
+    ) -> list[Column]:
+        columns: list[Column] = []
+        seen: set[tuple[str, str]] = set()
+
+        for row in _rows(raw.schema):
+            table = str(row.get("TableName", "")).strip()
+            name = str(row.get("ColumnName", "")).strip()
+            if not table or not name:
+                continue
+            seen.add((table, name))
+            expr = calc.get((table, name))
+            columns.append(
+                Column(
+                    table=table,
+                    name=name,
+                    data_type=str(row.get("PandasDataType", "unknown")),
+                    expression=expr,
+                    # A stored column's identity is its name and type; a
+                    # calculated one's is the expression that produces it.
+                    fingerprint=(
+                        fingerprint_dax(expr)
+                        if expr is not None
+                        else fingerprint_parts(
+                            table, name, str(row.get("PandasDataType", "unknown"))
+                        )
+                    ),
+                )
+            )
+
+        # A calculated column can exist without a schema row; keep it rather
+        # than silently dropping a real model object.
+        for (table, name), expr in calc.items():
+            if (table, name) not in seen:
+                columns.append(
+                    Column(
+                        table=table,
+                        name=name,
+                        data_type="calculated",
+                        expression=expr,
+                        fingerprint=fingerprint_dax(expr),
+                    )
+                )
+
+        return columns
+
+    def _build_measure(self, row: dict, known_measures: set[str]) -> Measure:
+        table = str(row.get("TableName", "")).strip()
+        name = str(row.get("Name", "")).strip()
+        expression = str(row.get("Expression", "") or "")
+
+        refs = extract_references(expression)
+
+        # A bare [Name] is either a measure or a column in this measure's own
+        # table; the model is the only way to tell them apart.
+        measures = {r for r in refs.unqualified if r.casefold() in known_measures}
+        same_table_columns = {
+            (table, r) for r in refs.unqualified if r.casefold() not in known_measures
+        }
+
+        # A qualified Table[Name] is usually a column, but DAX also permits
+        # qualifying a measure reference -- 'Analysis DAX'[WIF Adjusted Net Sales]
+        # in the Sales & Returns model does exactly that. Measure names are
+        # unique model-wide, so a name match is enough to classify it.
+        qualified_columns: set[tuple[str, str]] = set()
+        for ref_table, ref_name in refs.columns:
+            if ref_name.casefold() in known_measures:
+                measures.add(ref_name)
+            else:
+                qualified_columns.add((ref_table, ref_name))
+
+        return Measure(
+            table=table,
+            name=name,
+            expression=expression,
+            fingerprint=fingerprint_dax(expression),
+            display_folder=_optional(row.get("DisplayFolder")),
+            description=_optional(row.get("Description")),
+            depends_on_columns=frozenset(qualified_columns | same_table_columns),
+            depends_on_measures=frozenset(measures),
+        )
+
+    def _build_relationships(self, raw: PBIXRay) -> list[Relationship]:
+        out: list[Relationship] = []
+        for row in _rows(raw.relationships):
+            from_table = str(row.get("FromTableName", "")).strip()
+            from_column = str(row.get("FromColumnName", "")).strip()
+            to_table = str(row.get("ToTableName", "")).strip()
+            to_column = str(row.get("ToColumnName", "")).strip()
+            cardinality = str(row.get("Cardinality", "")).strip()
+            cross_filter = str(row.get("CrossFilteringBehavior", "")).strip()
+            is_active = bool(row.get("IsActive", True))
+
+            out.append(
+                Relationship(
+                    from_table=from_table,
+                    from_column=from_column,
+                    to_table=to_table,
+                    to_column=to_column,
+                    cardinality=cardinality,
+                    cross_filter=cross_filter,
+                    is_active=is_active,
+                    # Direction, cardinality, cross-filter and active state all
+                    # change what the join does, so all of them are in the hash.
+                    fingerprint=fingerprint_parts(
+                        from_table, from_column, to_table, to_column,
+                        cardinality, cross_filter, str(is_active),
+                    ),
+                )
+            )
+        return out
+
+
+def _rows(frame) -> list[dict]:
+    """Normalise a PBIXRay dataframe into plain dicts."""
+    if frame is None:
+        return []
+    if isinstance(frame, pd.DataFrame):
+        return [] if frame.empty else frame.to_dict("records")
+    return list(frame)
+
+
+def _present(value) -> bool:
+    if value is None:
+        return False
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip() != ""
+
+
+def _optional(value) -> str | None:
+    return str(value).strip() if _present(value) else None

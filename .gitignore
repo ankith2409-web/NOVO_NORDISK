@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Generated graphs — reproducible from data/models via `janus extract`
+data/out/
+
+# Sample .pbix models (~16MB of binaries). Kept out of version control; place
+# them in data/models/ locally. Tests skip cleanly when they are absent.
+data/models/
+
+.env
+.DS_Store
