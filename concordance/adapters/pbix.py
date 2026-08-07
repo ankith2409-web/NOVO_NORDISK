@@ -18,6 +18,7 @@ from pathlib import Path
 import pandas as pd
 from pbixray import PBIXRay
 
+from concordance.adapters.base import resolve_table_dependencies
 from concordance.fingerprint import fingerprint_dax, fingerprint_parts, fingerprint_text
 from concordance.model import (
     Column,
@@ -112,6 +113,7 @@ class PbixAdapter:
         model.relationships = self._build_relationships(raw)
         model.hierarchies = self._build_hierarchies(raw)
         model.coverage_gaps = self._coverage_gaps(raw)
+        resolve_table_dependencies(model)
         return model
 
     # -- pieces -------------------------------------------------------------

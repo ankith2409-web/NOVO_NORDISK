@@ -170,6 +170,11 @@ class SemanticGraph:
                 if target != source:  # a measure referencing itself adds nothing
                     self.graph.add_edge(source, target, kind=EdgeKind.REFERENCES)
 
+            # A whole-table read such as COUNTROWS(Patient). Resolved by the
+            # adapter against real table names, so anything here exists.
+            for name in measure.depends_on_tables:
+                self.graph.add_edge(source, table_id(name), kind=EdgeKind.REFERENCES)
+
     def _add_hierarchies(self) -> None:
         """Add hierarchies and bind each level to the column that supplies it."""
         columns = {

@@ -29,6 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from concordance.adapters.base import resolve_table_dependencies
 from concordance.fingerprint import fingerprint_dax, fingerprint_parts, fingerprint_text
 from concordance.model import (
     Column,
@@ -331,6 +332,7 @@ class TmdlAdapter:
         if relationships.is_file():
             self._read_relationships(relationships, model)
 
+        resolve_table_dependencies(model)
         return model
 
     # -- pieces -----------------------------------------------------------

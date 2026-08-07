@@ -51,6 +51,8 @@ class Measure:
     depends_on_columns: frozenset[tuple[str, str]] = field(default_factory=frozenset)
     #: Names of other measures this measure reads.
     depends_on_measures: frozenset[str] = field(default_factory=frozenset)
+    #: Tables read as a whole, as in COUNTROWS(Patient) or REMOVEFILTERS(Product).
+    depends_on_tables: frozenset[str] = field(default_factory=frozenset)
 
     @property
     def qualified_name(self) -> str:

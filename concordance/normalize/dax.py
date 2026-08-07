@@ -252,9 +252,15 @@ class References:
     bare ``[Name]`` references, which DAX allows for both measures and columns in
     the current table -- resolving which is which needs the full model, so that
     is left to the graph builder.
+
+    ``table_candidates`` holds bare words that are shaped like a whole-table
+    reference -- the ``Patient`` in ``COUNTROWS(Patient)``. They are candidates
+    rather than facts because only the model knows which names are tables;
+    DAX keywords and function names look identical at this level.
     """
     columns: frozenset[tuple[str, str]]
     unqualified: frozenset[str]
+    table_candidates: frozenset[str] = frozenset()
 
 
 def extract_functions(expr: str) -> frozenset[str]:
@@ -282,8 +288,34 @@ def extract_references(expr: str) -> References:
     tokens = [t for t in tokenize(expr) if t.kind not in (Kind.WS, Kind.COMMENT)]
     columns: set[tuple[str, str]] = set()
     unqualified: set[str] = set()
+    table_candidates: set[str] = set()
+
+    # Names bound by VAR are local to the expression, so a later bare use of one
+    # is a variable, not a table.
+    variables = {
+        tokens[i + 1].value.casefold()
+        for i, t in enumerate(tokens[:-1])
+        if t.kind is Kind.IDENT
+        and t.value.upper() == "VAR"
+        and tokens[i + 1].kind is Kind.IDENT
+    }
 
     for idx, tok in enumerate(tokens):
+        if tok.kind is Kind.QUOTED_IDENT:
+            # 'Table Name' not followed by a column is a whole-table reference.
+            nxt = tokens[idx + 1] if idx + 1 < len(tokens) else None
+            if nxt is None or nxt.kind is not Kind.BRACKET_REF:
+                table_candidates.add(tok.value.strip())
+            continue
+
+        if tok.kind is Kind.IDENT:
+            nxt = tokens[idx + 1] if idx + 1 < len(tokens) else None
+            is_call = nxt is not None and nxt.kind is Kind.OP and nxt.value == "("
+            is_qualifier = nxt is not None and nxt.kind is Kind.BRACKET_REF
+            if not is_call and not is_qualifier and tok.value.casefold() not in variables:
+                table_candidates.add(tok.value)
+            continue
+
         if tok.kind is not Kind.BRACKET_REF:
             continue
         prev = tokens[idx - 1] if idx else None
@@ -307,4 +339,6 @@ def extract_references(expr: str) -> References:
         else:
             unqualified.add(tok.value.strip())
 
-    return References(frozenset(columns), frozenset(unqualified))
+    return References(
+        frozenset(columns), frozenset(unqualified), frozenset(table_candidates)
+    )
