@@ -19,3 +19,6 @@ data/models/*.pbix
 
 # Generated snapshots — reproducible via `concordance snapshot`
 data/snapshots/
+
+# Generated warehouse — reproducible via `scripts/build_warehouse.py`
+data/warehouse/

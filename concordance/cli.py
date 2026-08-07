@@ -394,6 +394,53 @@ def cmd_auditpack(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    """Compare one KPI's Power BI definition against the warehouse's."""
+    import duckdb
+
+    from concordance.adapters import sql as sqladapter
+    from concordance.reconcile import metrics
+
+    graph = _load(args.source)
+
+    warehouse = Path(args.warehouse)
+    if not warehouse.exists():
+        print(
+            f"No warehouse at {warehouse}. Run scripts/build_warehouse.py to create "
+            f"the local one, or pass --warehouse.",
+            file=sys.stderr,
+        )
+        return 2
+
+    connection = duckdb.connect(str(warehouse), read_only=True)
+    try:
+        model = sqladapter.from_duckdb(connection, schema=args.schema)
+    finally:
+        connection.close()
+
+    report = metrics.reconcile(
+        metrics.from_power_bi(graph, platform=args.model_platform),
+        metrics.from_warehouse(model, platform=args.warehouse_platform),
+    )
+
+    print()
+    print(metrics.to_text(report))
+    print()
+
+    if model.coverage_gaps:
+        print("Not read from the warehouse")
+        print("-" * 68)
+        for gap in model.coverage_gaps:
+            print(f"  {gap.feature}: {gap.count} — {gap.reason}")
+        print()
+
+    # Non-zero when a metric is divergent, so this can gate a pipeline. Metrics
+    # needing review do not fail the run: an unresolved question is not a defect,
+    # and failing on one would train people to pass --no-fail permanently.
+    divergent = report.counts()["divergent"]
+    return 1 if (divergent and args.fail_on_conflict) else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="concordance",
@@ -428,6 +475,27 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--show-tools", action="store_true",
                    help="show which tools were called to reach the answer")
     p.set_defaults(func=cmd_ask)
+
+    p = sub.add_parser(
+        "reconcile", help="compare a model's KPIs against the same KPIs in a warehouse"
+    )
+    p.add_argument("source", help="path to a .pbix file or TMDL model folder")
+    p.add_argument(
+        "--warehouse",
+        default="data/warehouse/quality_control.duckdb",
+        help="path to a DuckDB warehouse (default data/warehouse/quality_control.duckdb)",
+    )
+    p.add_argument("--schema", default="main", help="warehouse schema to read")
+    p.add_argument("--model-platform", default="power_bi", help="label for the model side")
+    p.add_argument(
+        "--warehouse-platform", default="warehouse", help="label for the warehouse side"
+    )
+    p.add_argument(
+        "--fail-on-conflict",
+        action="store_true",
+        help="exit non-zero when a KPI is divergent, to gate a pipeline",
+    )
+    p.set_defaults(func=cmd_reconcile)
 
     p = sub.add_parser("auditpack", help="write the evidence bundle for a model")
     p.add_argument("source", help="path to a .pbix file or TMDL model folder")

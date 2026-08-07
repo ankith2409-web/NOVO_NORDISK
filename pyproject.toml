@@ -13,6 +13,11 @@ dependencies = [
     "networkx>=3.0",
     "pandas>=2.0",
     "python-docx>=1.1",
+    # Warehouse side: sqlglot parses view definitions into an AST, duckdb is the
+    # credential-free stand-in whose information schema matches the one
+    # Snowflake and Databricks expose.
+    "sqlglot>=25.0",
+    "duckdb>=1.0",
 ]
 
 [project.optional-dependencies]
