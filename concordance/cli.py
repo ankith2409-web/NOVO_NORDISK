@@ -292,6 +292,23 @@ def cmd_ask(args: argparse.Namespace) -> int:
             answer(question)
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Run a local web chat interface for a model."""
+    from concordance.llm.base import LlmError
+    from concordance.llm.gemini import GeminiProvider
+    from concordance.web.server import serve
+
+    graph = _load(args.source)
+    try:
+        provider = GeminiProvider(model=args.model)
+    except LlmError as error:
+        print(f"{error}", file=sys.stderr)
+        return 2
+
+    serve(graph, provider, host=args.host, port=args.port)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="concordance",
@@ -326,6 +343,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--show-tools", action="store_true",
                    help="show which tools were called to reach the answer")
     p.set_defaults(func=cmd_ask)
+
+    p = sub.add_parser("serve", help="run a local web chat interface for a model")
+    p.add_argument("source", help="path to a .pbix file or TMDL model folder")
+    p.add_argument("--model", default="gemini-3.6-flash", help="Gemini model to use")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8000)
+    p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("document", help="generate a BRD or FRD from a model")
     p.add_argument("source", help="path to a .pbix file")

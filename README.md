@@ -106,6 +106,7 @@ concordance explain  <model> <measure>  # expression, canonical form, dependenci
 concordance verify   <model> <measure>  # prove the fingerprint on real model content
 concordance document <model> --type brd # generate a BRD (or --type frd)
 concordance ask      <model> "question"  # ask about the model (omit for interactive)
+concordance serve    <model> [--port]    # web chat UI at http://127.0.0.1:8000
 ```
 
 `explain` resolves dependencies transitively:
@@ -164,6 +165,23 @@ without tools, so the user gets an answer rather than silence.
 Provider setup: put `GEMINI_API_KEY=...` in a `.env` file at the project root (gitignored).
 The model sits behind a provider interface, so swapping it is configuration, and tests run
 against a scripted fake with no network or key.
+
+### Web interface
+
+`serve` runs the same agent behind a local browser page — the problem statement's "chatbot
+interface" as something a judge can actually click into, not a terminal command.
+
+```bash
+concordance serve data/models/ClinicalTrialSafety.SemanticModel
+# -> http://127.0.0.1:8000/
+```
+
+Deliberately dependency-free: the whole web layer is Python's standard library
+(`http.server`, `json`), consistent with the Gemini provider avoiding an SDK. Each browser
+tab gets its own conversation via a session cookie — two judges opening the page at once do
+not share or corrupt each other's chat history. The page itself renders the model's Markdown
+(bold, code fences, bullets) and shows which tools produced each answer, so the grounding is
+visible, not just claimed.
 
 ## How requirements are derived
 
@@ -234,9 +252,12 @@ concordance/
   agent/
     tools.py           read-only tool surface over the graph
     chat.py            the conversation loop, with tool validation
+  web/
+    server.py          stdlib HTTP server, per-session chat isolation
+    static/chat.html    the browser page
   cli.py
 scripts/               report generator for a readable model export
-tests/                 159 tests, run against the real models
+tests/                 173 tests, run against the real models
 data/models/           three Microsoft .pbix samples + one authored TMDL model
 ```
 
