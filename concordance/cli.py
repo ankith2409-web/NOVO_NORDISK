@@ -220,14 +220,18 @@ def cmd_document(args: argparse.Namespace) -> int:
     graph = _load(args.source)
     kind = Kind.BUSINESS if args.type == "brd" else Kind.FUNCTIONAL
     built = doc.build(graph, kind)
-    markdown = doc.to_markdown(built)
 
-    if args.out:
-        out = Path(args.out)
+    suffix = "docx" if args.format == "docx" else "md"
+    out = Path(args.out) if args.out else (
+        Path("data/out") / f"{graph.model.name}.{args.type}.{suffix}"
+    )
+    if args.format == "docx":
+        from concordance.generate import word
+
+        word.write(built, out)
     else:
-        out = Path("data/out") / f"{graph.model.name}.{args.type}.md"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(markdown, encoding="utf-8")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(doc.to_markdown(built), encoding="utf-8")
 
     counts = built.counts()
     print(f"\n{built.title}")
@@ -366,6 +370,30 @@ def cmd_drift(args: argparse.Namespace) -> int:
     return 1 if (report.has_drift and args.fail_on_drift) else 0
 
 
+def cmd_auditpack(args: argparse.Namespace) -> int:
+    """Write the evidence bundle for one model."""
+    from concordance.generate import auditpack
+
+    graph = _load(args.source)
+    out = Path(args.out) if args.out else Path("data/out") / f"{graph.model.name}.auditpack"
+    pack = auditpack.build(graph, out)
+
+    print(f"\nEvidence pack — {graph.model.name}")
+    print("=" * 64)
+    print(f"  {pack.requirement_count} requirements, {pack.object_count} fingerprinted objects")
+    if pack.needs_review:
+        print(f"  {pack.needs_review} awaiting human confirmation")
+    if pack.unresolved:
+        print(f"  {pack.unresolved} unresolved reference(s), recorded in the manifest")
+    if pack.coverage_gaps:
+        print(f"  {pack.coverage_gaps} model feature type(s) not covered, recorded in the manifest")
+    print()
+    for path in pack.files:
+        print(f"    {path.name}")
+    print(f"\n  written to {pack.directory}\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="concordance",
@@ -401,6 +429,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="show which tools were called to reach the answer")
     p.set_defaults(func=cmd_ask)
 
+    p = sub.add_parser("auditpack", help="write the evidence bundle for a model")
+    p.add_argument("source", help="path to a .pbix file or TMDL model folder")
+    p.add_argument("-o", "--out", help="output directory")
+    p.set_defaults(func=cmd_auditpack)
+
     p = sub.add_parser("snapshot", help="record a model's fingerprints for later comparison")
     p.add_argument("source", help="path to a .pbix file or TMDL model folder")
     p.add_argument("--label", help="name for this snapshot, e.g. v1 or 2026-08-07")
@@ -427,6 +460,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("source", help="path to a .pbix file")
     p.add_argument("--type", choices=["brd", "frd"], default="brd",
                    help="business (brd) or functional (frd) requirements")
+    p.add_argument("--format", choices=["md", "docx"], default="md",
+                   help="Markdown, or Word for circulation and sign-off")
     p.add_argument("-o", "--out", help="output path (default data/out/<name>.<type>.md)")
     p.set_defaults(func=cmd_document)
 

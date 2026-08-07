@@ -105,7 +105,8 @@ concordance inspect  <model>            # tables, joins, hierarchies, measures, 
 concordance extract  <model> [-o path]  # write the semantic graph as JSON
 concordance explain  <model> <measure>  # expression, canonical form, dependencies, impact
 concordance verify   <model> <measure>  # prove the fingerprint on real model content
-concordance document <model> --type brd # generate a BRD (or --type frd)
+concordance document <model> --type brd # generate a BRD (--type frd, --format docx)
+concordance auditpack <model>            # evidence bundle: docs + fingerprint manifest
 concordance ask      <model> "question"  # ask about the model (omit for interactive)
 concordance serve    <model> [--port]    # web chat UI at http://127.0.0.1:8000
 concordance snapshot <model> --label v1  # record fingerprints for later comparison
@@ -214,6 +215,41 @@ Objects the model declares but leaves undefined — a measure with no expression
 with no levels — are reported as incomplete rather than specified. A document that confidently
 describes something which does not exist is the failure this project is built to prevent.
 
+## Word output and the evidence pack
+
+`--format docx` writes a real Word document — built-in heading styles so Word's navigation
+pane works, DAX in monospace, and the traceability matrix as a proper table. The people who
+sign a BRD open it in Word and comment in the margin; the hackathon's own rules require
+Office 365 "for the exchange of material", which is a fair signal of how these documents
+travel.
+
+`auditpack` answers the question a validation reviewer actually asks — *how do you know this
+document is correct?*
+
+```bash
+concordance auditpack data/models/ClinicalTrialSafety.SemanticModel
+```
+
+```
+  80 requirements, 102 fingerprinted objects
+  2 awaiting human confirmation
+
+    ClinicalTrialSafety.BRD.docx     ClinicalTrialSafety.BRD.md
+    ClinicalTrialSafety.FRD.docx     ClinicalTrialSafety.FRD.md
+    ClinicalTrialSafety.fingerprints.json
+    MANIFEST.json                    README.txt
+```
+
+The fingerprint manifest is what makes the pack *checkable* rather than merely produced:
+anyone holding the pack and the model can re-run `concordance drift` against it and see
+whether anything has moved since. The manifest also records what could **not** be read —
+unresolved references and unextracted feature types — because a pack that hid its own gaps
+would misrepresent how complete it is.
+
+It records what was extracted and what each requirement was bound to. Whether that satisfies
+any particular regulatory expectation is a judgement for the organisation's quality function,
+and the pack's README says so rather than implying otherwise.
+
 ## Detecting drift
 
 `drift` compares two versions of a model and reports not just what changed, but **which
@@ -296,6 +332,8 @@ concordance/
     patterns.py        DAX function usage → business behaviour
     requirements.py    deriving requirements from the graph
     document.py        BRD/FRD assembly, Markdown, traceability matrix
+    word.py            Word rendering of the same Document object
+    auditpack.py       the evidence bundle and its manifest
   llm/
     base.py            provider contract — model-agnostic
     gemini.py          Gemini over REST, no SDK dependency
@@ -311,7 +349,7 @@ concordance/
     compare.py         diffing, and which requirements it puts in question
   cli.py
 scripts/               report generator for a readable model export
-tests/                 192 tests, run against the real models
+tests/                 220 tests, run against the real models
 data/models/           three Microsoft .pbix samples + an authored TMDL model and its v2
 ```
 
