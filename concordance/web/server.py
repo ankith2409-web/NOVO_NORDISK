@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import secrets
 import threading
+from collections import OrderedDict
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -33,27 +34,45 @@ _SESSION_COOKIE = "concordance_session"
 _MAX_BODY_BYTES = 10_000
 
 
+#: Plenty for any demo audience, while bounding how much a long-running server
+#: can accumulate. Every cookieless request mints a session, so without a cap a
+#: crawler -- or simply a page left open for a day -- grows this without limit,
+#: and each entry holds a full conversation history.
+MAX_SESSIONS = 200
+
+
 class SessionStore:
-    """One ``ModelChat`` per browser session.
+    """One ``ModelChat`` per browser session, with a bounded number of them.
 
     Kept separate from the HTTP handler so isolation is a plain unit test:
     two ids must resolve to two chats with independent history, with no server
     socket involved.
+
+    Eviction is least-recently-used. An evicted visitor is not broken, only
+    forgotten -- their next request mints a fresh session and starts a new
+    conversation, which is the right failure for a chat with no durable state.
     """
 
-    def __init__(self, factory: Callable[[], ModelChat]) -> None:
+    def __init__(
+        self, factory: Callable[[], ModelChat], max_sessions: int = MAX_SESSIONS
+    ) -> None:
         self._factory = factory
-        self._sessions: dict[str, ModelChat] = {}
+        self._max_sessions = max_sessions
+        self._sessions: OrderedDict[str, ModelChat] = OrderedDict()
         self._lock = threading.Lock()
 
     def get(self, session_id: str | None) -> tuple[str, ModelChat]:
         """Return the chat for ``session_id``, creating one if it is unknown."""
         with self._lock:
             if session_id and session_id in self._sessions:
+                self._sessions.move_to_end(session_id)
                 return session_id, self._sessions[session_id]
+
             new_id = secrets.token_urlsafe(16)
             chat = self._factory()
             self._sessions[new_id] = chat
+            while len(self._sessions) > self._max_sessions:
+                self._sessions.popitem(last=False)
             return new_id, chat
 
     def __len__(self) -> int:

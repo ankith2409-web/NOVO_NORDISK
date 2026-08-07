@@ -47,6 +47,13 @@ than filling the gap yourself.
 #: run away if the model keeps calling tools.
 MAX_TOOL_ROUNDS = 6
 
+#: How many past question-and-answer exchanges to carry forward. History is
+#: resent in full on every request, and each exchange can include sizeable tool
+#: results, so an unbounded conversation costs steadily more tokens per question
+#: and eventually will not fit at all. Twelve is far more context than a demo
+#: conversation needs while keeping the payload flat.
+MAX_HISTORY_EXCHANGES = 12
+
 
 @dataclass
 class Exchange:
@@ -73,15 +80,18 @@ class ModelChat:
         graph: SemanticGraph,
         provider: LlmProvider,
         max_rounds: int = MAX_TOOL_ROUNDS,
+        max_history: int = MAX_HISTORY_EXCHANGES,
     ) -> None:
         self.tools = ModelTools(graph)
         self.provider = provider
         self.max_rounds = max_rounds
+        self.max_history = max_history
         self.history: list[Message] = []
 
     def ask(self, question: str) -> Exchange:
         """Answer one question, running whatever tool calls it needs."""
         exchange = Exchange(question=question, answer="")
+        self._trim_history()
         self.history.append(Message(role="user", text=question))
 
         specs = self.tools.specs()
@@ -128,6 +138,25 @@ class ModelChat:
         return exchange
 
     # -- internals ---------------------------------------------------------
+
+    def _trim_history(self) -> None:
+        """Drop the oldest exchanges once the conversation grows past the limit.
+
+        Trimming happens only at a user turn, never mid-exchange. A model turn
+        carrying a ``functionCall`` and the tool turn answering it must travel
+        together -- Gemini rejects a conversation where one appears without the
+        other, so cutting at an arbitrary index would break the next request
+        rather than merely shortening it.
+        """
+        if self.max_history <= 0:
+            return
+
+        starts = [i for i, message in enumerate(self.history) if message.role == "user"]
+        if len(starts) <= self.max_history:
+            return
+
+        cut = starts[len(starts) - self.max_history]
+        self.history = self.history[cut:]
 
     def _run(self, call: ToolCall) -> Message:
         """Execute a tool call. Validation lives in the dispatcher."""

@@ -16,3 +16,6 @@ data/models/*.pbix
 
 .env
 .DS_Store
+
+# Generated snapshots — reproducible via `concordance snapshot`
+data/snapshots/

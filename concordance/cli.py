@@ -334,17 +334,19 @@ def _as_snapshot(path: str, label: str):
 
     target = Path(path)
     if target.is_file() and target.suffix == ".json":
-        return snap.load(target), None
+        return snap.Snapshot.load(target), None
     graph = _load(path)
-    return snap.take(graph, label=label), graph
+    # Label with what was actually read, so the report header distinguishes the
+    # two sides instead of saying "before -> after".
+    return snap.take(graph, label=label or target.name), graph
 
 
 def cmd_drift(args: argparse.Namespace) -> int:
     """Compare two versions of a model and report what moved."""
     from concordance.drift.compare import compare, to_text
 
-    before, _ = _as_snapshot(args.before, "before")
-    after, after_graph = _as_snapshot(args.after, "after")
+    before, _ = _as_snapshot(args.before, "")
+    after, after_graph = _as_snapshot(args.after, "")
 
     if before.model_name != after.model_name and not args.allow_different_models:
         print(
