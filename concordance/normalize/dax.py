@@ -257,6 +257,26 @@ class References:
     unqualified: frozenset[str]
 
 
+def extract_functions(expr: str) -> frozenset[str]:
+    """Return the DAX function names an expression calls, upper-cased.
+
+    A function is a bare identifier immediately followed by an opening
+    parenthesis. Reusing the lexer means a name inside a string literal or a
+    column reference is never mistaken for a call.
+    """
+    tokens = [t for t in tokenize(expr) if t.kind not in (Kind.WS, Kind.COMMENT)]
+    names: set[str] = set()
+
+    for idx, tok in enumerate(tokens):
+        if tok.kind is not Kind.IDENT:
+            continue
+        nxt = tokens[idx + 1] if idx + 1 < len(tokens) else None
+        if nxt is not None and nxt.kind is Kind.OP and nxt.value == "(":
+            names.add(tok.value.upper())
+
+    return frozenset(names)
+
+
 def extract_references(expr: str) -> References:
     """Find the columns and measures an expression reads."""
     tokens = [t for t in tokenize(expr) if t.kind not in (Kind.WS, Kind.COMMENT)]

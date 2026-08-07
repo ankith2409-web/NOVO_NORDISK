@@ -206,6 +206,40 @@ def _mutate(expr: str) -> str | None:
     return None
 
 
+def cmd_document(args: argparse.Namespace) -> int:
+    """Generate a BRD or FRD from an implemented model."""
+    from concordance.generate import document as doc
+    from concordance.generate.requirements import Kind
+
+    graph = _load(args.source)
+    kind = Kind.BUSINESS if args.type == "brd" else Kind.FUNCTIONAL
+    built = doc.build(graph, kind)
+    markdown = doc.to_markdown(built)
+
+    if args.out:
+        out = Path(args.out)
+    else:
+        out = Path("data/out") / f"{graph.model.name}.{args.type}.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(markdown, encoding="utf-8")
+
+    counts = built.counts()
+    print(f"\n{built.title}")
+    print("=" * 64)
+    print(f"  {counts['requirements']} requirements across {len(built.sections)} sections")
+    print(f"  {counts['high']} stated by the model")
+    print(f"  {counts['medium']} inferred from structure")
+    print(f"  {counts['low']} need human confirmation")
+    for section in built.sections:
+        print(f"    {len(section.requirements):>4}  {section.title}")
+    if built.review_queue:
+        print(f"\n  Review queue ({len(built.review_queue)}):")
+        for requirement in built.review_queue:
+            print(f"    {requirement.id}  {doc._plain(requirement.statement)[:80]}")
+    print(f"\n  written to {out}\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="concordance",
@@ -232,6 +266,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("source", help="path to a .pbix file")
     p.add_argument("measure", help="measure name")
     p.set_defaults(func=cmd_verify)
+
+    p = sub.add_parser("document", help="generate a BRD or FRD from a model")
+    p.add_argument("source", help="path to a .pbix file")
+    p.add_argument("--type", choices=["brd", "frd"], default="brd",
+                   help="business (brd) or functional (frd) requirements")
+    p.add_argument("-o", "--out", help="output path (default data/out/<name>.<type>.md)")
+    p.set_defaults(func=cmd_document)
 
     args = parser.parse_args(argv)
     return args.func(args)

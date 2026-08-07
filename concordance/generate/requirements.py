@@ -1,0 +1,466 @@
+"""Deriving requirements from an implemented semantic model.
+
+This is the reverse direction the project is built around: rather than writing
+requirements and hoping the implementation matches, requirements are *read out*
+of what was actually built, each one bound to the object that satisfies it.
+
+Two properties matter more than fluency:
+
+* **Nothing is invented.** Every requirement is derived from a graph node that
+  exists, and carries the evidence -- node id and fingerprint -- it came from.
+  A language model cannot add a requirement here; it only rephrases what this
+  module already decided.
+
+* **Confidence is earned, not asserted.** A measure's calculation is *stated* by
+  the model and can be reported as fact. Why a join exists is *inferred*, and is
+  marked as such so a human confirms it rather than a document asserting it.
+
+Requirement identifiers are derived from an object's identity -- its table and
+name -- never from its expression or its position in a list. That way editing a
+measure keeps its requirement id stable so drift can be reported against it,
+while adding a measure does not renumber every requirement after it.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+
+from concordance.fingerprint import fingerprint_parts, short
+from concordance.generate import patterns
+from concordance.graph.csg import SemanticGraph, hierarchy_id, measure_id, table_id
+
+
+class Confidence(Enum):
+    """How much of this requirement came from the model versus from inference."""
+
+    #: Stated outright by the model; the document can assert it.
+    HIGH = "high"
+    #: Follows from an explicit structural rule applied to a real object.
+    MEDIUM = "medium"
+    #: Business intent inferred from structure alone. Needs a human to confirm.
+    LOW = "low"
+
+
+class Kind(Enum):
+    BUSINESS = "business"
+    FUNCTIONAL = "functional"
+
+
+@dataclass(frozen=True)
+class Evidence:
+    """The extracted fact a requirement rests on."""
+
+    node_id: str
+    fingerprint: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class Requirement:
+    id: str
+    kind: Kind
+    category: str
+    statement: str
+    rationale: str
+    confidence: Confidence
+    evidence: tuple[Evidence, ...] = field(default_factory=tuple)
+
+    @property
+    def needs_review(self) -> bool:
+        """Low-confidence requirements never enter a document unchallenged."""
+        return self.confidence is Confidence.LOW
+
+    @property
+    def bound_fingerprints(self) -> tuple[str, ...]:
+        return tuple(e.fingerprint for e in self.evidence)
+
+
+def _identity(*parts: str) -> str:
+    """Stable short id from an object's identity, independent of its content."""
+    return short(fingerprint_parts(*parts))[:6]
+
+
+class RequirementDeriver:
+    """Reads a semantic graph and produces the requirements it implies."""
+
+    def __init__(self, graph: SemanticGraph) -> None:
+        self.graph = graph
+        self.model = graph.model
+        self._system_tables = {t.name for t in self.model.tables if t.is_system}
+
+    def derive(self) -> list[Requirement]:
+        out: list[Requirement] = []
+        out.extend(self._from_measures())
+        out.extend(self._from_relationships())
+        out.extend(self._from_hierarchies())
+        out.extend(self._from_calculated_columns())
+        out.extend(self._from_model_shape())
+        # Sorted for deterministic document order; ids stay stable regardless.
+        return sorted(out, key=lambda r: (r.kind.value, r.category, r.id))
+
+    # -- measures -> the metrics the business tracks -------------------------
+
+    def _from_measures(self) -> list[Requirement]:
+        out: list[Requirement] = []
+
+        for measure in self.model.measures:
+            node = measure_id(measure.table, measure.name)
+            detected = patterns.detect(measure.expression)
+            behaviour = detected[0] if detected else None
+
+            columns = sorted(
+                f"{table}[{column}]" for table, column in measure.depends_on_columns
+            )
+            upstream = sorted(measure.depends_on_measures)
+
+            # BUSINESS: what the metric is, in plain terms. Phrased without an
+            # article so every pattern label reads correctly -- "a ranking" and
+            # "a conditional logic" cannot share a sentence frame.
+            descriptor = (
+                f" It applies {behaviour.label}, which {behaviour.description}."
+                if behaviour
+                else ""
+            )
+            source = ""
+            if columns:
+                source = f" It is calculated from {_join(columns)}."
+            elif upstream:
+                source = f" It is derived from {_join(f'[{m}]' for m in upstream)}."
+
+            out.append(
+                Requirement(
+                    id=f"REQ-B-{_identity('measure', measure.table, measure.name)}",
+                    kind=Kind.BUSINESS,
+                    category="Metrics and KPIs",
+                    statement=(
+                        f"The solution shall report **{measure.name}** as a reportable "
+                        f"metric.{descriptor}{source}"
+                    ),
+                    rationale=(
+                        f"A measure named {measure.qualified_name} is defined in the "
+                        f"model, so the business tracks this quantity."
+                    ),
+                    confidence=Confidence.HIGH,
+                    evidence=(
+                        Evidence(
+                            node_id=node,
+                            fingerprint=measure.fingerprint,
+                            detail=measure.expression.strip(),
+                        ),
+                    ),
+                )
+            )
+
+            # FUNCTIONAL: exactly how it must be computed.
+            dependency_note = ""
+            if upstream:
+                dependency_note = (
+                    f" It depends on the measures {_join(f'[{m}]' for m in upstream)}, "
+                    f"which must be evaluated first."
+                )
+            out.append(
+                Requirement(
+                    id=f"REQ-F-{_identity('measure', measure.table, measure.name)}",
+                    kind=Kind.FUNCTIONAL,
+                    category="Measure definitions",
+                    statement=(
+                        f"**{measure.qualified_name}** shall be implemented exactly as "
+                        f"the DAX expression recorded in the evidence for this "
+                        f"requirement.{dependency_note}"
+                    ),
+                    rationale=(
+                        "The expression is the authoritative definition of the metric; "
+                        "any change to it changes the reported figure."
+                    ),
+                    confidence=Confidence.HIGH,
+                    evidence=(
+                        Evidence(
+                            node_id=node,
+                            fingerprint=measure.fingerprint,
+                            detail=measure.expression.strip(),
+                        ),
+                    ),
+                )
+            )
+
+        return out
+
+    # -- relationships -> what can be analysed by what ------------------------
+
+    def _from_relationships(self) -> list[Requirement]:
+        out: list[Requirement] = []
+
+        for rel in self.model.relationships:
+            if rel.from_table in self._system_tables or rel.to_table in self._system_tables:
+                continue
+
+            ident = _identity(
+                "relationship", rel.from_table, rel.from_column,
+                rel.to_table, rel.to_column,
+            )
+            evidence = (
+                Evidence(
+                    node_id=f"{table_id(rel.from_table)} -> {table_id(rel.to_table)}",
+                    fingerprint=rel.fingerprint,
+                    detail=rel.label,
+                ),
+            )
+
+            # BUSINESS: the analytical capability the join enables. Why the join
+            # exists is genuinely inferred, so this is not asserted as fact.
+            if rel.is_active:
+                statement = (
+                    f"Users shall be able to analyse **{rel.from_table}** by attributes "
+                    f"of **{rel.to_table}**."
+                )
+                rationale = (
+                    f"An active {rel.cardinality} relationship joins "
+                    f"{rel.from_table}[{rel.from_column}] to "
+                    f"{rel.to_table}[{rel.to_column}], which makes this slicing possible. "
+                    f"The business purpose is inferred from the model's shape rather "
+                    f"than stated by it."
+                )
+                confidence = Confidence.MEDIUM
+            else:
+                statement = (
+                    f"An alternate, inactive relationship between **{rel.from_table}** "
+                    f"and **{rel.to_table}** shall be available for calculations that "
+                    f"explicitly invoke it."
+                )
+                rationale = (
+                    "The relationship is present but inactive, so it only applies where "
+                    "a calculation activates it deliberately. Its intended use case is "
+                    "not recorded in the model and needs confirmation."
+                )
+                confidence = Confidence.LOW
+
+            out.append(
+                Requirement(
+                    id=f"REQ-B-{ident}",
+                    kind=Kind.BUSINESS,
+                    category="Dimensional analysis",
+                    statement=statement,
+                    rationale=rationale,
+                    confidence=confidence,
+                    evidence=evidence,
+                )
+            )
+
+            # FUNCTIONAL: the join as built.
+            state = "active" if rel.is_active else "inactive"
+            out.append(
+                Requirement(
+                    id=f"REQ-F-{ident}",
+                    kind=Kind.FUNCTIONAL,
+                    category="Data model relationships",
+                    statement=(
+                        f"A **{state}** {rel.cardinality} relationship shall join "
+                        f"`{rel.from_table}[{rel.from_column}]` to "
+                        f"`{rel.to_table}[{rel.to_column}]`, with "
+                        f"**{rel.cross_filter}** cross-filter direction."
+                    ),
+                    rationale=(
+                        "Cardinality and cross-filter direction determine how filters "
+                        "propagate; changing either changes reported results."
+                    ),
+                    confidence=Confidence.HIGH,
+                    evidence=evidence,
+                )
+            )
+
+        return out
+
+    # -- hierarchies -> drill paths -------------------------------------------
+
+    def _from_hierarchies(self) -> list[Requirement]:
+        out: list[Requirement] = []
+
+        for hierarchy in self.model.user_hierarchies():
+            ident = _identity("hierarchy", hierarchy.table, hierarchy.name)
+            evidence = (
+                Evidence(
+                    node_id=hierarchy_id(hierarchy.table, hierarchy.name),
+                    fingerprint=hierarchy.fingerprint,
+                    detail=hierarchy.path,
+                ),
+            )
+
+            out.append(
+                Requirement(
+                    id=f"REQ-B-{ident}",
+                    kind=Kind.BUSINESS,
+                    category="Drill-down and navigation",
+                    statement=(
+                        f"Users shall be able to drill through **{hierarchy.name}** on "
+                        f"{hierarchy.table}, following the path "
+                        f"{' → '.join(level.name for level in hierarchy.levels)}."
+                    ),
+                    rationale=(
+                        "The hierarchy is explicitly defined in the model, including the "
+                        "order of its levels, so this navigation is a stated capability."
+                    ),
+                    confidence=Confidence.HIGH,
+                    evidence=evidence,
+                )
+            )
+
+            out.append(
+                Requirement(
+                    id=f"REQ-F-{ident}",
+                    kind=Kind.FUNCTIONAL,
+                    category="Hierarchy definitions",
+                    statement=(
+                        f"The **{hierarchy.name}** hierarchy on `{hierarchy.table}` shall "
+                        f"contain {len(hierarchy.levels)} levels in this order: "
+                        + ", ".join(
+                            f"{level.ordinal + 1}. {level.name} "
+                            f"(`{hierarchy.table}[{level.column}]`)"
+                            for level in hierarchy.levels
+                        )
+                        + "."
+                    ),
+                    rationale=(
+                        "Level order defines the drill sequence; reordering the levels "
+                        "produces a different navigation path for users."
+                    ),
+                    confidence=Confidence.HIGH,
+                    evidence=evidence,
+                )
+            )
+
+        return out
+
+    # -- calculated columns ----------------------------------------------------
+
+    def _from_calculated_columns(self) -> list[Requirement]:
+        out: list[Requirement] = []
+
+        for column in self.model.columns:
+            if not column.is_calculated or column.table in self._system_tables:
+                continue
+
+            out.append(
+                Requirement(
+                    id=f"REQ-F-{_identity('column', column.table, column.name)}",
+                    kind=Kind.FUNCTIONAL,
+                    category="Derived attributes",
+                    statement=(
+                        f"The column `{column.qualified_name}` shall be derived by "
+                        f"calculation rather than loaded from source, using the "
+                        f"expression recorded in the evidence."
+                    ),
+                    rationale=(
+                        "The column is computed inside the model, so its definition is "
+                        "part of the solution rather than of the upstream data."
+                    ),
+                    confidence=Confidence.HIGH,
+                    evidence=(
+                        Evidence(
+                            node_id=f"column:{column.qualified_name}",
+                            fingerprint=column.fingerprint,
+                            detail=(column.expression or "").strip(),
+                        ),
+                    ),
+                )
+            )
+
+        return out
+
+    # -- overall shape ---------------------------------------------------------
+
+    def _from_model_shape(self) -> list[Requirement]:
+        """Requirements about the solution as a whole, not any single object."""
+        out: list[Requirement] = []
+        user_tables = [t for t in self.model.user_tables() if not t.is_measure_only]
+
+        if user_tables:
+            names = sorted(t.name for t in user_tables)
+            out.append(
+                Requirement(
+                    id=f"REQ-B-{_identity('scope', self.model.name)}",
+                    kind=Kind.BUSINESS,
+                    category="Scope",
+                    statement=(
+                        f"The solution shall cover {len(names)} subject areas: "
+                        f"{_join(f'**{n}**' for n in names)}."
+                    ),
+                    rationale=(
+                        "These are the data-bearing tables in the model, so they define "
+                        "the boundary of what the solution reports on."
+                    ),
+                    confidence=Confidence.HIGH,
+                    evidence=tuple(
+                        Evidence(
+                            node_id=table_id(t.name),
+                            fingerprint=t.fingerprint,
+                            detail=f"table {t.name}",
+                        )
+                        for t in user_tables
+                    ),
+                )
+            )
+
+        sourced = [t for t in self.model.tables if t.power_query and not t.is_system]
+        if sourced:
+            out.append(
+                Requirement(
+                    id=f"REQ-F-{_identity('ingest', self.model.name)}",
+                    kind=Kind.FUNCTIONAL,
+                    category="Data acquisition",
+                    statement=(
+                        f"{len(sourced)} tables shall be populated by their recorded "
+                        f"Power Query (M) transformations, which define the source "
+                        f"system, filtering and shaping applied before load."
+                    ),
+                    rationale=(
+                        "The M queries are the contract with upstream systems; a change "
+                        "there changes what data reaches every downstream metric."
+                    ),
+                    confidence=Confidence.HIGH,
+                    evidence=tuple(
+                        Evidence(
+                            node_id=table_id(t.name),
+                            fingerprint=t.fingerprint,
+                            detail=f"Power Query defined for {t.name}",
+                        )
+                        for t in sorted(sourced, key=lambda t: t.name)
+                    ),
+                )
+            )
+
+        # Anything the extractor could not cover is stated as a documented gap
+        # rather than left for a reader to assume was absent.
+        for gap in self.model.coverage_gaps:
+            out.append(
+                Requirement(
+                    id=f"REQ-F-{_identity('gap', self.model.name, gap.feature)}",
+                    kind=Kind.FUNCTIONAL,
+                    category="Documented gaps",
+                    statement=(
+                        f"This model contains {gap.count} {gap.feature} which are **not "
+                        f"covered by this document** and require separate specification."
+                    ),
+                    rationale=(
+                        "The extractor detected these objects but does not yet read their "
+                        "definitions. Recording the gap prevents the document from being "
+                        "mistaken for a complete specification."
+                    ),
+                    confidence=Confidence.LOW,
+                    evidence=(),
+                )
+            )
+
+        return out
+
+
+def _join(items) -> str:
+    """Human list joining: 'a', 'a and b', 'a, b and c'."""
+    items = list(items)
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} and {items[1]}"
+    return f"{', '.join(items[:-1])} and {items[-1]}"
