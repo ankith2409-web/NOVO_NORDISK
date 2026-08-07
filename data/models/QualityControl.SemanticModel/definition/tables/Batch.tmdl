@@ -1,0 +1,86 @@
+/// One row per manufactured batch, from production through to release decision.
+table Batch
+
+	column BatchID
+		dataType: int64
+		isKey
+		summarizeBy: none
+		sourceColumn: BatchID
+
+	/// Batch number as printed on the manufacturing record.
+	column BatchNumber
+		dataType: string
+		summarizeBy: none
+		sourceColumn: BatchNumber
+
+	column ProductID
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: ProductID
+
+	column SiteID
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: SiteID
+
+	column ManufactureDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: ManufactureDate
+
+	/// Null until Quality Assurance has released the batch.
+	column ReleaseDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: ReleaseDate
+
+	/// Expected output from the batch record, in units.
+	column TheoreticalYield
+		dataType: int64
+		summarizeBy: sum
+		sourceColumn: TheoreticalYield
+
+	column ActualYield
+		dataType: int64
+		summarizeBy: sum
+		sourceColumn: ActualYield
+
+	/// Released, Rejected, Quarantined or In Process.
+	column Status
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Status
+
+	/// Recorded where a batch was rejected or reworked.
+	column DispositionReason
+		dataType: string
+		summarizeBy: none
+		sourceColumn: DispositionReason
+
+	/// True where the batch passed every test without deviation or rework.
+	column RightFirstTime
+		dataType: boolean
+		summarizeBy: none
+		sourceColumn: RightFirstTime
+
+	/// Days from manufacture to QA release; blank while still unreleased.
+	column 'Days To Release' =
+		IF(
+		    ISBLANK(Batch[ReleaseDate]),
+		    BLANK(),
+		    DATEDIFF(Batch[ManufactureDate], Batch[ReleaseDate], DAY)
+		)
+		dataType: int64
+		summarizeBy: average
+
+	partition Batch = m
+		mode: import
+		source = ```
+			let
+			    Source = Csv.Document(File.Contents("batch.csv"), [Delimiter=","]),
+			    Promoted = Table.PromoteHeaders(Source)
+			in
+			    Promoted
+			```

@@ -1,0 +1,48 @@
+/// Marketed and investigational products under manufacture.
+table Product
+
+	column ProductID
+		dataType: int64
+		isKey
+		summarizeBy: none
+		sourceColumn: ProductID
+
+	column ProductName
+		dataType: string
+		summarizeBy: none
+		sourceColumn: ProductName
+
+	/// Tablet, injection, pen, etc.
+	column DosageForm
+		dataType: string
+		summarizeBy: none
+		sourceColumn: DosageForm
+
+	column Strength
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Strength
+
+	/// WHO Anatomical Therapeutic Chemical classification code.
+	column ATCCode
+		dataType: string
+		summarizeBy: none
+		sourceColumn: ATCCode
+
+	hierarchy 'Product Portfolio'
+
+		level 'Dosage Form'
+			column: DosageForm
+
+		level Product
+			column: ProductName
+
+	partition Product = m
+		mode: import
+		source = ```
+			let
+			    Source = Csv.Document(File.Contents("product.csv"), [Delimiter=","]),
+			    Promoted = Table.PromoteHeaders(Source)
+			in
+			    Promoted
+			```

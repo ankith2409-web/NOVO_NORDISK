@@ -1,0 +1,49 @@
+/// Manufacturing sites operating under GMP licence.
+table Site
+
+	column SiteID
+		dataType: int64
+		isKey
+		summarizeBy: none
+		sourceColumn: SiteID
+
+	column SiteName
+		dataType: string
+		summarizeBy: none
+		sourceColumn: SiteName
+
+	column Country
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Country
+
+	column Region
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Region
+
+	column GMPLicenceNumber
+		dataType: string
+		summarizeBy: none
+		sourceColumn: GMPLicenceNumber
+
+	hierarchy 'Site Geography'
+
+		level Region
+			column: Region
+
+		level Country
+			column: Country
+
+		level Site
+			column: SiteName
+
+	partition Site = m
+		mode: import
+		source = ```
+			let
+			    Source = Csv.Document(File.Contents("site.csv"), [Delimiter=","]),
+			    Promoted = Table.PromoteHeaders(Source)
+			in
+			    Promoted
+			```

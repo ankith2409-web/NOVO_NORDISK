@@ -37,7 +37,7 @@ that tool returned. Every number below comes from the real models in `data/model
 | Measures | 58 | 1 | 4 | 24 |
 | Relationships | 8 | 9 | 2 | 10 |
 | Hierarchies (user / total) | 0 / 2 | 6 / 10 | 0 / 1 | 4 / 4 |
-| Graph nodes / edges | 161 / 275 | 104 / 150 | 58 / 65 | 92 / 151 |
+| Graph nodes / edges | 161 / 275 | 104 / 152 | 58 / 65 | 92 / 151 |
 | Unresolved references | 1 | 0 | 0 | 0 |
 | Unextracted features | 0 | 0 | 0 | 0 |
 | Requirements (BRD / FRD) | 67 / 70 | 17 / 18 | 7 / 9 | 39 / 41 |
@@ -349,7 +349,7 @@ concordance/
     compare.py         diffing, and which requirements it puts in question
   cli.py
 scripts/               report generator for a readable model export
-tests/                 220 tests, run against the real models
+tests/                 232 tests, run against the real models
 data/models/           three Microsoft .pbix samples + an authored TMDL model and its v2
 ```
 

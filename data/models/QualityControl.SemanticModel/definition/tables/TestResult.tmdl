@@ -1,0 +1,94 @@
+/// One row per analytical test performed on a batch.
+table TestResult
+
+	column TestResultID
+		dataType: int64
+		isKey
+		summarizeBy: none
+		sourceColumn: TestResultID
+
+	column BatchID
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: BatchID
+
+	/// Dissolution, Assay, Impurity, Moisture or Content Uniformity.
+	column TestType
+		dataType: string
+		summarizeBy: none
+		sourceColumn: TestType
+
+	column TestDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: TestDate
+
+	column ResultValue
+		dataType: double
+		formatString: 0.00
+		summarizeBy: average
+		sourceColumn: ResultValue
+
+	/// Lower acceptance limit from the approved specification.
+	column SpecificationMin
+		dataType: double
+		formatString: 0.00
+		summarizeBy: none
+		sourceColumn: SpecificationMin
+
+	column SpecificationMax
+		dataType: double
+		formatString: 0.00
+		summarizeBy: none
+		sourceColumn: SpecificationMax
+
+	/// Pass, or Failed where the result fell outside specification.
+	column ResultStatus
+		dataType: string
+		summarizeBy: none
+		sourceColumn: ResultStatus
+
+	/// Instrument used, for calibration traceability.
+	column Instrument
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Instrument
+
+	/// True where the instrument's calibration was current on the test date.
+	column CalibrationCurrent
+		dataType: boolean
+		summarizeBy: none
+		sourceColumn: CalibrationCurrent
+
+	/// How far the result sits outside specification. Zero when in range.
+	column 'Deviation From Spec' =
+		SWITCH(
+		    TRUE(),
+		    TestResult[ResultValue] < TestResult[SpecificationMin],
+		        TestResult[SpecificationMin] - TestResult[ResultValue],
+		    TestResult[ResultValue] > TestResult[SpecificationMax],
+		        TestResult[ResultValue] - TestResult[SpecificationMax],
+		    0
+		)
+		dataType: double
+		formatString: 0.00
+		summarizeBy: average
+
+	hierarchy 'Test Breakdown'
+
+		level 'Test Type'
+			column: TestType
+
+		level Instrument
+			column: Instrument
+
+	partition TestResult = m
+		mode: import
+		source = ```
+			let
+			    Source = Csv.Document(File.Contents("test_result.csv"), [Delimiter=","]),
+			    Promoted = Table.PromoteHeaders(Source)
+			in
+			    Promoted
+			```

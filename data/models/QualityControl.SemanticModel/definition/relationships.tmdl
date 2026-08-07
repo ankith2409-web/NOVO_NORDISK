@@ -1,0 +1,33 @@
+relationship Batch_Product
+	fromColumn: Batch.ProductID
+	toColumn: Product.ProductID
+	toCardinality: one
+
+relationship Batch_Site
+	fromColumn: Batch.SiteID
+	toColumn: Site.SiteID
+	toCardinality: one
+
+relationship Batch_Calendar
+	fromColumn: Batch.ManufactureDate
+	toColumn: Calendar.Date
+	toCardinality: one
+
+relationship TestResult_Batch
+	fromColumn: TestResult.BatchID
+	toColumn: Batch.BatchID
+	toCardinality: one
+
+relationship TestResult_Calendar
+	fromColumn: TestResult.TestDate
+	toColumn: Calendar.Date
+	toCardinality: one
+	crossFilteringBehavior: bothDirections
+
+/// Second date role. Inactive so manufacture date stays the default; used
+/// through USERELATIONSHIP when analysing by release date instead.
+relationship Batch_Calendar_Release
+	isActive: false
+	fromColumn: Batch.ReleaseDate
+	toColumn: Calendar.Date
+	toCardinality: one

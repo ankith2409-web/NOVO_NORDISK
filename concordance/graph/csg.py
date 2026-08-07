@@ -60,7 +60,11 @@ class SemanticGraph:
 
     def __init__(self, model: SemanticModel) -> None:
         self.model = model
-        self.graph = nx.DiGraph()
+        # MultiDiGraph, not DiGraph: two tables can be joined more than once.
+        # A role-playing date dimension -- Batch[ManufactureDate] and
+        # Batch[ReleaseDate] both pointing at Calendar[Date] -- is ordinary in
+        # real models, and a DiGraph silently keeps only the last one written.
+        self.graph = nx.MultiDiGraph()
         self.unresolved: list[UnresolvedReference] = []
         self._build()
 
@@ -93,7 +97,9 @@ class SemanticGraph:
                 expression=column.expression,
                 fingerprint=column.fingerprint,
             )
-            self.graph.add_edge(table_id(column.table), node, kind=EdgeKind.CONTAINS)
+            self.graph.add_edge(
+                table_id(column.table), node, key=EdgeKind.CONTAINS, kind=EdgeKind.CONTAINS
+            )
 
         for measure in self.model.measures:
             node = measure_id(measure.table, measure.name)
@@ -107,7 +113,9 @@ class SemanticGraph:
                 display_folder=measure.display_folder,
                 description=measure.description,
             )
-            self.graph.add_edge(table_id(measure.table), node, kind=EdgeKind.DEFINES)
+            self.graph.add_edge(
+                table_id(measure.table), node, key=EdgeKind.DEFINES, kind=EdgeKind.DEFINES
+            )
 
         self._add_hierarchies()
         self._link_measure_dependencies()
@@ -117,6 +125,10 @@ class SemanticGraph:
             self.graph.add_edge(
                 table_id(rel.from_table),
                 table_id(rel.to_table),
+                # Keyed by the joining columns so two relationships between the
+                # same pair of tables coexist instead of overwriting each other.
+                # Re-extracting the same model still yields one edge per join.
+                key=f"{rel.from_column}->{rel.to_column}",
                 kind=EdgeKind.JOINS,
                 from_column=rel.from_column,
                 to_column=rel.to_column,
@@ -158,7 +170,9 @@ class SemanticGraph:
                         )
                     )
                     continue
-                self.graph.add_edge(source, target, kind=EdgeKind.REFERENCES)
+                self.graph.add_edge(
+                    source, target, key=EdgeKind.REFERENCES, kind=EdgeKind.REFERENCES
+                )
 
             for name in measure.depends_on_measures:
                 target = by_name.get(name.casefold())
@@ -168,12 +182,18 @@ class SemanticGraph:
                     )
                     continue
                 if target != source:  # a measure referencing itself adds nothing
-                    self.graph.add_edge(source, target, kind=EdgeKind.REFERENCES)
+                    self.graph.add_edge(
+                        source, target,
+                        key=EdgeKind.REFERENCES, kind=EdgeKind.REFERENCES,
+                    )
 
             # A whole-table read such as COUNTROWS(Patient). Resolved by the
             # adapter against real table names, so anything here exists.
             for name in measure.depends_on_tables:
-                self.graph.add_edge(source, table_id(name), kind=EdgeKind.REFERENCES)
+                self.graph.add_edge(
+                    source, table_id(name),
+                    key=EdgeKind.REFERENCES, kind=EdgeKind.REFERENCES,
+                )
 
     def _add_hierarchies(self) -> None:
         """Add hierarchies and bind each level to the column that supplies it."""
@@ -218,7 +238,9 @@ class SemanticGraph:
                         )
                     )
                     continue
-                self.graph.add_edge(node, target, kind=EdgeKind.REFERENCES)
+                self.graph.add_edge(
+                    node, target, key=EdgeKind.REFERENCES, kind=EdgeKind.REFERENCES
+                )
 
     @staticmethod
     def _why_unresolved(
@@ -252,7 +274,9 @@ class SemanticGraph:
             for table, name in candidates:
                 target = columns.get((table.casefold(), name.casefold()))
                 if target is not None and target != source:
-                    self.graph.add_edge(source, target, kind=EdgeKind.REFERENCES)
+                    self.graph.add_edge(
+                    source, target, key=EdgeKind.REFERENCES, kind=EdgeKind.REFERENCES
+                )
 
     # -- queries ------------------------------------------------------------
 
@@ -345,7 +369,14 @@ class SemanticGraph:
             "edges": [
                 {"source": s, "target": t, **data}
                 for s, t, data in sorted(
-                    self.graph.edges(data=True), key=lambda e: (e[0], e[1])
+                    # (source, target) alone is no longer unique on a
+                    # MultiDiGraph, so the edge kind and columns join the sort
+                    # key to keep serialisation deterministic.
+                    self.graph.edges(data=True),
+                    key=lambda e: (
+                        e[0], e[1], e[2].get("kind", ""),
+                        e[2].get("from_column", ""), e[2].get("to_column", ""),
+                    ),
                 )
             ],
             "unresolved": [

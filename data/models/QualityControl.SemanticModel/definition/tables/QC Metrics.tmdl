@@ -1,0 +1,130 @@
+/// Reportable quality and manufacturing KPIs. Holds no data of its own.
+table 'QC Metrics'
+
+	column Placeholder
+		dataType: int64
+		isHidden
+		summarizeBy: none
+		sourceColumn: Placeholder
+
+	measure 'Batches Manufactured' = COUNTROWS(Batch)
+		formatString: #,0
+		displayFolder: Production
+
+	measure 'Batches Released' = CALCULATE([Batches Manufactured], Batch[Status] = "Released")
+		formatString: #,0
+		displayFolder: Production
+
+	measure 'Batches Rejected' = CALCULATE([Batches Manufactured], Batch[Status] = "Rejected")
+		formatString: #,0
+		displayFolder: Production
+
+	/// Share of manufactured batches that failed release.
+	measure 'Batch Rejection Rate' = DIVIDE([Batches Rejected], [Batches Manufactured], 0)
+		formatString: 0.0%
+		displayFolder: Production
+
+	/// Actual output against the theoretical yield in the batch record.
+	measure 'Batch Yield %' = DIVIDE(SUM(Batch[ActualYield]), SUM(Batch[TheoreticalYield]), BLANK())
+		formatString: 0.0%
+		displayFolder: Production
+
+	/// Batches passing every test with no deviation or rework.
+	measure 'Right First Time %' =
+		DIVIDE(
+		    CALCULATE([Batches Manufactured], Batch[RightFirstTime] = TRUE()),
+		    [Batches Manufactured],
+		    0
+		)
+		formatString: 0.0%
+		displayFolder: Production
+
+	measure 'Average Days To Release' = AVERAGE(Batch['Days To Release'])
+		formatString: #,0.0
+		displayFolder: Production
+
+	measure 'Tests Performed' = COUNTROWS(TestResult)
+		formatString: #,0
+		displayFolder: Testing
+
+	/// Results falling outside the approved specification.
+	measure 'OOS Results' = CALCULATE([Tests Performed], TestResult[ResultStatus] = "Failed")
+		formatString: #,0
+		displayFolder: Testing
+
+	/// Out-of-specification results as a share of all tests performed.
+	/// NOTE: the warehouse view of the same name divides by batches, not tests.
+	measure 'OOS Rate' = DIVIDE([OOS Results], [Tests Performed], 0)
+		formatString: 0.00%
+		displayFolder: Testing
+
+	measure 'Dissolution Pass Rate' =
+		VAR DissolutionTests = CALCULATE([Tests Performed], TestResult[TestType] = "Dissolution")
+		VAR DissolutionPasses =
+		    CALCULATE(
+		        [Tests Performed],
+		        TestResult[TestType] = "Dissolution",
+		        TestResult[ResultStatus] = "Pass"
+		    )
+		RETURN
+		    DIVIDE(DissolutionPasses, DissolutionTests, BLANK())
+		formatString: 0.0%
+		displayFolder: Testing
+
+	/// Mean assay result, against a label claim of 100%.
+	measure 'Assay Mean' = CALCULATE(AVERAGE(TestResult[ResultValue]), TestResult[TestType] = "Assay")
+		formatString: 0.00
+		displayFolder: Testing
+
+	/// How far out-of-specification results sat, on average.
+	measure 'Mean Deviation From Spec' =
+		CALCULATE(AVERAGE(TestResult['Deviation From Spec']), TestResult[ResultStatus] = "Failed")
+		formatString: 0.000
+		displayFolder: Testing
+
+	/// Tests run on instruments whose calibration had lapsed -- a compliance risk.
+	measure 'Tests On Uncalibrated Instruments' =
+		CALCULATE([Tests Performed], TestResult[CalibrationCurrent] = FALSE())
+		formatString: #,0
+		displayFolder: Compliance
+
+	measure 'Calibration Compliance %' =
+		DIVIDE(
+		    [Tests Performed] - [Tests On Uncalibrated Instruments],
+		    [Tests Performed],
+		    BLANK()
+		)
+		formatString: 0.0%
+		displayFolder: Compliance
+
+	measure 'OOS Results PM' = CALCULATE([OOS Results], PREVIOUSMONTH('Calendar'[Date]))
+		formatString: #,0
+		displayFolder: Testing
+
+	/// Month-on-month movement in out-of-specification results.
+	measure 'OOS Variance vs PM' = [OOS Results] - [OOS Results PM]
+		formatString: +#,0;-#,0;0
+		displayFolder: Testing
+
+	/// Ranks instruments by how many failures they produced.
+	measure 'Instrument Failure Rank' =
+		RANKX(ALL(TestResult[Instrument]), [OOS Results],, DESC)
+		formatString: #,0
+		displayFolder: Compliance
+
+	/// Batches analysed by release date rather than manufacture date.
+	measure 'Batches By Release Date' =
+		CALCULATE([Batches Manufactured], USERELATIONSHIP(Batch[ReleaseDate], 'Calendar'[Date]))
+		formatString: #,0
+		displayFolder: Production
+
+	/// Release readiness shown against rejection thresholds for at-a-glance review.
+	measure 'Quality Status' =
+		SWITCH(
+		    TRUE(),
+		    ISBLANK([Batch Rejection Rate]), "No batches",
+		    [Batch Rejection Rate] > 0.05, "Above rejection threshold",
+		    [Batch Rejection Rate] > 0.02, "Elevated rejections",
+		    "Within expected range"
+		)
+		displayFolder: Production
