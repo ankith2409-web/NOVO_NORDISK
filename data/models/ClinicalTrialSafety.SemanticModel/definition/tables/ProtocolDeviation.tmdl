@@ -1,0 +1,45 @@
+/// Departures from the approved protocol, recorded per study and site.
+table ProtocolDeviation
+
+	column DeviationID
+		dataType: int64
+		isKey
+		summarizeBy: none
+		sourceColumn: DeviationID
+
+	column StudyID
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: StudyID
+
+	column SiteID
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: SiteID
+
+	column ReportedDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: ReportedDate
+
+	column Category
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Category
+
+	/// Major deviations are reportable to the regulator.
+	column IsMajor
+		dataType: boolean
+		summarizeBy: none
+		sourceColumn: IsMajor
+
+	partition ProtocolDeviation = m
+		mode: import
+		source = ```
+			let
+			    Source = Csv.Document(File.Contents("protocol_deviation.csv"), [Delimiter=","]),
+			    Promoted = Table.PromoteHeaders(Source)
+			in
+			    Promoted
+			```

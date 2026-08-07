@@ -1,0 +1,16 @@
+/// Clinical trial operations and post-marketing safety surveillance.
+/// Synthetic model authored for the Novo Nordisk GBS Hackathon 2026 --
+/// structure mirrors real clinical/pharmacovigilance reporting, no real
+/// patient or product data is present.
+model Model
+	culture: en-GB
+	defaultPowerBIDataSourceVersion: powerBI_V3
+
+ref table Study
+ref table Site
+ref table Patient
+ref table AdverseEvent
+ref table ProtocolDeviation
+ref table Product
+ref table Calendar
+ref table 'Clinical Metrics'

@@ -1,0 +1,56 @@
+relationship Patient_Study
+	fromColumn: Patient.StudyID
+	toColumn: Study.StudyID
+	toCardinality: one
+
+relationship Patient_Site
+	fromColumn: Patient.SiteID
+	toColumn: Site.SiteID
+	toCardinality: one
+
+relationship AdverseEvent_Patient
+	fromColumn: AdverseEvent.PatientID
+	toColumn: Patient.PatientID
+	toCardinality: one
+
+relationship AdverseEvent_Product
+	fromColumn: AdverseEvent.ProductID
+	toColumn: Product.ProductID
+	toCardinality: one
+
+relationship AdverseEvent_Calendar
+	fromColumn: AdverseEvent.ReportedDate
+	toColumn: Calendar.Date
+	toCardinality: one
+
+relationship ProtocolDeviation_Study
+	fromColumn: ProtocolDeviation.StudyID
+	toColumn: Study.StudyID
+	toCardinality: one
+
+relationship ProtocolDeviation_Site
+	fromColumn: ProtocolDeviation.SiteID
+	toColumn: Site.SiteID
+	toCardinality: one
+
+relationship ProtocolDeviation_Calendar
+	fromColumn: ProtocolDeviation.ReportedDate
+	toColumn: Calendar.Date
+	toCardinality: one
+
+/// Events already reach Study through Patient, so this direct path is kept
+/// inactive to avoid an ambiguous filter route. Activated deliberately where
+/// a calculation needs to bypass the patient grain.
+relationship AdverseEvent_Study
+	isActive: false
+	fromColumn: AdverseEvent.StudyID
+	toColumn: Study.StudyID
+	toCardinality: one
+
+/// Second date role. Inactive so the reported date stays the default; used
+/// through USERELATIONSHIP when analysing by enrolment date instead.
+relationship Patient_Calendar_Enrollment
+	isActive: false
+	fromColumn: Patient.EnrollmentDate
+	toColumn: Calendar.Date
+	toCardinality: one

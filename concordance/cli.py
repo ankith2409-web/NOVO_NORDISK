@@ -20,6 +20,12 @@ from concordance.normalize.dax import canonicalise
 
 
 def _load(path: str) -> SemanticGraph:
+    """Load a model, choosing the adapter by what the path actually is."""
+    from concordance.adapters.tmdl import TmdlAdapter
+
+    target = Path(path)
+    if target.is_dir() or target.suffix.lower() in {".pbip", ".tmdl"}:
+        return SemanticGraph(TmdlAdapter().extract(path))
     return SemanticGraph(PbixAdapter().extract(path))
 
 

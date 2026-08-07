@@ -1,0 +1,102 @@
+/// Adverse events reported during trials and from post-marketing sources.
+/// Terms follow MedDRA structure: System Organ Class above Preferred Term.
+table AdverseEvent
+
+	column AdverseEventID
+		dataType: int64
+		isKey
+		summarizeBy: none
+		sourceColumn: AdverseEventID
+
+	column PatientID
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: PatientID
+
+	column StudyID
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: StudyID
+
+	column ProductID
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: ProductID
+
+	column ReportedDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: ReportedDate
+
+	column OnsetDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: OnsetDate
+
+	/// MedDRA System Organ Class -- the highest grouping level.
+	column SystemOrganClass
+		dataType: string
+		summarizeBy: none
+		sourceColumn: SystemOrganClass
+
+	/// MedDRA Preferred Term -- the reported event itself.
+	column PreferredTerm
+		dataType: string
+		summarizeBy: none
+		sourceColumn: PreferredTerm
+
+	/// CTCAE grade 1-5.
+	column Severity
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Severity
+
+	/// "Serious" where the event met a regulatory seriousness criterion.
+	column Seriousness
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Seriousness
+
+	/// Investigator assessment of relatedness to study drug.
+	column Causality
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Causality
+
+	column Outcome
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Outcome
+
+	/// Source of the report: clinical trial or post-marketing surveillance.
+	column ReportSource
+		dataType: string
+		summarizeBy: none
+		sourceColumn: ReportSource
+
+	/// Regulatory reporting clock starts at the date of awareness.
+	column 'Days To Report' =
+		DATEDIFF(AdverseEvent[OnsetDate], AdverseEvent[ReportedDate], DAY)
+		dataType: int64
+		summarizeBy: average
+
+	/// Standard MedDRA drill path used across safety reporting.
+	hierarchy 'MedDRA Terms'
+
+		level 'System Organ Class'
+			column: SystemOrganClass
+
+		level 'Preferred Term'
+			column: PreferredTerm
+
+	partition AdverseEvent = m
+		mode: import
+		source = ```
+			let
+			    Source = Csv.Document(File.Contents("adverse_event.csv"), [Delimiter=","]),
+			    Promoted = Table.PromoteHeaders(Source)
+			in
+			    Promoted
+			```

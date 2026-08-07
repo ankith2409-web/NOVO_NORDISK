@@ -11,7 +11,8 @@ data/out/
 
 # Sample .pbix models (~16MB of binaries). Kept out of version control; place
 # them in data/models/ locally. Tests skip cleanly when they are absent.
-data/models/
+# Only the binaries are excluded -- TMDL models are text and belong in git.
+data/models/*.pbix
 
 .env
 .DS_Store

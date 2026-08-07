@@ -1,0 +1,146 @@
+/// Reportable clinical and safety KPIs. Holds no data of its own.
+table 'Clinical Metrics'
+
+	column Placeholder
+		dataType: int64
+		isHidden
+		summarizeBy: none
+		sourceColumn: Placeholder
+
+	/// Subjects enrolled within the current filter context.
+	measure 'Patients Enrolled' = COUNTROWS(Patient)
+		formatString: #,0
+		displayFolder: Recruitment
+
+	/// Protocol-agreed recruitment target for the studies in context.
+	measure 'Target Enrollment' = SUM(Study[TargetEnrollment])
+		formatString: #,0
+		displayFolder: Recruitment
+
+	/// Recruitment against plan. Below 1 means the study is behind target.
+	measure 'Enrollment Rate' = DIVIDE([Patients Enrolled], [Target Enrollment], BLANK())
+		formatString: 0.0%
+		displayFolder: Recruitment
+
+	measure 'Patients Enrolled PM' = CALCULATE([Patients Enrolled], PREVIOUSMONTH('Calendar'[Date]))
+		formatString: #,0
+		displayFolder: Recruitment
+
+	/// Month-on-month movement in recruitment.
+	measure 'Enrollment Variance vs PM' = [Patients Enrolled] - [Patients Enrolled PM]
+		formatString: +#,0;-#,0;0
+		displayFolder: Recruitment
+
+	measure 'Sites Activated' = DISTINCTCOUNT(Site[SiteID])
+		formatString: #,0
+		displayFolder: Recruitment
+
+	/// All adverse events reported, regardless of seriousness.
+	measure 'Adverse Event Count' = COUNTROWS(AdverseEvent)
+		formatString: #,0
+		displayFolder: Safety
+
+	/// Events meeting a regulatory seriousness criterion.
+	measure 'Serious Adverse Events' = CALCULATE([Adverse Event Count], AdverseEvent[Seriousness] = "Serious")
+		formatString: #,0
+		displayFolder: Safety
+
+	/// SAEs normalised per 100 subjects so studies of different sizes compare.
+	measure 'SAE Rate per 100 Patients' = DIVIDE([Serious Adverse Events], [Patients Enrolled], 0) * 100
+		formatString: 0.00
+		displayFolder: Safety
+
+	/// Events the investigator assessed as related to study drug.
+	measure 'Drug Related Events' =
+		CALCULATE(
+		    [Adverse Event Count],
+		    AdverseEvent[Causality] IN { "Related", "Probably Related", "Possibly Related" }
+		)
+		formatString: #,0
+		displayFolder: Safety
+
+	measure 'Adverse Events PM' = CALCULATE([Adverse Event Count], PREVIOUSMONTH('Calendar'[Date]))
+		formatString: #,0
+		displayFolder: Safety
+
+	/// Proportional reporting ratio: how over-represented this event is for
+	/// this product compared with all other products under surveillance.
+	measure 'Signal Score (PRR)' =
+		VAR EventsForProduct = [Adverse Event Count]
+		VAR AllEventsForProduct = CALCULATE([Adverse Event Count], REMOVEFILTERS(AdverseEvent[PreferredTerm]))
+		VAR EventsAllProducts = CALCULATE([Adverse Event Count], REMOVEFILTERS(Product))
+		VAR AllEventsAllProducts = CALCULATE([Adverse Event Count], REMOVEFILTERS(Product), REMOVEFILTERS(AdverseEvent[PreferredTerm]))
+		RETURN
+		    DIVIDE(
+		        DIVIDE(EventsForProduct, AllEventsForProduct),
+		        DIVIDE(EventsAllProducts, AllEventsAllProducts)
+		    )
+		formatString: 0.00
+		displayFolder: Safety
+
+	/// Ranks reported terms so the most frequent surface first.
+	measure 'Event Term Rank' = RANKX(ALL(AdverseEvent[PreferredTerm]), [Adverse Event Count],, DESC)
+		formatString: #,0
+		displayFolder: Safety
+
+	/// Median regulatory reporting lag, in days from onset to report.
+	measure 'Median Days To Report' = MEDIAN(AdverseEvent[Days To Report])
+		formatString: #,0
+		displayFolder: Safety
+
+	/// Events analysed by the date the subject entered the study rather than
+	/// the date the event was reported.
+	measure 'Adverse Events by Enrollment Date' =
+		CALCULATE(
+		    [Adverse Event Count],
+		    USERELATIONSHIP(Patient[EnrollmentDate], 'Calendar'[Date])
+		)
+		formatString: #,0
+		displayFolder: Safety
+
+	measure 'Protocol Deviations' = COUNTROWS(ProtocolDeviation)
+		formatString: #,0
+		displayFolder: Compliance
+
+	/// Deviations that are reportable to the regulator.
+	measure 'Major Protocol Deviations' = CALCULATE([Protocol Deviations], ProtocolDeviation[IsMajor] = TRUE())
+		formatString: #,0
+		displayFolder: Compliance
+
+	measure 'Deviations per Site' = DIVIDE([Protocol Deviations], [Sites Activated], 0)
+		formatString: 0.00
+		displayFolder: Compliance
+
+	/// Subjects who left the study before completing treatment.
+	measure 'Discontinued Patients' = CALCULATE([Patients Enrolled], NOT ISBLANK(Patient[DiscontinuationDate]))
+		formatString: #,0
+		displayFolder: Retention
+
+	/// Dropout as a share of everyone enrolled.
+	measure 'Dropout Rate' = DIVIDE([Discontinued Patients], [Patients Enrolled], 0)
+		formatString: 0.0%
+		displayFolder: Retention
+
+	measure 'Completed Treatment' = CALCULATE([Patients Enrolled], Patient[CompletedTreatment] = TRUE())
+		formatString: #,0
+		displayFolder: Retention
+
+	/// Share of enrolled subjects who finished the treatment period.
+	measure 'Trial Completion Rate' = DIVIDE([Completed Treatment], [Patients Enrolled], 0)
+		formatString: 0.0%
+		displayFolder: Retention
+
+	measure 'Average Days On Treatment' = AVERAGE(Patient[Days On Treatment])
+		formatString: #,0
+		displayFolder: Retention
+
+	/// Recruitment status shown against plan for at-a-glance review.
+	measure 'Enrollment Status' =
+		SWITCH(
+		    TRUE(),
+		    ISBLANK([Enrollment Rate]), "No target set",
+		    [Enrollment Rate] >= 1, "At or above target",
+		    [Enrollment Rate] >= 0.8, "Approaching target",
+		    "Behind target"
+		)
+		displayFolder: Recruitment
