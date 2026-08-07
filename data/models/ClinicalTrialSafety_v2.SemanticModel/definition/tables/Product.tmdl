@@ -1,0 +1,39 @@
+/// Investigational and marketed products under safety surveillance.
+table Product
+
+	column ProductID
+		dataType: int64
+		isKey
+		summarizeBy: none
+		sourceColumn: ProductID
+
+	column ProductName
+		dataType: string
+		summarizeBy: none
+		sourceColumn: ProductName
+
+	/// WHO Anatomical Therapeutic Chemical classification code.
+	column ATCCode
+		dataType: string
+		summarizeBy: none
+		sourceColumn: ATCCode
+
+	column Formulation
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Formulation
+
+	column MarketingStatus
+		dataType: string
+		summarizeBy: none
+		sourceColumn: MarketingStatus
+
+	partition Product = m
+		mode: import
+		source = ```
+			let
+			    Source = Csv.Document(File.Contents("product.csv"), [Delimiter=","]),
+			    Promoted = Table.PromoteHeaders(Source)
+			in
+			    Promoted
+			```

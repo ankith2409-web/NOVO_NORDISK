@@ -309,6 +309,61 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_snapshot(args: argparse.Namespace) -> int:
+    """Record the current fingerprints of a model."""
+    from concordance.drift import snapshot as snap
+
+    graph = _load(args.source)
+    taken = snap.take(graph, label=args.label or "")
+
+    out = Path(args.out) if args.out else (
+        Path("data/snapshots") / f"{graph.model.name}.{args.label or 'latest'}.json"
+    )
+    taken.save(out)
+
+    print(f"\n{taken.model_name}  [{taken.label or 'unlabelled'}]")
+    print(f"  {len(taken.objects)} fingerprinted objects")
+    print(f"  taken {taken.taken_at}")
+    print(f"  written to {out}\n")
+    return 0
+
+
+def _as_snapshot(path: str, label: str):
+    """Read a snapshot file, or take one from a model on the spot."""
+    from concordance.drift import snapshot as snap
+
+    target = Path(path)
+    if target.is_file() and target.suffix == ".json":
+        return snap.load(target), None
+    graph = _load(path)
+    return snap.take(graph, label=label), graph
+
+
+def cmd_drift(args: argparse.Namespace) -> int:
+    """Compare two versions of a model and report what moved."""
+    from concordance.drift.compare import compare, to_text
+
+    before, _ = _as_snapshot(args.before, "before")
+    after, after_graph = _as_snapshot(args.after, "after")
+
+    if before.model_name != after.model_name and not args.allow_different_models:
+        print(
+            f"Refusing to compare {before.model_name!r} against {after.model_name!r}: "
+            f"these look like different models, so every object would appear added "
+            f"or removed. Pass --allow-different-models if that is genuinely what "
+            f"you want.",
+            file=sys.stderr,
+        )
+        return 2
+
+    report = compare(before, after, after_graph=after_graph)
+    print()
+    print(to_text(report))
+    print()
+    # Non-zero when drift is found, so this can gate a pipeline.
+    return 1 if (report.has_drift and args.fail_on_drift) else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="concordance",
@@ -343,6 +398,21 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--show-tools", action="store_true",
                    help="show which tools were called to reach the answer")
     p.set_defaults(func=cmd_ask)
+
+    p = sub.add_parser("snapshot", help="record a model's fingerprints for later comparison")
+    p.add_argument("source", help="path to a .pbix file or TMDL model folder")
+    p.add_argument("--label", help="name for this snapshot, e.g. v1 or 2026-08-07")
+    p.add_argument("-o", "--out", help="output path")
+    p.set_defaults(func=cmd_snapshot)
+
+    p = sub.add_parser("drift", help="compare two model versions and report what changed")
+    p.add_argument("before", help="a snapshot .json, or a model to snapshot now")
+    p.add_argument("after", help="a snapshot .json, or a model to snapshot now")
+    p.add_argument("--fail-on-drift", action="store_true",
+                   help="exit non-zero when drift is found, for use in a pipeline")
+    p.add_argument("--allow-different-models", action="store_true",
+                   help="compare across differently-named models")
+    p.set_defaults(func=cmd_drift)
 
     p = sub.add_parser("serve", help="run a local web chat interface for a model")
     p.add_argument("source", help="path to a .pbix file or TMDL model folder")

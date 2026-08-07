@@ -1,0 +1,68 @@
+/// One row per clinical study protocol.
+table Study
+
+	column StudyID
+		dataType: int64
+		isKey
+		summarizeBy: none
+		sourceColumn: StudyID
+
+	/// Protocol identifier as printed on study documentation.
+	column StudyCode
+		dataType: string
+		summarizeBy: none
+		sourceColumn: StudyCode
+
+	column Phase
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Phase
+
+	column TherapeuticArea
+		dataType: string
+		summarizeBy: none
+		sourceColumn: TherapeuticArea
+
+	column Indication
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Indication
+
+	column StartDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: StartDate
+
+	/// Planned number of patients agreed in the protocol.
+	column TargetEnrollment
+		dataType: int64
+		summarizeBy: sum
+		sourceColumn: TargetEnrollment
+
+	column Status
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Status
+
+	/// Navigation from therapeutic area down to the individual protocol.
+	hierarchy 'Study Portfolio'
+
+		level TherapeuticArea
+			column: TherapeuticArea
+
+		level Indication
+			column: Indication
+
+		level Study
+			column: StudyCode
+
+	partition Study = m
+		mode: import
+		source = ```
+			let
+			    Source = Csv.Document(File.Contents("study.csv"), [Delimiter=","]),
+			    Promoted = Table.PromoteHeaders(Source)
+			in
+			    Promoted
+			```

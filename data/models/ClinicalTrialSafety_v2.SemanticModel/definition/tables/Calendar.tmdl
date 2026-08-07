@@ -1,0 +1,51 @@
+/// Date dimension marked as the model's date table.
+table Calendar
+	dataCategory: Time
+
+	column Date
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		isKey
+		summarizeBy: none
+		sourceColumn: Date
+
+	column Year
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: Year
+
+	column Quarter
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Quarter
+
+	column Month
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Month
+
+	column MonthNo
+		dataType: int64
+		isHidden
+		summarizeBy: none
+		sourceColumn: MonthNo
+
+	hierarchy 'Calendar Periods'
+
+		level Year
+			column: Year
+
+		level Quarter
+			column: Quarter
+
+		level Month
+			column: Month
+
+	partition Calendar = m
+		mode: import
+		source = ```
+			let
+			    Source = Calendar.Dates(#date(2023,1,1), 1461, #duration(1,0,0,0))
+			in
+			    Source
+			```

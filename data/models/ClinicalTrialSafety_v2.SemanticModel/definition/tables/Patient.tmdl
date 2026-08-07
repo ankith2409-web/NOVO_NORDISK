@@ -1,0 +1,77 @@
+/// One row per enrolled subject. Pseudonymised -- no direct identifiers.
+table Patient
+
+	column PatientID
+		dataType: int64
+		isKey
+		summarizeBy: none
+		sourceColumn: PatientID
+
+	column StudyID
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: StudyID
+
+	column SiteID
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: SiteID
+
+	column AgeGroup
+		dataType: string
+		summarizeBy: none
+		sourceColumn: AgeGroup
+
+	column Sex
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Sex
+
+	/// Randomised arm. "Placebo" or an active dose level.
+	column TreatmentArm
+		dataType: string
+		summarizeBy: none
+		sourceColumn: TreatmentArm
+
+	column EnrollmentDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: EnrollmentDate
+
+	/// Null while the subject remains on study.
+	column DiscontinuationDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: DiscontinuationDate
+
+	column DiscontinuationReason
+		dataType: string
+		summarizeBy: none
+		sourceColumn: DiscontinuationReason
+
+	column CompletedTreatment
+		dataType: boolean
+		summarizeBy: none
+		sourceColumn: CompletedTreatment
+
+	/// Days between enrolment and discontinuation, or to today if ongoing.
+	column 'Days On Treatment' =
+		DATEDIFF(
+		    Patient[EnrollmentDate],
+		    COALESCE(Patient[DiscontinuationDate], TODAY()),
+		    DAY
+		)
+		dataType: int64
+		summarizeBy: sum
+
+	partition Patient = m
+		mode: import
+		source = ```
+			let
+			    Source = Csv.Document(File.Contents("patient.csv"), [Delimiter=","]),
+			    Promoted = Table.PromoteHeaders(Source)
+			in
+			    Promoted
+			```
