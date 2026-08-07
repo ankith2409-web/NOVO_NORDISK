@@ -246,6 +246,52 @@ def cmd_document(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ask(args: argparse.Namespace) -> int:
+    """Ask a question about a model, or open an interactive session."""
+    from concordance.agent.chat import ModelChat
+    from concordance.llm.base import LlmError
+    from concordance.llm.gemini import GeminiProvider
+
+    graph = _load(args.source)
+    try:
+        provider = GeminiProvider(model=args.model)
+    except LlmError as error:
+        print(f"{error}", file=sys.stderr)
+        return 2
+
+    chat = ModelChat(graph, provider)
+
+    def answer(question: str) -> None:
+        try:
+            exchange = chat.ask(question)
+        except LlmError as error:
+            print(f"\n  {error}\n", file=sys.stderr)
+            return
+        print(f"\n{exchange.answer}\n")
+        if args.show_tools:
+            for name, arguments in exchange.tool_calls:
+                print(f"  · {name}({', '.join(f'{k}={v!r}' for k, v in arguments.items())})")
+            for rejected in exchange.rejected_calls:
+                print(f"  · {rejected} — rejected, no such tool")
+            if not exchange.grounded:
+                print("  · answered without consulting the model")
+            print()
+
+    if args.question:
+        answer(" ".join(args.question))
+        return 0
+
+    print(f"Asking about {graph.model.name} via {provider.name}. Ctrl-D to exit.")
+    while True:
+        try:
+            question = input("\n> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
+        if question:
+            answer(question)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="concordance",
@@ -272,6 +318,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("source", help="path to a .pbix file")
     p.add_argument("measure", help="measure name")
     p.set_defaults(func=cmd_verify)
+
+    p = sub.add_parser("ask", help="ask questions about a model")
+    p.add_argument("source", help="path to a .pbix file or TMDL model folder")
+    p.add_argument("question", nargs="*", help="question; omit for interactive mode")
+    p.add_argument("--model", default="gemini-3.6-flash", help="Gemini model to use")
+    p.add_argument("--show-tools", action="store_true",
+                   help="show which tools were called to reach the answer")
+    p.set_defaults(func=cmd_ask)
 
     p = sub.add_parser("document", help="generate a BRD or FRD from a model")
     p.add_argument("source", help="path to a .pbix file")
