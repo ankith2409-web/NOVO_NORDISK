@@ -75,6 +75,10 @@ _FUNCTIONAL_ORDER = [
     "Measure definitions",
     "Derived attributes",
     "Hierarchy definitions",
+    # Objects the model declares but leaves undefined, and features the
+    # extractor could not read. Both belong at the end, where a reader looking
+    # for the edges of the specification will find them together.
+    "Incomplete definitions",
     "Documented gaps",
 ]
 

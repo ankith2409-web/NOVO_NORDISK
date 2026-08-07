@@ -106,6 +106,39 @@ class RequirementDeriver:
 
         for measure in self.model.measures:
             node = measure_id(measure.table, measure.name)
+            evidence = (
+                Evidence(
+                    node_id=node,
+                    fingerprint=measure.fingerprint,
+                    detail=measure.expression.strip(),
+                ),
+            )
+
+            # A measure with no expression is broken, not simple. Asserting
+            # "shall be implemented exactly as the expression recorded here"
+            # when nothing is recorded is precisely the confidently-wrong
+            # documentation this project exists to prevent.
+            if not measure.expression.strip():
+                out.append(
+                    Requirement(
+                        id=f"REQ-F-{_identity('measure', measure.table, measure.name)}",
+                        kind=Kind.FUNCTIONAL,
+                        category="Incomplete definitions",
+                        statement=(
+                            f"**{measure.qualified_name}** is declared but carries no "
+                            f"expression. Its calculation must be supplied before this "
+                            f"specification can be considered complete."
+                        ),
+                        rationale=(
+                            "The model declares the measure without a definition, so "
+                            "what it computes cannot be established from the model."
+                        ),
+                        confidence=Confidence.LOW,
+                        evidence=evidence,
+                    )
+                )
+                continue
+
             detected = patterns.detect(measure.expression)
             behaviour = detected[0] if detected else None
 
@@ -142,13 +175,7 @@ class RequirementDeriver:
                         f"model, so the business tracks this quantity."
                     ),
                     confidence=Confidence.HIGH,
-                    evidence=(
-                        Evidence(
-                            node_id=node,
-                            fingerprint=measure.fingerprint,
-                            detail=measure.expression.strip(),
-                        ),
-                    ),
+                    evidence=evidence,
                 )
             )
 
@@ -174,13 +201,7 @@ class RequirementDeriver:
                         "any change to it changes the reported figure."
                     ),
                     confidence=Confidence.HIGH,
-                    evidence=(
-                        Evidence(
-                            node_id=node,
-                            fingerprint=measure.fingerprint,
-                            detail=measure.expression.strip(),
-                        ),
-                    ),
+                    evidence=evidence,
                 )
             )
 
@@ -286,6 +307,30 @@ class RequirementDeriver:
                 ),
             )
 
+            # A hierarchy without levels defines no drill path. Left unguarded
+            # this produced "following the path ." and "shall contain 0 levels
+            # in this order: ." -- malformed text asserted at high confidence.
+            if not hierarchy.levels:
+                out.append(
+                    Requirement(
+                        id=f"REQ-F-{ident}",
+                        kind=Kind.FUNCTIONAL,
+                        category="Incomplete definitions",
+                        statement=(
+                            f"The **{hierarchy.name}** hierarchy on `{hierarchy.table}` "
+                            f"is declared but defines no levels. Its drill path must be "
+                            f"specified before this document is complete."
+                        ),
+                        rationale=(
+                            "A hierarchy with no levels provides no navigation, so the "
+                            "intended drill sequence cannot be read from the model."
+                        ),
+                        confidence=Confidence.LOW,
+                        evidence=evidence,
+                    )
+                )
+                continue
+
             out.append(
                 Requirement(
                     id=f"REQ-B-{ident}",
@@ -340,6 +385,36 @@ class RequirementDeriver:
             if not column.is_calculated or column.table in self._system_tables:
                 continue
 
+            expression = (column.expression or "").strip()
+            evidence = (
+                Evidence(
+                    node_id=f"column:{column.qualified_name}",
+                    fingerprint=column.fingerprint,
+                    detail=expression,
+                ),
+            )
+
+            if not expression:
+                out.append(
+                    Requirement(
+                        id=f"REQ-F-{_identity('column', column.table, column.name)}",
+                        kind=Kind.FUNCTIONAL,
+                        category="Incomplete definitions",
+                        statement=(
+                            f"The column `{column.qualified_name}` is marked as "
+                            f"calculated but carries no expression. Its derivation must "
+                            f"be supplied."
+                        ),
+                        rationale=(
+                            "Without an expression the model does not say how the value "
+                            "is produced, so it cannot be specified from the model."
+                        ),
+                        confidence=Confidence.LOW,
+                        evidence=evidence,
+                    )
+                )
+                continue
+
             out.append(
                 Requirement(
                     id=f"REQ-F-{_identity('column', column.table, column.name)}",
@@ -355,13 +430,7 @@ class RequirementDeriver:
                         "part of the solution rather than of the upstream data."
                     ),
                     confidence=Confidence.HIGH,
-                    evidence=(
-                        Evidence(
-                            node_id=f"column:{column.qualified_name}",
-                            fingerprint=column.fingerprint,
-                            detail=(column.expression or "").strip(),
-                        ),
-                    ),
+                    evidence=evidence,
                 )
             )
 
@@ -382,7 +451,8 @@ class RequirementDeriver:
                     kind=Kind.BUSINESS,
                     category="Scope",
                     statement=(
-                        f"The solution shall cover {len(names)} subject areas: "
+                        f"The solution shall cover {len(names)} "
+                        f"subject area{'s' if len(names) != 1 else ''}: "
                         f"{_join(f'**{n}**' for n in names)}."
                     ),
                     rationale=(

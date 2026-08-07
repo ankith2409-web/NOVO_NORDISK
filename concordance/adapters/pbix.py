@@ -18,7 +18,7 @@ from pathlib import Path
 import pandas as pd
 from pbixray import PBIXRay
 
-from concordance.adapters.base import resolve_table_dependencies
+from concordance.adapters.base import is_measure_container, resolve_table_dependencies
 from concordance.fingerprint import fingerprint_dax, fingerprint_parts, fingerprint_text
 from concordance.model import (
     Column,
@@ -99,7 +99,12 @@ class PbixAdapter:
                     name=name,
                     fingerprint=fingerprint_text(name),
                     is_system=bool(_SYSTEM_TABLE.match(name)),
-                    is_measure_only=name.casefold() not in with_columns,
+                    # PBIXRay does not surface column visibility, so every
+                    # extracted column counts as visible here.
+                    is_measure_only=is_measure_container(
+                        has_measures=name in measure_hosts,
+                        visible_columns=0 if name.casefold() not in with_columns else 1,
+                    ),
                     power_query=power_query.get(name),
                 )
             )

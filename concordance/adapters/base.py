@@ -26,6 +26,21 @@ class SourceAdapter(Protocol):
         ...
 
 
+def is_measure_container(has_measures: bool, visible_columns: int) -> bool:
+    """Is this table a grouping for measures rather than a data entity?
+
+    Both source formats express the same idea differently -- a .pbix
+    measure-only table carries no columns at all, while TMDL requires at least
+    one, so modellers add a hidden placeholder. Deciding it here keeps the two
+    adapters from drifting into subtly different meanings for the same field;
+    each supplies the visible-column count its format can determine.
+
+    Requiring measures matters: a table with neither columns nor measures is
+    empty, not a measure container.
+    """
+    return has_measures and visible_columns == 0
+
+
 def resolve_table_dependencies(model: SemanticModel) -> None:
     """Bind whole-table references in measures, in place.
 

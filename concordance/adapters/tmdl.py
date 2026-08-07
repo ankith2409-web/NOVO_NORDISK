@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from concordance.adapters.base import resolve_table_dependencies
+from concordance.adapters.base import is_measure_container, resolve_table_dependencies
 from concordance.fingerprint import fingerprint_dax, fingerprint_parts, fingerprint_text
 from concordance.model import (
     Column,
@@ -368,8 +368,12 @@ class TmdlAdapter:
                     name=node.name,
                     fingerprint=fingerprint_text(node.name),
                     is_system=False,  # TMDL models do not carry auto date tables
-                    is_measure_only=not columns
-                    or all(c.properties.get("isHidden") for c in columns) and bool(measures),
+                    is_measure_only=is_measure_container(
+                        has_measures=bool(measures),
+                        visible_columns=sum(
+                            1 for c in columns if not c.properties.get("isHidden")
+                        ),
+                    ),
                     power_query=self._partition_source(node),
                 )
             )
