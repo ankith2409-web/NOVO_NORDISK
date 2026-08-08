@@ -136,9 +136,11 @@ export interface ReconcilePayload {
 
 export interface DriftChange {
   node_id: string;
-  kind: "added" | "removed" | "changed";
+  kind: "added" | "removed" | "changed" | "renamed";
   object_kind: string;
   summary: string;
+  /** False only for a rename — its logic is provably unchanged. */
+  is_semantic: boolean;
   before: { fingerprint: string; short_fingerprint: string; detail: string } | null;
   after: { fingerprint: string; short_fingerprint: string; detail: string } | null;
 }
@@ -152,11 +154,18 @@ export interface DriftPayload {
     added: number;
     removed: number;
     changed: number;
+    renamed: number;
     unchanged: number;
     affected_requirements: number;
+    needing_revalidation: number;
+    reference_updates_only: number;
   };
   changes: DriftChange[];
-  affected_requirements: { requirement: Requirement; because: string[] }[];
+  affected_requirements: {
+    requirement: Requirement;
+    because: string[];
+    needs_revalidation: boolean;
+  }[];
 }
 
 export interface GraphPayload {

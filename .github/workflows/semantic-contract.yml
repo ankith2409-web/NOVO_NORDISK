@@ -1,0 +1,61 @@
+# Fail a pull request when it breaks a requirement the documentation asserts.
+#
+# This is what makes the semantic contract a contract rather than a document.
+# Everything else in this project observes: it extracts, describes and detects,
+# and then waits for a person to notice. Here the detection is wired to a build
+# status, so a change that invalidates a requirement cannot merge unremarked.
+#
+# The gate is deliberately narrow. It fires on `revalidation` -- only when a
+# requirement rests on a definition whose *logic* moved -- not on every
+# difference. A check that fails because someone renamed a measure is a check
+# people learn to bypass, and a bypassed gate protects nothing. Renames are
+# reported in the run's log and pass, because an identical fingerprint on both
+# sides is proof the logic did not change.
+name: Semantic contract
+
+on:
+  pull_request:
+    paths:
+      - "data/models/**"
+  workflow_dispatch:
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      # Both sides of the comparison are needed: the model as this branch has
+      # it, and the model as the base branch has it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Check out the base model for comparison
+        run: |
+          git worktree add ../base "origin/${{ github.base_ref }}"
+
+      - name: Compare, and fail if a requirement needs re-validating
+        run: |
+          concordance drift \
+            ../base/data/models/ClinicalTrialSafety.SemanticModel \
+            data/models/ClinicalTrialSafety.SemanticModel \
+            --fail-on revalidation \
+            | tee drift.txt
+
+      # Posted whether or not the gate fired, so a reviewer sees what moved
+      # even on a run that passed.
+      - name: Summarise on the run
+        if: always()
+        run: |
+          {
+            echo '## Semantic contract'
+            echo '```'
+            cat drift.txt || echo 'no report produced'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -263,6 +263,9 @@ def drift(context: ApiContext, params: Params) -> dict[str, Any]:
                 "kind": c.kind.value,
                 "object_kind": c.object_kind,
                 "summary": c.summary,
+                # False only for a rename: the logic behind it is provably the
+                # same, so the interface can say so rather than implying work.
+                "is_semantic": c.is_semantic,
                 "before": _record(c.before),
                 "after": _record(c.after),
             }
@@ -272,6 +275,7 @@ def drift(context: ApiContext, params: Params) -> dict[str, Any]:
             {
                 "requirement": _requirement_dict(a.requirement),
                 "because": [c.summary for c in a.changes],
+                "needs_revalidation": a.needs_revalidation,
             }
             for a in report.affected
         ],

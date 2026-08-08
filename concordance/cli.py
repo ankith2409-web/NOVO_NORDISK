@@ -430,8 +430,34 @@ def cmd_drift(args: argparse.Namespace) -> int:
     print()
     print(to_text(report))
     print()
-    # Non-zero when drift is found, so this can gate a pipeline.
-    return 1 if (report.has_drift and args.fail_on_drift) else 0
+
+    # What the gate fires on. `revalidation` is the default worth wiring into a
+    # pipeline: it fails only when a requirement rests on something whose logic
+    # actually moved. `any` fires on renames too, which is almost always noise --
+    # a check that fails a build for a rename is one people learn to bypass, and
+    # a bypassed gate protects nothing.
+    mode = "any" if getattr(args, "fail_on_drift", False) else args.fail_on
+    triggered = {
+        "none": False,
+        "any": report.has_drift,
+        "semantic": bool(report.semantic_changes),
+        "revalidation": bool(report.needing_revalidation),
+    }[mode]
+
+    if triggered:
+        reason = {
+            "any": f"{len(report.changes)} object(s) differ",
+            "semantic": f"{len(report.semantic_changes)} object(s) changed what they compute",
+            "revalidation": (
+                f"{len(report.needing_revalidation)} requirement(s) rest on a "
+                f"definition that no longer matches"
+            ),
+        }[mode]
+        print(f"FAILED (--fail-on {mode}): {reason}.", file=sys.stderr)
+        for item in report.needing_revalidation:
+            print(f"  {item.id}  {item.requirement.statement[:88]}", file=sys.stderr)
+        print(file=sys.stderr)
+    return 1 if triggered else 0
 
 
 def cmd_auditpack(args: argparse.Namespace) -> int:
@@ -576,8 +602,16 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("drift", help="compare two model versions and report what changed")
     p.add_argument("before", help="a snapshot .json, or a model to snapshot now")
     p.add_argument("after", help="a snapshot .json, or a model to snapshot now")
+    p.add_argument(
+        "--fail-on",
+        choices=("none", "any", "semantic", "revalidation"),
+        default="none",
+        help="exit non-zero to gate a pipeline: 'revalidation' when a requirement "
+        "needs re-confirming (recommended), 'semantic' when any logic changed, "
+        "'any' including renames (noisy)",
+    )
     p.add_argument("--fail-on-drift", action="store_true",
-                   help="exit non-zero when drift is found, for use in a pipeline")
+                   help="deprecated alias for --fail-on any")
     p.add_argument("--allow-different-models", action="store_true",
                    help="compare across differently-named models")
     p.set_defaults(func=cmd_drift)

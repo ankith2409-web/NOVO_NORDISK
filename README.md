@@ -513,6 +513,49 @@ Requirements now in question (8)
       via changed measure Clinical Metrics[Serious Adverse Events]
 ```
 
+### A rename is not a change
+
+Renaming a measure moves no logic, but a fingerprint-free diff cannot tell the
+difference and reports a deletion plus an addition. On the QualityControl model
+that churned four requirements for a purely cosmetic edit -- each of which reads
+to a reviewer as something to re-validate.
+
+Concordance pairs them, and can *prove* the pairing rather than guessing it.
+Every other tool infers renames from how similar two names look, a heuristic
+that mistakes `Net Sales` for `Net Sales PM` and misses `OOS Rate` becoming
+`Out Of Spec Rate` entirely. A fingerprint is taken over canonicalised logic, so
+two objects sharing one compute exactly the same thing:
+
+```
+Renamed — same logic, new name (1)
+  measure  QC Metrics[OOS Rate]  ->  QC Metrics[Out Of Spec Rate]
+      fingerprint 2c7cbf0aa669 on both sides
+```
+
+Where the evidence is ambiguous it refuses to pair. Two measures can legitimately
+share a fingerprint, so a pairing is only made when one identifies exactly one
+removal and one addition of the same kind. Asserting "logic unchanged" about a
+mapping nobody established is the one error this report must never make.
+
+The consequence is the point: **0 requirements needing re-validation, 2 needing
+only a name update.**
+
+### Gating a pipeline on the contract
+
+```bash
+concordance drift <before> <after> --fail-on revalidation
+```
+
+Exits non-zero only when a requirement rests on a definition whose logic moved,
+naming the requirement ids in the failure. `--fail-on semantic` fires on any
+logic change; `--fail-on any` includes renames and is deliberately not the
+recommendation -- a check that fails a build because someone renamed a measure is
+one people learn to bypass, and a bypassed gate protects nothing.
+
+`.github/workflows/semantic-contract.yml` wires this to pull requests. It is what
+makes the semantic contract a contract: everything else here observes and waits
+for someone to notice, while this cannot be merged past unremarked.
+
 ### What the report deliberately stays silent about
 
 v2 also reformats `Protocol Deviations` — adds a comment, respaces the call — without touching
@@ -586,7 +629,7 @@ concordance/
     metrics.py         comparing one KPI's definition across two platforms
   cli.py
 scripts/               report generator, warehouse fixture, snapshot capture
-tests/                 346 tests, run against the real models
+tests/                 362 tests, run against the real models
 frontend/              React interface over the JSON API (Vite, Tailwind)
 data/models/           three Microsoft .pbix samples + an authored TMDL model and its v2
 ```

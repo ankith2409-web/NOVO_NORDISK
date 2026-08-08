@@ -24,7 +24,13 @@ import {
 import { RichText } from "@/components/RichText";
 import { cx } from "@/lib/cx";
 
-const TONE = { added: "ok", removed: "bad", changed: "review" } as const;
+const TONE = {
+  added: "ok",
+  removed: "bad",
+  changed: "review",
+  // Not a warning colour: a rename is proof that nothing needs re-checking.
+  renamed: "accent",
+} as const;
 
 export function Drift() {
   const [data, setData] = useState<DriftPayload | null>(null);
@@ -50,7 +56,7 @@ export function Drift() {
         </p>
       </header>
 
-      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 xl:grid-cols-7">
         <Stat label="Added" value={data.counts.added} />
         <Stat
           label="Removed"
@@ -62,11 +68,22 @@ export function Drift() {
           value={data.counts.changed}
           tone={data.counts.changed > 0 ? "review" : "neutral"}
         />
+        <Stat
+          label="Renamed"
+          value={data.counts.renamed}
+          hint="Same logic under a new name — proven by an identical fingerprint"
+        />
         <Stat label="Unchanged" value={data.counts.unchanged} />
         <Stat
-          label="Requirements in question"
-          value={data.counts.affected_requirements}
-          tone={data.counts.affected_requirements > 0 ? "review" : "neutral"}
+          label="Need re-validation"
+          value={data.counts.needing_revalidation}
+          tone={data.counts.needing_revalidation > 0 ? "review" : "neutral"}
+          hint="Requirements resting on something that changed what it computes"
+        />
+        <Stat
+          label="Name update only"
+          value={data.counts.reference_updates_only}
+          hint="Requirements whose logic is unchanged; only the name they cite moved"
         />
       </div>
 
@@ -89,37 +106,67 @@ export function Drift() {
             ))}
           </section>
 
-          <Panel
-            title={`Requirements now in question (${data.affected_requirements.length})`}
-          >
-            {data.affected_requirements.length === 0 ? (
-              <Empty>Nothing changed that any requirement was written against.</Empty>
-            ) : (
-              <ul className="divide-y divide-hairline">
-                {data.affected_requirements.map(({ requirement, because }) => (
-                  <li key={requirement.id} className="px-3.5 py-2.5">
-                    <div className="flex items-start gap-2.5">
-                      <code className="mt-0.5 flex-none font-mono text-[11px] text-faint">
-                        {requirement.id}
-                      </code>
-                      <p className="min-w-0 flex-1 text-sm">
-                        <RichText>{requirement.statement}</RichText>
-                      </p>
-                      <ConfidenceChip level={requirement.confidence} />
-                    </div>
-                    <p className="mt-1 pl-[4.5rem] font-mono text-[11px] text-review">
-                      because {because.join("; ")}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Panel>
+          {/* Split deliberately. Listing a rename beside a changed filter under
+              one "in question" heading is what makes a reviewer re-check work
+              that is provably untouched -- the exact busywork this removes. */}
+          <Consequences
+            title="Requirements now in question"
+            empty="Nothing changed that any requirement was written against."
+            items={data.affected_requirements.filter((a) => a.needs_revalidation)}
+            tone="text-review"
+          />
+          <Consequences
+            title="Requirements needing only a name update — logic unchanged"
+            empty=""
+            items={data.affected_requirements.filter((a) => !a.needs_revalidation)}
+            tone="text-accent"
+          />
         </>
       )}
     </div>
   );
 }
+
+function Consequences({
+  title,
+  empty,
+  items,
+  tone,
+}: {
+  title: string;
+  empty: string;
+  items: DriftPayload["affected_requirements"];
+  tone: string;
+}) {
+  if (items.length === 0 && !empty) return null;
+  return (
+    <Panel title={`${title} (${items.length})`}>
+      {items.length === 0 ? (
+        <Empty>{empty}</Empty>
+      ) : (
+        <ul className="divide-y divide-hairline">
+          {items.map(({ requirement, because }) => (
+            <li key={requirement.id} className="px-3.5 py-2.5">
+              <div className="flex items-start gap-2.5">
+                <code className="mt-0.5 flex-none font-mono text-[11px] text-faint">
+                  {requirement.id}
+                </code>
+                <p className="min-w-0 flex-1 text-sm">
+                  <RichText>{requirement.statement}</RichText>
+                </p>
+                <ConfidenceChip level={requirement.confidence} />
+              </div>
+              <p className={cx("mt-1 pl-[4.5rem] font-mono text-[11px]", tone)}>
+                because {because.join("; ")}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
+  );
+}
+
 
 function Change({ change }: { change: DriftChange }) {
   return (

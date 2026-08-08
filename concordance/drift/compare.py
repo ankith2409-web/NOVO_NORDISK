@@ -26,11 +26,23 @@ class ChangeKind(Enum):
     ADDED = "added"
     REMOVED = "removed"
     CHANGED = "changed"
+    #: Same logic, new name. See ``_pair_renames`` for why this is provable here
+    #: rather than guessed.
+    RENAMED = "renamed"
+
+
+def _name_of(node_id: str) -> str:
+    return node_id.split(":", 1)[-1]
 
 
 @dataclass(frozen=True)
 class Change:
-    """One object that differs between two snapshots."""
+    """One object that differs between two snapshots.
+
+    For a rename, ``node_id`` is the object's *current* identity and
+    ``before.node_id`` holds the one it replaced -- the new name is what a
+    reader will search for in the model they now have.
+    """
 
     node_id: str
     kind: ChangeKind
@@ -40,8 +52,22 @@ class Change:
 
     @property
     def summary(self) -> str:
-        name = self.node_id.split(":", 1)[-1]
-        return f"{self.kind.value} {self.object_kind} {name}"
+        if self.kind is ChangeKind.RENAMED and self.before is not None:
+            return (
+                f"renamed {self.object_kind} "
+                f"{_name_of(self.before.node_id)} -> {_name_of(self.node_id)}"
+            )
+        return f"{self.kind.value} {self.object_kind} {_name_of(self.node_id)}"
+
+    @property
+    def is_semantic(self) -> bool:
+        """Did what this object *computes* change?
+
+        A rename did not. The distinction is what lets a reviewer skip
+        re-validating logic that is provably identical, and it is the reason
+        renames are separated out rather than folded into added/removed.
+        """
+        return self.kind is not ChangeKind.RENAMED
 
 
 @dataclass(frozen=True)
@@ -55,6 +81,17 @@ class AffectedRequirement:
     @property
     def id(self) -> str:
         return self.requirement.id
+
+    @property
+    def needs_revalidation(self) -> bool:
+        """Must a person re-confirm this requirement still holds?
+
+        Only when something it rests on actually changed what it computes. A
+        requirement touched solely by renames needs its wording updated to the
+        new name and nothing more -- treating that as re-validation is exactly
+        the busywork this report exists to remove.
+        """
+        return any(change.is_semantic for change in self.changes)
 
 
 @dataclass
@@ -79,9 +116,31 @@ class DriftReport:
             "added": len(self.of_kind(ChangeKind.ADDED)),
             "removed": len(self.of_kind(ChangeKind.REMOVED)),
             "changed": len(self.of_kind(ChangeKind.CHANGED)),
+            "renamed": len(self.of_kind(ChangeKind.RENAMED)),
             "unchanged": self.unchanged,
             "affected_requirements": len(self.affected),
+            "needing_revalidation": len(self.needing_revalidation),
+            "reference_updates_only": len(self.reference_updates_only),
         }
+
+    @property
+    def needing_revalidation(self) -> list[AffectedRequirement]:
+        """Requirements a person must re-confirm."""
+        return [a for a in self.affected if a.needs_revalidation]
+
+    @property
+    def reference_updates_only(self) -> list[AffectedRequirement]:
+        """Requirements whose only change is a name they refer to."""
+        return [a for a in self.affected if not a.needs_revalidation]
+
+    @property
+    def semantic_changes(self) -> list[Change]:
+        """Changes that altered what the model computes.
+
+        The number a reviewer actually has to act on: renames are excluded
+        because their logic is provably unchanged.
+        """
+        return [c for c in self.changes if c.is_semantic]
 
 
 def compare(
@@ -121,12 +180,75 @@ def compare(
                 Change(node_id, ChangeKind.ADDED, new.kind, after=new)
             )
 
+    report.changes = _pair_renames(report.changes)
     report.changes.sort(key=lambda c: (c.kind.value, c.node_id))
 
     if after_graph is not None:
         report.affected = _affected_requirements(report.changes, before, after_graph)
 
     return report
+
+
+def _pair_renames(changes: list[Change]) -> list[Change]:
+    """Recognise a removal and an addition as one object under a new name.
+
+    This is provable here rather than guessed, which is the whole point. Every
+    other diff tool infers renames from how similar two names look -- a
+    heuristic that mistakes ``Net Sales`` for ``Net Sales PM`` and misses
+    ``OOS Rate`` becoming ``Out Of Spec Rate`` entirely. Because a fingerprint
+    is taken over canonicalised logic rather than text, two objects sharing one
+    means they compute exactly the same thing, and the name is the only thing
+    that moved.
+
+    Ambiguity is refused rather than resolved. Two measures can legitimately
+    share a fingerprint -- ``COUNTROWS(Batch)`` written twice under different
+    names is one fingerprint, two objects -- so a pairing is only made when a
+    fingerprint identifies exactly one removal and exactly one addition of the
+    same kind. Anything else stays reported as it was: a wrong pairing would
+    tell a reviewer that logic is unchanged when nobody has established that,
+    which is the one error this project exists to avoid making.
+    """
+    removed = [c for c in changes if c.kind is ChangeKind.REMOVED]
+    added = [c for c in changes if c.kind is ChangeKind.ADDED]
+    if not removed or not added:
+        return changes
+
+    def key(change: Change) -> tuple[str, str]:
+        record = change.before or change.after
+        assert record is not None  # every removal/addition carries one side
+        return (change.object_kind, record.fingerprint)
+
+    removed_by_key: dict[tuple[str, str], list[Change]] = {}
+    added_by_key: dict[tuple[str, str], list[Change]] = {}
+    for change in removed:
+        removed_by_key.setdefault(key(change), []).append(change)
+    for change in added:
+        added_by_key.setdefault(key(change), []).append(change)
+
+    renames: dict[str, Change] = {}
+    paired: set[str] = set()
+
+    for shared in removed_by_key.keys() & added_by_key.keys():
+        gone = removed_by_key[shared]
+        arrived = added_by_key[shared]
+        if len(gone) != 1 or len(arrived) != 1:
+            continue  # ambiguous -- say nothing rather than guess
+
+        old, new = gone[0], arrived[0]
+        renames[new.node_id] = Change(
+            node_id=new.node_id,
+            kind=ChangeKind.RENAMED,
+            object_kind=new.object_kind,
+            before=old.before,
+            after=new.after,
+        )
+        paired.update({old.node_id, new.node_id})
+
+    return [
+        renames.get(c.node_id, c)
+        for c in changes
+        if not (c.kind is ChangeKind.REMOVED and c.node_id in paired)
+    ]
 
 
 def _affected_requirements(
@@ -178,15 +300,21 @@ def to_text(report: DriftReport) -> str:
         lines.append(f"  No drift. {counts['unchanged']} objects unchanged.")
         return "\n".join(lines)
 
-    lines.append(
+    summary = (
         f"  {counts['changed']} changed, {counts['added']} added, "
         f"{counts['removed']} removed, {counts['unchanged']} unchanged"
     )
+    if counts["renamed"]:
+        # Stated separately from the rest because it is the one line here that
+        # needs no action: the logic behind a rename is provably untouched.
+        summary += f"\n  {counts['renamed']} renamed, logic unchanged"
+    lines.append(summary)
 
     for kind, heading in (
         (ChangeKind.CHANGED, "Changed"),
         (ChangeKind.ADDED, "Added"),
         (ChangeKind.REMOVED, "Removed"),
+        (ChangeKind.RENAMED, "Renamed — same logic, new name"),
     ):
         items = report.of_kind(kind)
         if not items:
@@ -195,7 +323,17 @@ def to_text(report: DriftReport) -> str:
         lines.append(f"{heading} ({len(items)})")
         lines.append("-" * 68)
         for change in items:
-            name = change.node_id.split(":", 1)[-1]
+            name = _name_of(change.node_id)
+            if change.kind is ChangeKind.RENAMED:
+                lines.append(
+                    f"  {change.object_kind:14} "
+                    f"{_name_of(change.before.node_id)}  ->  {name}"
+                )
+                lines.append(
+                    f"      fingerprint {change.after.fingerprint[:12]} on both sides"
+                )
+                continue
+
             lines.append(f"  {change.object_kind:14} {name}")
             if change.kind is ChangeKind.CHANGED:
                 lines.append(f"      before: {_clip(change.before.detail)}")
@@ -209,11 +347,19 @@ def to_text(report: DriftReport) -> str:
             elif change.before is not None and change.before.detail:
                 lines.append(f"      was: {_clip(change.before.detail)}")
 
-    if report.affected:
+    for items, heading in (
+        (report.needing_revalidation, "Requirements now in question"),
+        (
+            report.reference_updates_only,
+            "Requirements needing only a name update — logic unchanged",
+        ),
+    ):
+        if not items:
+            continue
         lines.append("")
-        lines.append(f"Requirements now in question ({len(report.affected)})")
+        lines.append(f"{heading} ({len(items)})")
         lines.append("-" * 68)
-        for item in report.affected:
+        for item in items:
             lines.append(f"  {item.id}  {_clip(_plain(item.requirement.statement), 88)}")
             for change in item.changes:
                 lines.append(f"      via {change.summary}")
