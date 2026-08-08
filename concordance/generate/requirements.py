@@ -447,7 +447,15 @@ class RequirementDeriver:
             names = sorted(t.name for t in user_tables)
             out.append(
                 Requirement(
-                    id=f"REQ-B-{_identity('scope', self.model.name)}",
+                    # No model.name here: it is the file or folder Concordance
+                    # happened to read the model from, not part of the model's
+                    # own identity. Exporting the same dataset to a differently
+                    # named .pbix, or cloning a TMDL folder under a new name,
+                    # changes neither its tables nor what it means -- but it
+                    # used to change this id anyway, which orphans any record
+                    # tied to the old one. There is exactly one Scope
+                    # requirement per model, so no discriminator is needed.
+                    id=f"REQ-B-{_identity('scope')}",
                     kind=Kind.BUSINESS,
                     category="Scope",
                     statement=(
@@ -475,7 +483,10 @@ class RequirementDeriver:
         if sourced:
             out.append(
                 Requirement(
-                    id=f"REQ-F-{_identity('ingest', self.model.name)}",
+                    # Same reasoning as the Scope requirement above: singleton
+                    # per model, so the file name buys no uniqueness and only
+                    # costs stability.
+                    id=f"REQ-F-{_identity('ingest')}",
                     kind=Kind.FUNCTIONAL,
                     category="Data acquisition",
                     statement=(
@@ -504,7 +515,10 @@ class RequirementDeriver:
         for gap in self.model.coverage_gaps:
             out.append(
                 Requirement(
-                    id=f"REQ-F-{_identity('gap', self.model.name, gap.feature)}",
+                    # gap.feature already discriminates among the gaps in one
+                    # model; model.name added nothing but a dependency on the
+                    # file it was read from.
+                    id=f"REQ-F-{_identity('gap', gap.feature)}",
                     kind=Kind.FUNCTIONAL,
                     category="Documented gaps",
                     statement=(

@@ -513,6 +513,27 @@ Requirements now in question (8)
       via changed measure Clinical Metrics[Serious Adverse Events]
 ```
 
+### A requirement id must not depend on the file it was read from
+
+Found by testing a claim rather than trusting it: three requirement categories
+(Scope, Data acquisition, Documented gaps) folded `model.name` into their id --
+which is the file or folder Concordance happened to read the model from, not
+anything about the model's own content. Exporting the same dataset to a `.pbix`
+twice under different names, or cloning a TMDL folder for a snapshot, changed
+neither table nor measure -- but silently changed those ids anyway:
+
+```
+identical content, folder renamed only
+requirements only in A: 2   (Scope, Data acquisition)
+requirements only in B: 2   (same categories, new ids)
+```
+
+Fixed by dropping the file name from the identity: each of the three is either
+a singleton per model (Scope, Data acquisition -- no discriminator was ever
+needed) or already uniquely keyed by its own content (a gap's feature name).
+Confirmed against the same fixture: zero requirements differ across a pure
+folder rename.
+
 ### A rename is not a change
 
 Renaming a measure moves no logic, but a fingerprint-free diff cannot tell the
@@ -629,7 +650,7 @@ concordance/
     metrics.py         comparing one KPI's definition across two platforms
   cli.py
 scripts/               report generator, warehouse fixture, snapshot capture
-tests/                 362 tests, run against the real models
+tests/                 367 tests, run against the real models
 frontend/              React interface over the JSON API (Vite, Tailwind)
 data/models/           three Microsoft .pbix samples + an authored TMDL model and its v2
 ```
