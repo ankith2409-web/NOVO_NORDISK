@@ -179,6 +179,45 @@ Only `/api/ask` accumulates history, so only it gets a session. The graph is bui
 once and never mutated, so every reader shares it — which also means a page that
 loads six panels does not evict six real conversations from the session store.
 
+## The interface
+
+A React app over the JSON API. It is a separate process from the Python server on
+purpose: the API is needed by any front end, so that work is never wasted, and a
+build problem in the interface cannot take the backend down with it.
+
+```bash
+concordance serve data/models/QualityControl.SemanticModel \
+  --warehouse data/warehouse/quality_control.duckdb   # API on :8000
+
+cd frontend && npm install && npm run dev             # interface on :5173
+```
+
+The dev server proxies `/api` to the Python process, so the browser stays on one
+origin and the chat's session cookie behaves exactly as it will in production.
+The server's cross-origin support is what allows the two to be served from
+different ports, but developing through it would mean testing a path the shipped
+app never takes.
+
+### What the design is trying to do
+
+Every comparable tool shows conclusions. The point of this one is that it shows
+why it believes them, so three things the backend already computes are given more
+weight than they usually get:
+
+- **Coverage gaps lead.** The overview opens with what could not be read or
+  resolved, above the counts. When there is nothing to declare it says so — a
+  blank space is indistinguishable from not having checked.
+- **Confidence is never hidden.** A low-confidence statement is inferred from
+  structure alone, and is chipped as such rather than rendered in the same weight
+  as something the model states outright.
+- **A state is never colour alone.** Every verdict and confidence chip carries
+  its word. Audit packs get printed in monochrome, projectors flatten a muted
+  palette, and roughly one in twelve men has some colour vision deficiency.
+
+Semantic colour is reserved for the three-state verdict — consistent, review,
+divergent — and the same triple carries requirement confidence. The product's own
+accent is a separate hue and is never used to mean anything.
+
 ## Asking questions about a model
 
 `ask` answers from the model rather than from training. Every answer is produced by
@@ -482,7 +521,8 @@ concordance/
     metrics.py         comparing one KPI's definition across two platforms
   cli.py
 scripts/               report generator, and the DuckDB warehouse fixture
-tests/                 312 tests, run against the real models
+tests/                 315 tests, run against the real models
+frontend/              React interface over the JSON API (Vite, Tailwind)
 data/models/           three Microsoft .pbix samples + an authored TMDL model and its v2
 ```
 

@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+/* Design tokens.
+ *
+ * Two families, kept apart on purpose. `accent` is the product's own colour and
+ * carries no meaning. `ok` / `review` / `bad` are semantic: they encode the
+ * three-state verdict that is the heart of this tool -- consistent, needs
+ * review, divergent -- and the same triple maps onto requirement confidence.
+ * Using the accent for a verdict, or a verdict colour for decoration, would
+ * make the one signal on screen that has to be unambiguous ambiguous.
+ *
+ * The verdicts are deliberately muted rather than neon. This is a tool for
+ * regulated work, and alarm colours borrowed from a game undercut it.
+ */
+@theme {
+  --color-ground: #fcfcfd;
+  --color-surface: #f3f5f7;
+  --color-raised: #eaedf1;
+  --color-ink: #14171f;
+  --color-muted: #59616f;
+  --color-faint: #838b98;
+  --color-hairline: #dde1e7;
+  --color-edge: #c8cdd6;
+
+  --color-accent: #0f6e72;
+  --color-accent-soft: #e0f0f0;
+
+  --color-ok: #3f6b47;
+  --color-ok-soft: #e4ede5;
+  --color-review: #8e6410;
+  --color-review-soft: #f4ebd7;
+  --color-bad: #a6392f;
+  --color-bad-soft: #f6e3e0;
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --font-serif: "Iowan Old Style", Charter, Georgia, serif;
+}
+
+/* A dark workspace suits a tool you sit in all day, but the audit pack and the
+ * projector both favour light, so both themes are first-class. Tokens are
+ * redefined; nothing downstream needs to know which theme is active. */
+@layer base {
+  :root[data-theme="dark"] {
+    --color-ground: #0d0f14;
+    --color-surface: #14181f;
+    --color-raised: #1b2029;
+    --color-ink: #e5e8ed;
+    --color-muted: #9ba4b1;
+    --color-faint: #6e7785;
+    --color-hairline: #232932;
+    --color-edge: #333b47;
+
+    --color-accent: #55c6cb;
+    --color-accent-soft: #10312f;
+
+    --color-ok: #7bb183;
+    --color-ok-soft: #16251a;
+    --color-review: #d9a748;
+    --color-review-soft: #2a2110;
+    --color-bad: #e58175;
+    --color-bad-soft: #2e1714;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background: var(--color-ground);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Digits that sit in columns must not shift width as they change. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-edge);
+    border-radius: 5px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

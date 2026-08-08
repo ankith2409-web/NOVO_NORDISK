@@ -39,7 +39,7 @@ table 'QC Metrics'
 		formatString: 0.0%
 		displayFolder: Production
 
-	measure 'Average Days To Release' = AVERAGE(Batch['Days To Release'])
+	measure 'Average Days To Release' = AVERAGE(Batch[Days To Release])
 		formatString: #,0.0
 		displayFolder: Production
 
@@ -78,7 +78,7 @@ table 'QC Metrics'
 
 	/// How far out-of-specification results sat, on average.
 	measure 'Mean Deviation From Spec' =
-		CALCULATE(AVERAGE(TestResult['Deviation From Spec']), TestResult[ResultStatus] = "Failed")
+		CALCULATE(AVERAGE(TestResult[Deviation From Spec]), TestResult[ResultStatus] = "Failed")
 		formatString: 0.000
 		displayFolder: Testing
 

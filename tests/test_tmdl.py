@@ -263,3 +263,36 @@ def test_a_folder_without_tmdl_files_is_rejected(tmp_path: Path) -> None:
     (tmp_path / "empty").mkdir()
     with pytest.raises(ValueError, match="does not look like a TMDL model"):
         TmdlAdapter().extract(str(tmp_path / "empty"))
+
+
+# -- the authored models must themselves be valid ----------------------------
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "data/models/QualityControl.SemanticModel",
+        "data/models/ClinicalTrialSafety.SemanticModel",
+        "data/models/ClinicalTrialSafety_v2.SemanticModel",
+    ],
+)
+def test_an_authored_model_contains_no_broken_references(path: str) -> None:
+    """Every reference in a model we wrote must point at something that exists.
+
+    A sample .pbix may legitimately carry an unresolvable reference -- the
+    Sales & Returns model has one, a What-If parameter column that never
+    materialises into the stored schema. These models are different: we wrote
+    every line, so an unresolved reference is our mistake, not the format's.
+
+    This exists because there were two. `Batch['Days To Release']` quotes the
+    column name, and single quotes in DAX belong to *table* names -- Power BI
+    would reject it. The extractor reported both correctly and the interface
+    displayed them; nothing was broken except the fixture, and the fixture had
+    been wrong since it was written.
+    """
+    if not Path(path).exists():
+        pytest.skip(f"model not present: {path}")
+
+    graph = SemanticGraph(TmdlAdapter().extract(path))
+    assert not [
+        f"{u.source} -> {u.target} ({u.reason})" for u in graph.unresolved
+    ], "a reference in an authored model points at something that is not there"

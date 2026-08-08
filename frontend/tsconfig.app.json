@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "esnext",
+    "types": ["vite/client"],
+    "allowArbitraryExtensions": true,
+    "skipLibCheck": true,
+
+    /* `@/` resolves to src/, matching the alias in vite.config.ts. Both are
+       needed: Vite rewrites the import, TypeScript type-checks it. Paths are
+       relative to this file -- `baseUrl` is deprecated in TypeScript 6. */
+    "paths": { "@/*": ["./src/*"] },
+
+    /* The app is strictly typed. Without this the API client's types are
+       decorative -- every payload field would silently become `any` at the
+       first destructure, which is the opposite of why they were written. */
+    "strict": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Linting */
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src"]
+}
