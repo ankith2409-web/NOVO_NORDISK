@@ -109,7 +109,7 @@ concordance verify   <model> <measure>  # prove the fingerprint on real model co
 concordance document <model> --type brd # generate a BRD (--type frd, --format docx)
 concordance auditpack <model>            # evidence bundle: docs + fingerprint manifest
 concordance ask      <model> "question"  # ask about the model (omit for interactive)
-concordance serve    <model> [--port]    # web chat UI at http://127.0.0.1:8000
+concordance serve    <model> [--port]    # web UI + JSON API at http://127.0.0.1:8000
 concordance snapshot <model> --label v1  # record fingerprints for later comparison
 concordance drift    <before> <after>    # what changed, and which requirements are affected
 concordance reconcile <model> [--warehouse db]  # compare KPIs against a SQL warehouse
@@ -128,6 +128,56 @@ depends on (5):
   measure:Analysis DAX[Net Sales PM]
   measure:Analysis DAX[Net Sales]
 ```
+
+## The JSON API
+
+`serve` exposes eleven read-only endpoints alongside the chat, so a front end can
+reach everything the CLI can. They are plain functions in `web/api.py` — the HTTP
+handler only routes, sets headers and manages the chat session — so each one is
+tested without opening a socket.
+
+```bash
+concordance serve data/models/ClinicalTrialSafety_v2.SemanticModel \
+  --compare-to data/models/ClinicalTrialSafety.SemanticModel \
+  --warehouse  data/warehouse/quality_control.duckdb
+```
+
+| Endpoint | Answers |
+|---|---|
+| `GET /api/overview` | counts, coverage gaps, and which of the below are configured |
+| `GET /api/graph` | the whole semantic graph, nodes and edges |
+| `GET /api/tables` · `/api/table?name=` | tables, and one table in full |
+| `GET /api/measures` · `/api/measure?name=` | measures, and one with its canonical form and fingerprint |
+| `GET /api/impact?name=` | what would be affected if this object changed |
+| `GET /api/requirements?kind=business\|functional` | generated requirements, each bound to its evidence |
+| `GET /api/review` | only what the system is not confident about |
+| `GET /api/drift` | what moved against the configured comparison model |
+| `GET /api/reconcile` | whether the configured warehouse agrees, metric by metric |
+| `POST /api/ask` | the grounded chat — the one endpoint with session state |
+
+### The client never names a file
+
+Drift needs a second model and reconciliation needs a warehouse. The obvious way
+to supply them — a query parameter holding a path — would turn a read-only local
+server into an arbitrary file reader. Both are instead configured at launch, so a
+request can only ask *whether* to compare, never *what against*. Endpoints that
+were not configured answer `501` naming the flag that would enable them, rather
+than pretending the feature does not exist.
+
+### Cross-origin requests are limited to loopback
+
+A front-end dev server runs on its own port, so its calls are cross-origin. Only
+`localhost`, `127.0.0.1` and `[::1]` are allowed, and the origin is echoed rather
+than answered with `*` — the session cookie makes these credentialed requests,
+where the wildcard is invalid anyway. Any other origin gets no allow header at
+all: this API serves a local model and, through the chat, spends real API quota,
+so a page the user merely happens to have open must not be able to read it.
+
+### Reads do not create sessions
+
+Only `/api/ask` accumulates history, so only it gets a session. The graph is built
+once and never mutated, so every reader shares it — which also means a page that
+loads six panels does not evict six real conversations from the session store.
 
 ## Asking questions about a model
 
@@ -422,7 +472,8 @@ concordance/
     tools.py           read-only tool surface over the graph
     chat.py            the conversation loop, with tool validation
   web/
-    server.py          stdlib HTTP server, per-session chat isolation
+    server.py          stdlib HTTP server, per-session chat isolation, CORS
+    api.py             the read-only JSON API, testable without a socket
     static/chat.html    the browser page
   drift/
     snapshot.py        point-in-time fingerprint records
@@ -431,7 +482,7 @@ concordance/
     metrics.py         comparing one KPI's definition across two platforms
   cli.py
 scripts/               report generator, and the DuckDB warehouse fixture
-tests/                 264 tests, run against the real models
+tests/                 312 tests, run against the real models
 data/models/           three Microsoft .pbix samples + an authored TMDL model and its v2
 ```
 

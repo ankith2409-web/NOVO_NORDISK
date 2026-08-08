@@ -302,6 +302,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
     from concordance.llm.gemini import GeminiProvider
     from concordance.web.server import serve
 
+    from concordance.web.api import ApiContext
+
     graph = _load(args.source)
     try:
         provider = GeminiProvider(model=args.model)
@@ -309,7 +311,27 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print(f"{error}", file=sys.stderr)
         return 2
 
-    serve(graph, provider, host=args.host, port=args.port)
+    # Resolved here, once, from arguments the operator typed. The browser never
+    # names a file, so no request can reach a path that was not authorised at
+    # launch.
+    compare_to = None
+    if args.compare_to:
+        compare_to = _load(args.compare_to)
+
+    warehouse = Path(args.warehouse) if args.warehouse else None
+    if warehouse and not warehouse.exists():
+        print(f"No warehouse at {warehouse}.", file=sys.stderr)
+        return 2
+
+    context = ApiContext(
+        graph=graph,
+        compare_to=compare_to,
+        compare_label=Path(args.compare_to).name if args.compare_to else "",
+        warehouse=warehouse,
+        warehouse_schema=args.schema,
+    )
+
+    serve(graph, provider, host=args.host, port=args.port, context=context)
     return 0
 
 
@@ -522,6 +544,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--model", default="gemini-3.6-flash", help="Gemini model to use")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
+    p.add_argument(
+        "--compare-to",
+        help="a second model to serve drift against, e.g. an earlier version",
+    )
+    p.add_argument("--warehouse", help="a DuckDB warehouse to serve reconciliation against")
+    p.add_argument("--schema", default="main", help="warehouse schema to read")
     p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("document", help="generate a BRD or FRD from a model")

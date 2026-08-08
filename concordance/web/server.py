@@ -15,6 +15,7 @@ tested directly, without going through sockets.
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import threading
 from collections import OrderedDict
@@ -23,15 +24,36 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
+from urllib.parse import parse_qs, urlparse
 
 from concordance.agent.chat import ModelChat
 from concordance.graph.csg import SemanticGraph
 from concordance.llm.base import LlmError, LlmProvider
+from concordance.web import api
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _SESSION_COOKIE = "concordance_session"
 #: Refuses a request body larger than this outright, before it is read.
 _MAX_BODY_BYTES = 10_000
+
+#: A front-end dev server runs on its own port, so the browser treats calls to
+#: this one as cross-origin. Only loopback origins are allowed: the API serves a
+#: local model and, through the chat, spends real API quota, so echoing back
+#: whatever ``Origin`` arrives would let any site the user happens to be
+#: visiting read their model and run up their bill.
+_LOOPBACK_ORIGIN = re.compile(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$")
+
+
+def allowed_origin(origin: str | None) -> str | None:
+    """The value to echo in ``Access-Control-Allow-Origin``, or None to refuse.
+
+    The origin is echoed rather than answered with ``*`` because the session
+    cookie makes these credentialed requests, and the wildcard is invalid once
+    credentials are in play.
+    """
+    if origin and _LOOPBACK_ORIGIN.match(origin):
+        return origin
+    return None
 
 
 #: Plenty for any demo audience, while bounding how much a long-running server
@@ -80,14 +102,21 @@ class SessionStore:
 
 
 def make_handler(
-    graph: SemanticGraph, provider: LlmProvider
+    graph: SemanticGraph,
+    provider: LlmProvider,
+    context: api.ApiContext | None = None,
 ) -> tuple[type[BaseHTTPRequestHandler], SessionStore]:
     """Build the request handler class for one model and provider.
 
     Returns the store alongside the handler so tests can inspect session state
     without an HTTP round trip.
+
+    ``context`` carries whatever extra sources the read-only API is permitted to
+    reach. Omitted, the API still serves everything derivable from the model
+    itself and reports the rest as unconfigured.
     """
     sessions = SessionStore(lambda: ModelChat(graph, provider))
+    api_context = context or api.ApiContext(graph=graph)
     page_template = (_STATIC_DIR / "chat.html").read_text(encoding="utf-8")
     page = page_template.replace("{{MODEL_NAME}}", graph.model.name)
     page_bytes = page.encode("utf-8")
@@ -99,18 +128,29 @@ def make_handler(
             pass  # quiet by default; failures still surface in HTTP responses
 
         def do_GET(self) -> None:  # noqa: N802 -- fixed by BaseHTTPRequestHandler
-            if self.path == "/":
+            parsed = urlparse(self.path)
+            if parsed.path == "/":
                 self._serve_page()
-            elif self.path == "/api/overview":
-                self._serve_overview()
+            elif parsed.path in api.ROUTES:
+                self._serve_api(parsed.path, parse_qs(parsed.query))
             else:
                 self._not_found()
 
         def do_POST(self) -> None:  # noqa: N802
-            if self.path == "/api/ask":
+            if urlparse(self.path).path == "/api/ask":
                 self._handle_ask()
             else:
                 self._not_found()
+
+        def do_OPTIONS(self) -> None:  # noqa: N802
+            """Answer the browser's CORS preflight."""
+            self.send_response(HTTPStatus.NO_CONTENT)
+            self._cors_headers()
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Max-Age", "600")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         # -- routes ----------------------------------------------------
 
@@ -123,9 +163,10 @@ def make_handler(
             self.end_headers()
             self.wfile.write(page_bytes)
 
-        def _serve_overview(self) -> None:
-            _, chat = sessions.get(self._session_cookie())
-            self._json(HTTPStatus.OK, chat.tools.overview())
+        def _serve_api(self, path: str, params: dict[str, list[str]]) -> None:
+            """Read-only endpoints: no session, since the graph never changes."""
+            status, payload = api.handle(api_context, path, params)
+            self._json(status, payload)
 
         def _handle_ask(self) -> None:
             length = int(self.headers.get("Content-Length", 0) or 0)
@@ -186,20 +227,34 @@ def make_handler(
                 "Set-Cookie", f"{_SESSION_COOKIE}={session_id}; Path=/; HttpOnly; SameSite=Lax"
             )
 
+        def _cors_headers(self) -> None:
+            origin = allowed_origin(self.headers.get("Origin"))
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Access-Control-Allow-Credentials", "true")
+            # Sent even when the origin is refused: the response varies by
+            # Origin either way, and a cache that misses this would serve one
+            # origin's answer to another.
+            self.send_header("Vary", "Origin")
+
         def _json(
             self, status: HTTPStatus, payload: dict, *, session_id: str | None = None
         ) -> None:
-            body = json.dumps(payload).encode("utf-8")
+            body = json.dumps(payload, default=str).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            self._cors_headers()
             if session_id:
                 self._set_session_cookie(session_id)
             self.end_headers()
             self.wfile.write(body)
 
         def _not_found(self) -> None:
-            self._json(HTTPStatus.NOT_FOUND, {"error": f"no such route: {self.path}"})
+            self._json(
+                HTTPStatus.NOT_FOUND,
+                {"error": f"no such route: {self.path}", "routes": sorted(api.ROUTES)},
+            )
 
     return Handler, sessions
 
@@ -209,12 +264,25 @@ def serve(
     provider: LlmProvider,
     host: str = "127.0.0.1",
     port: int = 8000,
+    context: api.ApiContext | None = None,
 ) -> None:
     """Run the chat server until interrupted."""
-    handler, _ = make_handler(graph, provider)
+    handler, _ = make_handler(graph, provider, context)
     httpd = ThreadingHTTPServer((host, port), handler)
     url = f"http://{host}:{httpd.server_port}/"
     print(f"Concordance chat for {graph.model.name!r} — {url}")
+    if context is not None:
+        extra = [
+            name
+            for name, enabled in (
+                ("drift", context.compare_to is not None),
+                ("reconcile", context.warehouse is not None),
+            )
+            if enabled
+        ]
+        if extra:
+            print(f"  also serving: {', '.join(extra)}")
+    print(f"  api: {len(api.ROUTES)} read-only endpoints under {url}api/")
     print("Press Ctrl-C to stop.")
     try:
         httpd.serve_forever()
