@@ -20,13 +20,48 @@ from concordance.normalize.dax import canonicalise
 
 
 def _load(path: str) -> SemanticGraph:
-    """Load a model, choosing the adapter by what the path actually is."""
+    """Load a model, choosing the adapter by what the path actually is.
+
+    Everything that can go wrong here becomes a ``SourceError`` carrying the
+    file's name and a readable problem. A third-party parser handed a file that
+    is not the format it claims to be raises whatever it likes -- PBIXRay ends
+    at "Unknown or unsupported DataModel compression format" -- and that
+    reaching a user as a bare traceback tells them neither which file broke nor
+    what to try instead.
+    """
+    from concordance.adapters.base import SourceError
     from concordance.adapters.tmdl import TmdlAdapter
 
     target = Path(path)
-    if target.is_dir() or target.suffix.lower() in {".pbip", ".tmdl"}:
-        return SemanticGraph(TmdlAdapter().extract(path))
-    return SemanticGraph(PbixAdapter().extract(path))
+    is_tmdl = target.is_dir() or target.suffix.lower() in {".pbip", ".tmdl"}
+
+    if not target.exists():
+        raise SourceError(
+            path,
+            "no such file or folder",
+            "Pass a .pbix file, or a TMDL model folder such as "
+            "data/models/QualityControl.SemanticModel.",
+        )
+
+    try:
+        model = (TmdlAdapter() if is_tmdl else PbixAdapter()).extract(path)
+    except SourceError:
+        raise
+    except (ValueError, KeyError) as error:
+        raise SourceError(path, str(error)) from error
+    except Exception as error:
+        # Whatever the underlying parser raised. The type is named because it is
+        # often the only clue to what actually went wrong inside a dependency.
+        raise SourceError(
+            path,
+            f"{type(error).__name__}: {error}",
+            "This usually means the file is corrupt, truncated, or not the "
+            "format its extension claims."
+            if not is_tmdl
+            else "This usually means a .tmdl file is malformed.",
+        ) from error
+
+    return SemanticGraph(model)
 
 
 def cmd_extract(args: argparse.Namespace) -> int:
@@ -250,8 +285,13 @@ def cmd_document(args: argparse.Namespace) -> int:
     return 0
 
 
+#: argparse's default for --model. Recognised so the value can be treated as
+#: "unset" rather than as a Gemini model name deliberately chosen.
+_DEFAULT_MODEL_SENTINEL = "gemini-3.6-flash"
+
+
 def _build_provider(args: argparse.Namespace):
-    """Construct the provider named by ``--provider``, or report why not.
+    """Construct the provider chain, best first, or report why none could be built.
 
     Kept as one function so ``ask`` and ``serve`` cannot drift into supporting
     different providers by accident. Gemini stays the default: it is the one
@@ -260,22 +300,52 @@ def _build_provider(args: argparse.Namespace):
     not be exercised against a live key from here -- this sandbox's egress
     policy blocks both hosts outright, and the fix is to verify locally, not to
     route around a policy denial.
+
+    By default every provider with a key present joins a fallback chain behind
+    the preferred one, because a free-tier quota running out mid-demo is a
+    failure this project has actually hit. ``--no-fallback`` pins it to one.
     """
-    if args.provider == "anthropic":
-        from concordance.llm.anthropic import DEFAULT_MODEL, AnthropicProvider
+    from concordance.llm.base import LlmError
+    from concordance.llm.fallback import FallbackProvider, available_providers
 
-        model = args.model if args.model != "gemini-3.6-flash" else DEFAULT_MODEL
-        return AnthropicProvider(model=model, base_url=args.base_url)
+    # `--model` is only meaningful for the provider actually chosen, so it is
+    # passed as None when it is still the argparse default -- otherwise a
+    # Gemini model name would be handed to whichever provider comes next in the
+    # chain and fail every question for an unreadable reason.
+    chosen = None if args.model == _DEFAULT_MODEL_SENTINEL else args.model
+    providers, skipped = available_providers(
+        preferred=args.provider, model=chosen, base_url=args.base_url
+    )
 
-    if args.provider == "groq":
-        from concordance.llm.groq import DEFAULT_MODEL, GroqProvider
+    if not providers:
+        raise LlmError(
+            "No language model provider could be configured.\n  "
+            + "\n  ".join(skipped)
+        )
 
-        model = args.model if args.model != "gemini-3.6-flash" else DEFAULT_MODEL
-        return GroqProvider(model=model, base_url=args.base_url)
+    if args.no_fallback:
+        # Keep only the requested provider. If its key is missing it is not in
+        # the list at all, and saying so plainly beats silently using another.
+        first = providers[0]
+        if not first.name.startswith(args.provider):
+            raise LlmError(
+                f"--provider {args.provider} was requested but its key is not set.\n  "
+                + "\n  ".join(skipped)
+            )
+        return first
 
-    from concordance.llm.gemini import GeminiProvider
+    if skipped:
+        print(
+            "  no fallback available from: " + "; ".join(skipped),
+            file=sys.stderr,
+        )
+    elif len(providers) > 1:
+        print(
+            "  fallback ready: " + " -> ".join(p.name for p in providers),
+            file=sys.stderr,
+        )
 
-    return GeminiProvider(model=args.model)
+    return FallbackProvider(providers)
 
 
 def _add_provider_arguments(parser: argparse.ArgumentParser) -> None:
@@ -291,6 +361,12 @@ def _add_provider_arguments(parser: argparse.ArgumentParser) -> None:
         help="override the provider's API host, e.g. a Claude-compatible gateway "
         "for --provider anthropic (ignored for --provider gemini; also read from "
         "ANTHROPIC_BASE_URL or GROQ_BASE_URL)",
+    )
+    parser.add_argument(
+        "--no-fallback",
+        action="store_true",
+        help="use only the chosen provider; do not fall back to another when its "
+        "quota is exhausted or its key is rejected",
     )
 
 
@@ -639,8 +715,36 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("-o", "--out", help="output path (default data/out/<name>.<type>.md)")
     p.set_defaults(func=cmd_document)
 
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="show the full traceback instead of a summarised error",
+    )
+
     args = parser.parse_args(argv)
-    return args.func(args)
+
+    # One boundary for every command. A model that cannot be read, or a
+    # provider that cannot be configured, is an ordinary outcome of pointing
+    # this at the wrong thing -- not a crash, and not something a user should
+    # have to read a stack trace to understand. The trace stays one flag away.
+    from concordance.adapters.base import SourceError
+    from concordance.llm.base import LlmError
+
+    try:
+        return args.func(args)
+    except SourceError as error:
+        if args.debug:
+            raise
+        print(f"\n{error.render()}\n", file=sys.stderr)
+        return 2
+    except LlmError as error:
+        if args.debug:
+            raise
+        print(f"\n{error}\n", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":

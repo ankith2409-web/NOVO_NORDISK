@@ -14,6 +14,34 @@ from concordance.model import SemanticModel
 from concordance.normalize.dax import extract_references
 
 
+class SourceError(Exception):
+    """A model could not be read, for a reason worth showing a person.
+
+    Extraction failures arrive from three very different places -- this
+    project's own validation, the standard library when a path is wrong, and
+    whatever a third-party parser raises when a file is not the format it
+    claims to be. Left alone, the third kind reaches a user as a stack trace
+    ending in something like "Unknown or unsupported DataModel compression
+    format", which says nothing about which file was at fault or what to do.
+
+    Every entry point funnels them into this one type so the answer is always a
+    sentence naming the file and the problem, and the traceback stays available
+    behind ``--debug`` for whoever actually wants it.
+    """
+
+    def __init__(self, source: str, problem: str, hint: str = "") -> None:
+        self.source = source
+        self.problem = problem
+        self.hint = hint
+        super().__init__(f"Cannot read {source}: {problem}")
+
+    def render(self) -> str:
+        lines = [f"Cannot read {self.source}", f"  {self.problem}"]
+        if self.hint:
+            lines.append(f"  {self.hint}")
+        return "\n".join(lines)
+
+
 @runtime_checkable
 class SourceAdapter(Protocol):
     """Translates one platform's metadata into the canonical object model."""

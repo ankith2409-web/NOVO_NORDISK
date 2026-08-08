@@ -33,7 +33,14 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from concordance.llm.base import Completion, LlmError, Message, ToolCall, ToolSpec
+from concordance.llm.base import (
+    Completion,
+    LlmError,
+    LlmUnreachable,
+    Message,
+    ToolCall,
+    ToolSpec,
+)
 
 _DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
 
@@ -135,10 +142,11 @@ class GroqProvider:
         except urllib.error.HTTPError as error:
             detail = _describe(error)
             raise LlmError(
-                f"Groq returned HTTP {error.code}: {_redact(detail, self._api_key)}"
+                f"Groq returned HTTP {error.code}: {_redact(detail, self._api_key)}",
+                status=error.code,
             ) from None
         except urllib.error.URLError as error:
-            raise LlmError(f"Could not reach {self._base_url}: {error.reason}") from None
+            raise LlmUnreachable(f"Could not reach {self._base_url}: {error.reason}") from None
         except json.JSONDecodeError as error:
             raise LlmError(f"Groq returned a malformed response: {error}") from None
 

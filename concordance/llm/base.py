@@ -71,8 +71,69 @@ class Completion:
         return bool(self.tool_calls)
 
 
+#: Wordings observed from real providers that report a billing or quota problem
+#: with a client-error status instead of 402 or 429. Kept deliberately short and
+#: specific: every phrase here is one an actual API returned, not a guess at what
+#: one might say, because a loose match would start swallowing genuine
+#: malformed-request errors.
+_BILLING_PHRASES = (
+    "credit balance is too low",
+    "quota",
+    "billing",
+    "insufficient_quota",
+)
+
+
 class LlmError(RuntimeError):
-    """A provider call failed in a way the caller should surface, not retry blindly."""
+    """A provider call failed in a way the caller should surface, not retry blindly.
+
+    ``status`` carries the HTTP code when the failure came from a provider's
+    API, which is what lets a fallback chain decide whether trying a different
+    provider could possibly help. Reading that decision out of the message text
+    instead would mean matching on prose that each provider words differently.
+    """
+
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.status = status
+
+    @property
+    def is_provider_unavailable(self) -> bool:
+        """Would a different provider plausibly have answered this?
+
+        Only for failures about *reach*: an exhausted quota, a key that is not
+        accepted, the service being down, or the host being unreachable.
+
+        Deliberately false for a plain 400. A rejected request body is this
+        project's own bug -- every provider would reject it equally -- and
+        rolling on to the next one would turn a clear, fixable error into a
+        confusing chain of them, which is exactly how a real defect gets
+        mistaken for someone else's outage.
+
+        The exception is real and was found by running this rather than
+        reasoning about it: Anthropic answers an exhausted credit balance with
+        400, not 402, saying "Your credit balance is too low to access the
+        Anthropic API." That is unambiguously an availability problem wearing a
+        client-error status, so the few words that identify it are matched
+        narrowly -- narrowly enough that an ordinary malformed-payload 400 is
+        still raised immediately.
+        """
+        if self.status is None:
+            return False
+        if self.status in (401, 402, 403, 408, 429) or self.status >= 500:
+            return True
+        if self.status == 400:
+            return any(phrase in self.message.lower() for phrase in _BILLING_PHRASES)
+        return False
+
+
+class LlmUnreachable(LlmError):
+    """The provider's host could not be reached at all."""
+
+    @property
+    def is_provider_unavailable(self) -> bool:
+        return True
 
 
 @runtime_checkable

@@ -18,7 +18,14 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from concordance.llm.base import Completion, LlmError, Message, ToolCall, ToolSpec
+from concordance.llm.base import (
+    Completion,
+    LlmError,
+    LlmUnreachable,
+    Message,
+    ToolCall,
+    ToolSpec,
+)
 
 _ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
@@ -97,10 +104,11 @@ class GeminiProvider:
             # The key can appear in the URL echoed by some error bodies; never
             # let it reach a log or a terminal.
             raise LlmError(
-                f"Gemini returned HTTP {error.code}: {_redact(detail, self._api_key)}"
+                f"Gemini returned HTTP {error.code}: {_redact(detail, self._api_key)}",
+                status=error.code,
             ) from None
         except urllib.error.URLError as error:
-            raise LlmError(f"Could not reach Gemini: {error.reason}") from None
+            raise LlmUnreachable(f"Could not reach Gemini: {error.reason}") from None
         except json.JSONDecodeError as error:
             raise LlmError(f"Gemini returned a malformed response: {error}") from None
 
