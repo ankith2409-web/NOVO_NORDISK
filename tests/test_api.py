@@ -353,3 +353,22 @@ def test_read_only_endpoints_mint_no_sessions(server: _RunningServer) -> None:
         server.request("GET", path).read()
 
     assert len(server.sessions) == before
+
+
+def test_the_graph_says_which_tables_hold_definitions(context: api.ApiContext) -> None:
+    """A measure container is a table with no data of its own.
+
+    TMDL still requires one hidden placeholder column on such a table, so
+    without this flag an interface has no way to tell that column apart from
+    real data, and shows a field nobody can account for.
+    """
+    payload = api.handle(context, "/api/graph", {})[1]
+    tables = [n for n in payload["nodes"] if n["kind"] == "table"]
+
+    assert all("is_measure_only" in t for t in tables)
+    containers = {t["name"] for t in tables if t["is_measure_only"]}
+    assert containers, "the clinical model groups its measures in a container table"
+
+    # The flag has to agree with where the measures actually live.
+    hosts = {m["table"] for m in payload["nodes"] if m["kind"] == "measure"}
+    assert containers <= hosts

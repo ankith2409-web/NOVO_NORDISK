@@ -78,6 +78,12 @@ class SemanticGraph:
                 name=table.name,
                 fingerprint=table.fingerprint,
                 is_system=table.is_system,
+                # A measure container holds definitions rather than data. The
+                # model has always known this; not carrying it into the graph
+                # meant anything reading the graph had to guess, and a reader
+                # seeing the one hidden placeholder column that TMDL requires on
+                # such a table has no way to tell it apart from real data.
+                is_measure_only=table.is_measure_only,
                 has_power_query=table.power_query is not None,
             )
 

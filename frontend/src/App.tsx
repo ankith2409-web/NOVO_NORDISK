@@ -14,6 +14,7 @@ import { useEffect, useState } from "react";
 import { api, type Overview as OverviewData } from "@/lib/api";
 import { Copilot } from "@/components/Copilot";
 import { Overview } from "@/views/Overview";
+import { Model } from "@/views/Model";
 import { cx } from "@/lib/cx";
 
 type ViewId = "overview" | "model" | "requirements" | "drift" | "reconcile" | "review";
@@ -102,12 +103,10 @@ export default function App() {
         </nav>
 
         <main className="min-h-0 flex-1 overflow-auto">
-          {view === "overview" ? (
-            <Overview />
-          ) : (
-            <p className="p-4 font-mono text-xs text-faint">
-              {view} — not built yet.
-            </p>
+          {view === "overview" && <Overview />}
+          {view === "model" && <Model />}
+          {view !== "overview" && view !== "model" && (
+            <p className="p-4 font-mono text-xs text-faint">{view} — not built yet.</p>
           )}
         </main>
 

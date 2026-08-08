@@ -53,7 +53,6 @@ table 'QC Metrics'
 		displayFolder: Testing
 
 	/// Out-of-specification results as a share of all tests performed.
-	/// NOTE: the warehouse view of the same name divides by batches, not tests.
 	measure 'OOS Rate' = DIVIDE([OOS Results], [Tests Performed], 0)
 		formatString: 0.00%
 		displayFolder: Testing
