@@ -33,6 +33,9 @@ from concordance.web import api
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _SESSION_COOKIE = "concordance_session"
+#: Set once a valid token arrives, so a link carrying ?token= keeps working as
+#: the interface navigates without repeating the token on every request.
+_TOKEN_COOKIE = "concordance_token"
 #: Refuses a request body larger than this outright, before it is read.
 _MAX_BODY_BYTES = 10_000
 
@@ -105,6 +108,7 @@ def make_handler(
     graph: SemanticGraph,
     provider: LlmProvider,
     context: api.ApiContext | None = None,
+    access_token: str = "",
 ) -> tuple[type[BaseHTTPRequestHandler], SessionStore]:
     """Build the request handler class for one model and provider.
 
@@ -114,6 +118,15 @@ def make_handler(
     ``context`` carries whatever extra sources the read-only API is permitted to
     reach. Omitted, the API still serves everything derivable from the model
     itself and reports the rest as unconfigured.
+
+    ``access_token``, when set, is required on every request. It is off by
+    default because the server binds to loopback and the overwhelmingly common
+    use is one person on their own machine, where a login would be friction
+    protecting nothing. It exists because the moment that changes -- a shared
+    machine, a bound interface, a tunnel opened so a colleague can look -- the
+    server is handing out a company's DAX logic and letting anyone who finds
+    the port spend its API quota. A shared token is not real identity, and does
+    not pretend to be; it is the smallest honest control for that situation.
     """
     sessions = SessionStore(lambda: ModelChat(graph, provider))
     api_context = context or api.ApiContext(graph=graph)
@@ -129,6 +142,8 @@ def make_handler(
 
         def do_GET(self) -> None:  # noqa: N802 -- fixed by BaseHTTPRequestHandler
             parsed = urlparse(self.path)
+            if not self._authorised(parse_qs(parsed.query)):
+                return
             if parsed.path == "/":
                 self._serve_page()
             elif parsed.path in api.ROUTES:
@@ -137,7 +152,10 @@ def make_handler(
                 self._not_found()
 
         def do_POST(self) -> None:  # noqa: N802
-            if urlparse(self.path).path == "/api/ask":
+            parsed = urlparse(self.path)
+            if not self._authorised(parse_qs(parsed.query)):
+                return
+            if parsed.path == "/api/ask":
                 self._handle_ask()
             else:
                 self._not_found()
@@ -160,6 +178,14 @@ def make_handler(
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(page_bytes)))
             self._set_session_cookie(session_id)
+            if access_token:
+                # Arriving with a valid ?token= is what got us here; remembering
+                # it means the rest of the interface works without the token
+                # trailing every URL the user then sees.
+                self.send_header(
+                    "Set-Cookie",
+                    f"{_TOKEN_COOKIE}={access_token}; Path=/; HttpOnly; SameSite=Lax",
+                )
             self.end_headers()
             self.wfile.write(page_bytes)
 
@@ -213,19 +239,57 @@ def make_handler(
 
         # -- helpers -----------------------------------------------------
 
-        def _session_cookie(self) -> str | None:
+        def _cookie(self, name: str) -> str | None:
             raw = self.headers.get("Cookie")
             if not raw:
                 return None
             jar: SimpleCookie = SimpleCookie()
             jar.load(raw)
-            morsel = jar.get(_SESSION_COOKIE)
+            morsel = jar.get(name)
             return morsel.value if morsel else None
+
+        def _session_cookie(self) -> str | None:
+            return self._cookie(_SESSION_COOKIE)
 
         def _set_session_cookie(self, session_id: str) -> None:
             self.send_header(
                 "Set-Cookie", f"{_SESSION_COOKIE}={session_id}; Path=/; HttpOnly; SameSite=Lax"
             )
+
+        def _authorised(self, params: dict[str, list[str]]) -> bool:
+            """Check the shared token, when one is configured.
+
+            Accepted from an ``Authorization: Bearer`` header, a cookie set on
+            first arrival, or a ``?token=`` query parameter -- the last so a
+            link can be handed to someone without asking them to craft a
+            header. Compared with ``compare_digest`` rather than ``==`` so the
+            comparison does not leak the token's length or its matching prefix
+            through how long it takes to fail.
+            """
+            if not access_token:
+                return True
+
+            supplied = ""
+            header = self.headers.get("Authorization", "")
+            if header.startswith("Bearer "):
+                supplied = header[len("Bearer ") :].strip()
+            if not supplied:
+                supplied = (params.get("token") or [""])[0]
+            if not supplied:
+                supplied = self._cookie(_TOKEN_COOKIE) or ""
+
+            if supplied and secrets.compare_digest(supplied, access_token):
+                return True
+
+            self._json(
+                HTTPStatus.UNAUTHORIZED,
+                {
+                    "error": "This server requires an access token.",
+                    "how": "Open the link printed by `concordance serve`, which "
+                    "carries the token, or send it as an Authorization: Bearer header.",
+                },
+            )
+            return False
 
         def _cors_headers(self) -> None:
             origin = allowed_origin(self.headers.get("Origin"))
@@ -265,12 +329,27 @@ def serve(
     host: str = "127.0.0.1",
     port: int = 8000,
     context: api.ApiContext | None = None,
+    access_token: str = "",
 ) -> None:
     """Run the chat server until interrupted."""
-    handler, _ = make_handler(graph, provider, context)
+    handler, _ = make_handler(graph, provider, context, access_token=access_token)
     httpd = ThreadingHTTPServer((host, port), handler)
-    url = f"http://{host}:{httpd.server_port}/"
+    base = f"http://{host}:{httpd.server_port}/"
+    # The printed link carries the token, so the person who started the server
+    # can simply click it. Anyone else has to be given it deliberately, which is
+    # the entire point.
+    url = f"{base}?token={access_token}" if access_token else base
     print(f"Concordance chat for {graph.model.name!r} — {url}")
+    if access_token:
+        print("  access token required — share the link above to grant access")
+    elif host not in ("127.0.0.1", "localhost", "::1"):
+        # Bound beyond loopback with nothing in front of it. Said plainly rather
+        # than left for someone to discover.
+        print(
+            f"  WARNING: listening on {host} with no access token. Anyone who can "
+            f"reach this port can read this model's DAX and spend its API quota. "
+            f"Pass --token to require one.",
+        )
     if context is not None:
         extra = [
             name
@@ -282,7 +361,9 @@ def serve(
         ]
         if extra:
             print(f"  also serving: {', '.join(extra)}")
-    print(f"  api: {len(api.ROUTES)} read-only endpoints under {url}api/")
+    # `base`, not `url`: the latter may carry ?token=, which would splice the
+    # query string into the middle of the path and print a nonsense address.
+    print(f"  api: {len(api.ROUTES)} read-only endpoints under {base}api/")
     print("Press Ctrl-C to stop.")
     try:
         httpd.serve_forever()

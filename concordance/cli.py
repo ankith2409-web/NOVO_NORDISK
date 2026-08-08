@@ -285,6 +285,9 @@ def cmd_document(args: argparse.Namespace) -> int:
     return 0
 
 
+#: Marks `--token` used as a bare flag, meaning "generate one for me".
+_MINT_TOKEN_SENTINEL = "\x00mint"
+
 #: argparse's default for --model. Recognised so the value can be treated as
 #: "unset" rather than as a Gemini model name deliberately chosen.
 _DEFAULT_MODEL_SENTINEL = "gemini-3.6-flash"
@@ -449,7 +452,22 @@ def cmd_serve(args: argparse.Namespace) -> int:
         warehouse_schema=args.schema,
     )
 
-    serve(graph, provider, host=args.host, port=args.port, context=context)
+    # `--token` with no value mints one, so turning auth on never depends on
+    # someone inventing a good secret under time pressure.
+    token = args.token
+    if token == _MINT_TOKEN_SENTINEL:
+        import secrets as _secrets
+
+        token = _secrets.token_urlsafe(24)
+
+    serve(
+        graph,
+        provider,
+        host=args.host,
+        port=args.port,
+        context=context,
+        access_token=token or "",
+    )
     return 0
 
 
@@ -704,6 +722,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--warehouse", help="a DuckDB warehouse to serve reconciliation against")
     p.add_argument("--schema", default="main", help="warehouse schema to read")
+    p.add_argument(
+        "--token",
+        nargs="?",
+        const=_MINT_TOKEN_SENTINEL,
+        default="",
+        help="require an access token on every request. Pass a value to choose "
+        "one, or use the flag alone to have one generated. Off by default, "
+        "which is safe on loopback and not safe once --host is opened up.",
+    )
     p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("document", help="generate a BRD or FRD from a model")
