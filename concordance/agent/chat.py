@@ -165,6 +165,9 @@ class ModelChat:
             role="tool",
             tool_name=call.name,
             tool_result=result,
+            # Threaded through so a provider that pairs by id -- Anthropic does,
+            # Gemini does not -- can round-trip the conversation correctly.
+            tool_call_id=call.call_id,
         )
 
     def _system_prompt(self) -> str:

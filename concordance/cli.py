@@ -250,15 +250,51 @@ def cmd_document(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_provider(args: argparse.Namespace):
+    """Construct the provider named by ``--provider``, or report why not.
+
+    Kept as one function so ``ask`` and ``serve`` cannot drift into supporting
+    different providers by accident. Gemini stays the default: it is the one
+    proven to work end to end in this project's own environment, where the
+    Anthropic path has been written against the documented API but could not
+    be exercised against a live key -- the sandbox's egress policy blocks the
+    gateway host, and the fix is to verify locally, not to route around a
+    policy denial.
+    """
+    if args.provider == "anthropic":
+        from concordance.llm.anthropic import DEFAULT_MODEL, AnthropicProvider
+
+        model = args.model if args.model != "gemini-3.6-flash" else DEFAULT_MODEL
+        return AnthropicProvider(model=model, base_url=args.base_url)
+
+    from concordance.llm.gemini import GeminiProvider
+
+    return GeminiProvider(model=args.model)
+
+
+def _add_provider_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--provider",
+        choices=("gemini", "anthropic"),
+        default="gemini",
+        help="which language model backs the chat (default gemini)",
+    )
+    parser.add_argument(
+        "--base-url",
+        default=None,
+        help="override the Anthropic API host, e.g. a Claude-compatible gateway "
+        "(ignored for --provider gemini; also read from ANTHROPIC_BASE_URL)",
+    )
+
+
 def cmd_ask(args: argparse.Namespace) -> int:
     """Ask a question about a model, or open an interactive session."""
     from concordance.agent.chat import ModelChat
     from concordance.llm.base import LlmError
-    from concordance.llm.gemini import GeminiProvider
 
     graph = _load(args.source)
     try:
-        provider = GeminiProvider(model=args.model)
+        provider = _build_provider(args)
     except LlmError as error:
         print(f"{error}", file=sys.stderr)
         return 2
@@ -299,14 +335,13 @@ def cmd_ask(args: argparse.Namespace) -> int:
 def cmd_serve(args: argparse.Namespace) -> int:
     """Run a local web chat interface for a model."""
     from concordance.llm.base import LlmError
-    from concordance.llm.gemini import GeminiProvider
     from concordance.web.server import serve
 
     from concordance.web.api import ApiContext
 
     graph = _load(args.source)
     try:
-        provider = GeminiProvider(model=args.model)
+        provider = _build_provider(args)
     except LlmError as error:
         print(f"{error}", file=sys.stderr)
         return 2
@@ -493,7 +528,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("ask", help="ask questions about a model")
     p.add_argument("source", help="path to a .pbix file or TMDL model folder")
     p.add_argument("question", nargs="*", help="question; omit for interactive mode")
-    p.add_argument("--model", default="gemini-3.6-flash", help="Gemini model to use")
+    p.add_argument("--model", default="gemini-3.6-flash", help="model name for the chosen provider")
+    _add_provider_arguments(p)
     p.add_argument("--show-tools", action="store_true",
                    help="show which tools were called to reach the answer")
     p.set_defaults(func=cmd_ask)
@@ -541,7 +577,8 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("serve", help="run a local web chat interface for a model")
     p.add_argument("source", help="path to a .pbix file or TMDL model folder")
-    p.add_argument("--model", default="gemini-3.6-flash", help="Gemini model to use")
+    p.add_argument("--model", default="gemini-3.6-flash", help="model name for the chosen provider")
+    _add_provider_arguments(p)
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument(

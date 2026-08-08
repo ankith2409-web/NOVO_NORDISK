@@ -442,6 +442,34 @@ is not tested**, because this project has no credentials for either; those conne
 the DB-API connection and reuse everything above it. The distinction is stated here rather
 than left for someone to discover.
 
+## Switching to Anthropic, or a Claude-compatible gateway
+
+The project was designed against Claude and moved to Gemini when a paid Anthropic
+key was not available. That move cost nothing beyond a configuration change,
+which is the entire point of the provider interface -- neither the graph, the
+requirements, nor the agent loop knows which model answers a question.
+
+```bash
+concordance ask <model> "question" --provider anthropic
+concordance serve <model> --provider anthropic --model claude-haiku-4-5-20251001
+
+# Or a Claude-compatible gateway rather than Anthropic's own API:
+concordance serve <model> --provider anthropic --base-url https://your-gateway.example
+```
+
+`ANTHROPIC_API_KEY` (and optionally `ANTHROPIC_BASE_URL`) work the same way
+`GEMINI_API_KEY` does: environment variable or a line in `.env` at the project
+root.
+
+**Status:** written against Anthropic's documented Messages API and unit-tested
+against that documented shape -- request construction, tool-use id pairing,
+response parsing, error redaction -- with no network call. It has not been
+exercised against a live key or gateway from this environment: the sandbox's
+egress policy blocks outbound access to third-party API gateways outright, and
+the correct response to a policy denial is to verify locally, not route around
+it. Run one real question through `concordance ask` on your own machine before
+relying on this for a demo.
+
 ## Detecting drift
 
 `drift` compares two versions of a model and reports not just what changed, but **which
@@ -545,7 +573,7 @@ concordance/
     metrics.py         comparing one KPI's definition across two platforms
   cli.py
 scripts/               report generator, warehouse fixture, snapshot capture
-tests/                 316 tests, run against the real models
+tests/                 332 tests, run against the real models
 frontend/              React interface over the JSON API (Vite, Tailwind)
 data/models/           three Microsoft .pbix samples + an authored TMDL model and its v2
 ```

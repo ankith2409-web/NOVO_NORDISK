@@ -50,6 +50,12 @@ class Message:
     #: For a tool result: which call it answers, and what it returned.
     tool_name: str | None = None
     tool_result: Any = None
+    #: The originating call's id, carried alongside ``tool_name``. Gemini pairs
+    #: a result to its call by function name and never reads this; Anthropic
+    #: pairs strictly by id, so a provider that drops it here cannot round-trip
+    #: a conversation without the API rejecting a tool_result that references
+    #: an id no earlier tool_use block declared.
+    tool_call_id: str | None = None
 
 
 @dataclass(frozen=True)
