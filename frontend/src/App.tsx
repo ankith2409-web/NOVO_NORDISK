@@ -15,6 +15,10 @@ import { api, SNAPSHOT_MODE, type Overview as OverviewData } from "@/lib/api";
 import { Copilot } from "@/components/Copilot";
 import { Overview } from "@/views/Overview";
 import { Model } from "@/views/Model";
+import { Requirements } from "@/views/Requirements";
+import { Drift } from "@/views/Drift";
+import { Reconcile } from "@/views/Reconcile";
+import { Review } from "@/views/Review";
 import { cx } from "@/lib/cx";
 
 type ViewId = "overview" | "model" | "requirements" | "drift" | "reconcile" | "review";
@@ -160,9 +164,10 @@ export default function App() {
         <main className="min-h-0 flex-1 overflow-auto">
           {view === "overview" && <Overview overview={overview} />}
           {view === "model" && <Model />}
-          {view !== "overview" && view !== "model" && (
-            <p className="p-4 font-mono text-xs text-faint">{view} — not built yet.</p>
-          )}
+          {view === "requirements" && <Requirements />}
+          {view === "drift" && <Drift />}
+          {view === "reconcile" && <Reconcile />}
+          {view === "review" && <Review />}
         </main>
 
         {/* Stays mounted whether or not it is on screen: closing the panel must

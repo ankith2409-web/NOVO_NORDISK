@@ -198,6 +198,11 @@ The server's cross-origin support is what allows the two to be served from
 different ports, but developing through it would mean testing a path the shipped
 app never takes.
 
+Six views: **Overview** (counts and what could not be read), **Model** (tree,
+definition, fingerprint chain, impact), **Requirements** (BRD/FRD with evidence
+per row), **Drift**, **Reconcile**, and **Review**. Drift and Reconcile appear
+only when the server was started with something to compare against.
+
 ### Sharing it without a server
 
 The interface normally talks to a running `concordance serve`. There is a second
