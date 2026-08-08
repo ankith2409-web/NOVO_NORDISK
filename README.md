@@ -198,6 +198,25 @@ The server's cross-origin support is what allows the two to be served from
 different ports, but developing through it would mean testing a path the shipped
 app never takes.
 
+### Sharing it without a server
+
+The interface normally talks to a running `concordance serve`. There is a second
+build that answers from a captured run instead, inlined into a single HTML file
+that needs no backend — for a reviewer, or anyone without the repo:
+
+```bash
+python scripts/capture_snapshot.py     # against a running server
+cd frontend && npm run build:snapshot  # one self-contained dist/index.html
+```
+
+Everything it shows came from a real extraction, and it says on screen that it is
+a snapshot. The mode is chosen at build time, never as a fallback when a request
+fails: a silent fallback would hide a dead server behind stale data, which is the
+confidently-wrong behaviour this project exists to avoid. The ordinary build
+contains no capture at all and still says plainly when it cannot reach the API.
+The chat is absent from a capture by nature — it answers by calling tools against
+a live graph, so there is nothing to record.
+
 ### What the design is trying to do
 
 Every comparable tool shows conclusions. The point of this one is that it shows
@@ -520,7 +539,7 @@ concordance/
   reconcile/
     metrics.py         comparing one KPI's definition across two platforms
   cli.py
-scripts/               report generator, and the DuckDB warehouse fixture
+scripts/               report generator, warehouse fixture, snapshot capture
 tests/                 316 tests, run against the real models
 frontend/              React interface over the JSON API (Vite, Tailwind)
 data/models/           three Microsoft .pbix samples + an authored TMDL model and its v2

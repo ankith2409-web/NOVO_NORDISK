@@ -11,7 +11,7 @@
  * renders accordingly.
  */
 import { useEffect, useState } from "react";
-import { api, type Overview as OverviewData } from "@/lib/api";
+import { api, SNAPSHOT_MODE, type Overview as OverviewData } from "@/lib/api";
 import { Copilot } from "@/components/Copilot";
 import { Overview } from "@/views/Overview";
 import { Model } from "@/views/Model";
@@ -61,6 +61,14 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col bg-surface">
+      {/* Said plainly and permanently. A shared build that looked live would
+          invite someone to trust a number that is only as fresh as the capture. */}
+      {SNAPSHOT_MODE && (
+        <div className="border-b border-review/40 bg-review-soft px-3 py-1.5 text-center text-[12px] text-review">
+          Static snapshot of a real extraction — every figure below came from the
+          model, but nothing here is live and the copilot needs a running server.
+        </div>
+      )}
       <header className="flex items-center gap-3 border-b border-hairline bg-ground px-3 py-2">
         <span className="font-serif text-sm font-semibold">Concordance</span>
         <span className="h-4 w-px bg-hairline" />

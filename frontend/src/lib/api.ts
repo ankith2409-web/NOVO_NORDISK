@@ -177,7 +177,50 @@ export interface ApiFailure {
 
 export type Result<T> = ({ ok: true } & { data: T }) | ApiFailure;
 
+/**
+ * A build with `VITE_SNAPSHOT=1` answers from a captured run instead of a live
+ * server, so the interface can be shared as a single file with no backend.
+ *
+ * Gated at build time rather than by falling back when a request fails. A
+ * silent fallback would hide a dead server behind stale data, which is exactly
+ * the confidently-wrong behaviour this project exists to avoid -- the normal
+ * build has no snapshot in it at all and still says plainly when it cannot
+ * reach the API.
+ */
+export const SNAPSHOT_MODE = import.meta.env.VITE_SNAPSHOT === "1";
+
+let captured: Record<string, unknown> | null = null;
+
+async function fromSnapshot<T>(
+  path: string,
+  params?: Record<string, string>,
+): Promise<Result<T>> {
+  if (!captured) {
+    captured = (await import("./snapshot.json")).default as Record<string, unknown>;
+  }
+  const query = params ? `?${new URLSearchParams(params)}` : "";
+
+  // Per-object lookups were captured by name rather than by URL.
+  if (path === "/measure" && params?.name) {
+    const found = (captured._measures as Record<string, T>)[params.name];
+    if (found) return { ok: true, data: found };
+  }
+  if (path === "/impact" && params?.name) {
+    const found = (captured._impact as Record<string, T>)[params.name];
+    if (found) return { ok: true, data: found };
+  }
+
+  const hit = captured[path + query] as T | undefined;
+  if (hit) return { ok: true, data: hit };
+  return {
+    ok: false,
+    status: 501,
+    message: "Not part of this snapshot. Run the server for the live model.",
+  };
+}
+
 async function get<T>(path: string, params?: Record<string, string>): Promise<Result<T>> {
+  if (SNAPSHOT_MODE) return fromSnapshot<T>(path, params);
   const query = params ? `?${new URLSearchParams(params)}` : "";
   let response: Response;
   try {
@@ -232,6 +275,16 @@ export const api = {
       rejected_calls: string[];
     }>
   > {
+    if (SNAPSHOT_MODE) {
+      return {
+        ok: false,
+        status: 501,
+        message:
+          "The copilot needs a live model — it answers by calling tools against the graph, " +
+          "so there is nothing to snapshot. Run `concordance serve <model>` to use it.",
+      };
+    }
+
     let response: Response;
     try {
       response = await fetch("/api/ask", {

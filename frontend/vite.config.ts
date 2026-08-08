@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { viteSingleFile } from "vite-plugin-singlefile";
 
 
 // The API runs as a separate Python process. Proxying it through the dev server
@@ -12,7 +13,13 @@ import tailwindcss from "@tailwindcss/vite";
 const API = process.env.CONCORDANCE_API ?? "http://127.0.0.1:8000";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  // The snapshot build inlines everything into one HTML file so the interface
+  // can be shared as a link. The normal build is untouched.
+  plugins: [
+    react(),
+    tailwindcss(),
+    ...(process.env.VITE_SNAPSHOT === "1" ? [viteSingleFile()] : []),
+  ],
   resolve: {
     alias: { "@": new URL("./src", import.meta.url).pathname },
   },
