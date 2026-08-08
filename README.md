@@ -442,33 +442,44 @@ is not tested**, because this project has no credentials for either; those conne
 the DB-API connection and reuse everything above it. The distinction is stated here rather
 than left for someone to discover.
 
-## Switching to Anthropic, or a Claude-compatible gateway
+## Switching providers: Claude, Groq, or Gemini
 
 The project was designed against Claude and moved to Gemini when a paid Anthropic
-key was not available. That move cost nothing beyond a configuration change,
-which is the entire point of the provider interface -- neither the graph, the
-requirements, nor the agent loop knows which model answers a question.
+key was not available. Three providers exist now, chosen with `--provider`, and
+switching between them costs nothing beyond that flag -- the entire point of the
+provider interface is that neither the graph, the requirements, nor the agent
+loop knows which model answers a question.
 
 ```bash
 concordance ask <model> "question" --provider anthropic
-concordance serve <model> --provider anthropic --model claude-haiku-4-5-20251001
+concordance ask <model> "question" --provider groq
 
-# Or a Claude-compatible gateway rather than Anthropic's own API:
+concordance serve <model> --provider anthropic --model claude-haiku-4-5-20251001
+concordance serve <model> --provider groq --model llama-3.3-70b-versatile
+
+# A Claude-compatible gateway rather than Anthropic's own API:
 concordance serve <model> --provider anthropic --base-url https://your-gateway.example
 ```
 
-`ANTHROPIC_API_KEY` (and optionally `ANTHROPIC_BASE_URL`) work the same way
-`GEMINI_API_KEY` does: environment variable or a line in `.env` at the project
-root.
+`ANTHROPIC_API_KEY` / `GROQ_API_KEY` (and optionally `ANTHROPIC_BASE_URL` /
+`GROQ_BASE_URL`) work the same way `GEMINI_API_KEY` does: environment variable
+or a line in `.env` at the project root.
 
-**Status:** written against Anthropic's documented Messages API and unit-tested
-against that documented shape -- request construction, tool-use id pairing,
-response parsing, error redaction -- with no network call. It has not been
-exercised against a live key or gateway from this environment: the sandbox's
-egress policy blocks outbound access to third-party API gateways outright, and
-the correct response to a policy denial is to verify locally, not route around
-it. Run one real question through `concordance ask` on your own machine before
-relying on this for a demo.
+Groq is the free option that does not share Gemini's failure mode. Gemini's free
+tier is daily and account-level -- once exhausted, a new key on the same account
+does not help, only time or a different account does. Groq needs no card and its
+per-minute rate limits reset every minute rather than every day.
+
+**Status:** both are written against their publicly documented APIs and
+unit-tested against those documented shapes -- request construction, the
+tool-call id pairing, response parsing, error redaction -- with no network call.
+Neither has been exercised against a live key from this environment: the
+sandbox's egress policy blocks both `api.anthropic.com`'s gateway alternatives
+and `api.groq.com` outright (confirmed via a direct CONNECT, answered with a
+policy 403 in both cases), and the correct response to a policy denial is to
+verify locally, not route around it. Run one real question through
+`concordance ask` on a machine that can reach the provider before relying on
+either for a demo.
 
 ## Detecting drift
 
@@ -558,6 +569,8 @@ concordance/
   llm/
     base.py            provider contract — model-agnostic
     gemini.py          Gemini over REST, no SDK dependency
+    anthropic.py       Claude / Claude-compatible gateways, same approach
+    groq.py            Groq's OpenAI-compatible chat completions API
     fake.py            scripted provider for tests
   agent/
     tools.py           read-only tool surface over the graph
@@ -573,7 +586,7 @@ concordance/
     metrics.py         comparing one KPI's definition across two platforms
   cli.py
 scripts/               report generator, warehouse fixture, snapshot capture
-tests/                 332 tests, run against the real models
+tests/                 346 tests, run against the real models
 frontend/              React interface over the JSON API (Vite, Tailwind)
 data/models/           three Microsoft .pbix samples + an authored TMDL model and its v2
 ```

@@ -255,17 +255,23 @@ def _build_provider(args: argparse.Namespace):
 
     Kept as one function so ``ask`` and ``serve`` cannot drift into supporting
     different providers by accident. Gemini stays the default: it is the one
-    proven to work end to end in this project's own environment, where the
-    Anthropic path has been written against the documented API but could not
-    be exercised against a live key -- the sandbox's egress policy blocks the
-    gateway host, and the fix is to verify locally, not to route around a
-    policy denial.
+    proven to work end to end in this project's own environment. The Anthropic
+    and Groq paths have been written against their documented APIs but could
+    not be exercised against a live key from here -- this sandbox's egress
+    policy blocks both hosts outright, and the fix is to verify locally, not to
+    route around a policy denial.
     """
     if args.provider == "anthropic":
         from concordance.llm.anthropic import DEFAULT_MODEL, AnthropicProvider
 
         model = args.model if args.model != "gemini-3.6-flash" else DEFAULT_MODEL
         return AnthropicProvider(model=model, base_url=args.base_url)
+
+    if args.provider == "groq":
+        from concordance.llm.groq import DEFAULT_MODEL, GroqProvider
+
+        model = args.model if args.model != "gemini-3.6-flash" else DEFAULT_MODEL
+        return GroqProvider(model=model, base_url=args.base_url)
 
     from concordance.llm.gemini import GeminiProvider
 
@@ -275,15 +281,16 @@ def _build_provider(args: argparse.Namespace):
 def _add_provider_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--provider",
-        choices=("gemini", "anthropic"),
+        choices=("gemini", "anthropic", "groq"),
         default="gemini",
         help="which language model backs the chat (default gemini)",
     )
     parser.add_argument(
         "--base-url",
         default=None,
-        help="override the Anthropic API host, e.g. a Claude-compatible gateway "
-        "(ignored for --provider gemini; also read from ANTHROPIC_BASE_URL)",
+        help="override the provider's API host, e.g. a Claude-compatible gateway "
+        "for --provider anthropic (ignored for --provider gemini; also read from "
+        "ANTHROPIC_BASE_URL or GROQ_BASE_URL)",
     )
 
 
