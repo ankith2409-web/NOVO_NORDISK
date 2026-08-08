@@ -21,7 +21,14 @@ interface Turn {
   failed?: boolean;
 }
 
-export function Copilot({ model }: { model: string }) {
+export function Copilot({
+  model,
+  onClose,
+}: {
+  model: string;
+  /** Supplied only when the panel floats over the work and needs dismissing. */
+  onClose?: () => void;
+}) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [question, setQuestion] = useState("");
   const [busy, setBusy] = useState(false);
@@ -66,6 +73,15 @@ export function Copilot({ model }: { model: string }) {
           Copilot
         </h2>
         <span className="truncate font-mono text-[11px] text-faint">· {model}</span>
+        {onClose && (
+          <button
+            onClick={onClose}
+            aria-label="Close the copilot"
+            className="ml-auto rounded border border-hairline px-1.5 py-0.5 font-mono text-[11px] text-faint hover:text-ink"
+          >
+            close
+          </button>
+        )}
       </header>
 
       <div ref={log} className="min-h-0 flex-1 overflow-auto px-3.5 py-3">

@@ -12,25 +12,22 @@ import { api, type Overview as OverviewData, type ReviewPayload } from "@/lib/ap
 import { Chip, Empty, Failure, Loading, Panel, Stat } from "@/components/primitives";
 import { RichText } from "@/components/RichText";
 
-export function Overview() {
-  const [data, setData] = useState<OverviewData | null>(null);
+export function Overview({ overview }: { overview: OverviewData | null }) {
   const [review, setReview] = useState<ReviewPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // The overview itself is fetched once by the shell and passed in; only the
+  // review queue is this view's own.
   useEffect(() => {
-    void (async () => {
-      const result = await api.overview();
-      if (result.ok) setData(result.data);
-      else setError(result.message);
-    })();
     void (async () => {
       const result = await api.review();
       if (result.ok) setReview(result.data);
+      else setError(result.message);
     })();
   }, []);
 
-  if (error) return <Failure message={error} />;
-  if (!data) return <Loading what="the model" />;
+  const data = overview;
+  if (!data) return error ? <Failure message={error} /> : <Loading what="the model" />;
 
   const gaps = data.not_extracted;
   const unresolved = data.unresolved_references;

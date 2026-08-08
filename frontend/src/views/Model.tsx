@@ -215,16 +215,21 @@ export function Model() {
 function Detail({ node }: { node: Node }) {
   const [measure, setMeasure] = useState<MeasureDetail | null>(null);
   const [impact, setImpact] = useState<string[] | null>(null);
+  const [impactProblem, setImpactProblem] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
 
   useEffect(() => {
     setMeasure(null);
     setImpact(null);
+    setImpactProblem(null);
     setProblem(null);
 
     void (async () => {
       const affected = await api.impact(node.name ?? "");
+      // A swallowed failure would leave this panel loading for ever, which
+      // reads as "still working" rather than "this did not answer".
       if (affected.ok) setImpact(affected.data.would_be_affected);
+      else setImpactProblem(affected.message);
     })();
 
     if (node.kind !== "measure") return;
@@ -300,7 +305,9 @@ function Detail({ node }: { node: Node }) {
         <Panel
           title={impact ? `Breaks if changed (${impact.length})` : "Breaks if changed"}
         >
-          {impact === null ? (
+          {impactProblem ? (
+            <Failure message={impactProblem} />
+          ) : impact === null ? (
             <Loading what="impact" />
           ) : impact.length === 0 ? (
             <p className="p-3 text-xs text-muted">
