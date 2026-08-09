@@ -16,7 +16,9 @@ from dataclasses import dataclass
 
 import networkx as nx
 
+from concordance.fingerprint import fingerprint_text
 from concordance.model import ObjectKind, SemanticModel
+from concordance.normalize.mquery import extract_sources
 
 
 class EdgeKind:
@@ -24,6 +26,7 @@ class EdgeKind:
     DEFINES = "defines"        # table -> measure
     REFERENCES = "references"  # measure -> column | measure
     JOINS = "joins"            # table -> table
+    LOADS = "loads"            # table -> source it is loaded from
 
 
 def table_id(name: str) -> str:
@@ -40,6 +43,16 @@ def measure_id(table: str, name: str) -> str:
 
 def hierarchy_id(table: str, name: str) -> str:
     return f"hierarchy:{table}[{name}]"
+
+
+def source_id(kind: str, detail: str) -> str:
+    """Identified by what it points at, not by which table found it.
+
+    Two tables loaded from one workbook share a node, which is the whole
+    reason to draw it: "these four tables all come from one spreadsheet on
+    somebody's laptop" is a finding, and one node per table would hide it.
+    """
+    return f"source:{kind}:{detail}"
 
 
 @dataclass
@@ -86,6 +99,7 @@ class SemanticGraph:
                 is_measure_only=table.is_measure_only,
                 has_power_query=table.power_query is not None,
             )
+            self._add_sources(table)
 
         for column in self.model.columns:
             node = column_id(column.table, column.name)
@@ -142,6 +156,40 @@ class SemanticGraph:
                 cross_filter=rel.cross_filter,
                 is_active=rel.is_active,
                 fingerprint=rel.fingerprint,
+            )
+
+    def _add_sources(self, table) -> None:
+        """Give a table's Power Query source a node, so lineage does not stop here.
+
+        The edge runs table -> source, matching `references`: in this graph an
+        out-edge means "reads", so the reader points at what it reads. Data
+        flows the other way, which is tempting to draw instead, but an edge set
+        where half the arrows mean "reads" and half mean "feeds" cannot be
+        walked by anything without special-casing each kind.
+
+        A table whose query names nothing recognisable gets no node rather than
+        an "unknown source" placeholder. The two are different claims -- one
+        says where the data comes from, the other only that this module could
+        not tell -- and drawing the second as though it were the first is how a
+        diagram becomes confidently wrong.
+        """
+        if not table.power_query:
+            return
+        for reference in extract_sources(table.power_query):
+            node = source_id(reference.kind, reference.detail)
+            self.graph.add_node(
+                node,
+                kind=ObjectKind.SOURCE.value,
+                name=reference.label,
+                source_kind=reference.kind,
+                detail=reference.detail,
+                # Named so a reader can check the claim against the query
+                # itself rather than taking this module's word for it.
+                via=reference.function,
+                fingerprint=fingerprint_text(f"{reference.kind}:{reference.detail}"),
+            )
+            self.graph.add_edge(
+                table_id(table.name), node, key=EdgeKind.LOADS, kind=EdgeKind.LOADS
             )
 
     def _link_measure_dependencies(self) -> None:

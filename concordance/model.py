@@ -19,6 +19,11 @@ class ObjectKind(Enum):
     CALCULATED_COLUMN = "calculated_column"
     RELATIONSHIP = "relationship"
     HIERARCHY = "hierarchy"
+    #: An external system a table is loaded from -- a file, a warehouse, a
+    #: service. Not part of the Power BI model itself, which is exactly why it
+    #: earns a node: it is where the model stops and the platform beneath it
+    #: begins, and a lineage that ends at the table cannot show that seam.
+    SOURCE = "source"
 
 
 @dataclass(frozen=True)

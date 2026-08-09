@@ -28,10 +28,15 @@ import { cx } from "@/lib/cx";
 
 type GraphNode = GraphPayload["nodes"][number] & { name?: string; table?: string };
 
-/** The only edge kind that means "reads". `contains` and `defines` are
- *  ownership and `joins` is structure; drawing any of them here would put two
- *  different meanings on one arrow. */
-const READS = "references";
+/** The edge kinds that mean "reads". `contains` and `defines` are ownership and
+ *  `joins` is structure; drawing any of them here would put two different
+ *  meanings on one arrow.
+ *
+ *  `loads` is a table pointing at the file or warehouse it comes from. It is
+ *  the same relation one step further out -- without it the chain ends at the
+ *  Power BI table, which is exactly where the interesting part begins for
+ *  anyone asking where a number really originates. */
+const READS = new Set(["references", "loads"]);
 
 const NODE_WIDTH = 150;
 const NODE_HEIGHT = 34;
@@ -174,7 +179,7 @@ function build(graph: GraphPayload, focus: string, maxDepth: number) {
   const reads = new Map<string, string[]>();
   const readBy = new Map<string, string[]>();
   for (const edge of graph.edges) {
-    if (edge.kind !== READS) continue;
+    if (!READS.has(edge.kind)) continue;
     push(reads, edge.source, edge.target);
     push(readBy, edge.target, edge.source);
   }
@@ -182,6 +187,18 @@ function build(graph: GraphPayload, focus: string, maxDepth: number) {
   const depths = new Map<string, number>([[focus, 0]]);
   walk(reads, focus, -1, maxDepth, depths);
   walk(readBy, focus, 1, maxDepth, depths);
+
+  // A source is pulled in whatever the hop budget says. It is a terminal node
+  // -- nothing is upstream of a CSV -- so it can only ever add one box, and it
+  // is the specific thing a lineage is usually being read to find. Cutting it
+  // off at the depth limit would answer "where does this number come from"
+  // with the name of a Power BI table, which is where the question starts.
+  for (const [id, depth] of [...depths]) {
+    for (const upstream of reads.get(id) ?? []) {
+      if (!upstream.startsWith("source:") || depths.has(upstream)) continue;
+      depths.set(upstream, depth - 1);
+    }
+  }
 
   const info = new Map(graph.nodes.map((node) => [node.id, node as GraphNode]));
   const columns = new Map<number, Placed[]>();
