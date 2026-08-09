@@ -476,7 +476,20 @@ def reconcile(context: ApiContext, params: Params) -> dict[str, Any]:
     from concordance.adapters import sql as sqladapter
     from concordance.reconcile import metrics
 
-    connection = duckdb.connect(str(context.warehouse), read_only=True)
+    try:
+        connection = duckdb.connect(str(context.warehouse), read_only=True)
+    except duckdb.Error as error:
+        # The file at --warehouse changed underneath a running server -- moved,
+        # truncated, replaced with something that isn't a database at all. Left
+        # unguarded this reaches the request thread as a raw IOException, which
+        # the client sees as a dropped connection rather than an answer: no
+        # status, no body, nothing to act on. A 502 here is deliberate --
+        # nothing about this request into Concordance was wrong; the warehouse
+        # it depends on is what failed to open.
+        raise ApiError(
+            HTTPStatus.BAD_GATEWAY,
+            f"cannot open the warehouse at {context.warehouse}: {error}",
+        ) from error
     try:
         warehouse_model = sqladapter.from_duckdb(connection, schema=context.warehouse_schema)
     finally:

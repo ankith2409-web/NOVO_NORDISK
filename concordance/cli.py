@@ -690,7 +690,16 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
             )
             return 2
 
-        connection = duckdb.connect(str(warehouse), read_only=True)
+        try:
+            connection = duckdb.connect(str(warehouse), read_only=True)
+        except duckdb.Error as error:
+            # The path exists -- checked above -- but is not a database DuckDB
+            # can open: truncated, replaced by something else, or a real
+            # database from an incompatible version. Left unguarded this
+            # surfaces as a raw IOException, indistinguishable from the tool
+            # itself crashing.
+            print(f"Cannot open the warehouse at {warehouse}: {error}", file=sys.stderr)
+            return 2
         try:
             model = sqladapter.from_duckdb(connection, schema=args.schema or "main")
         finally:

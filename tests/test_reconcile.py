@@ -556,3 +556,43 @@ def test_the_real_warehouse_yields_one_useful_suggestion(report) -> None:
     assert pairing.similarity < metrics._PAIRING_THRESHOLD
     assert pairing.basis == "structure"
     assert "instrument" in pairing.shared_columns
+
+
+# -- what happens when the database itself is the problem --------------------
+# Found by hand while answering "what if the database changes": a truncated or
+# corrupted --warehouse file reached the CLI and the server as a raw
+# duckdb.IOException -- a stack trace for the CLI, a dropped connection with no
+# body at all for the server. Neither is this input being wrong in an ordinary
+# way; both looked like the tool itself crashing.
+
+@pytest.fixture
+def corrupt_warehouse(tmp_path: Path) -> Path:
+    path = tmp_path / "corrupt.duckdb"
+    path.write_text("this is not a duckdb file", encoding="utf-8")
+    return path
+
+
+def test_the_cli_reports_a_corrupt_warehouse_without_a_traceback(
+    corrupt_warehouse: Path, capsys
+) -> None:
+    from concordance.cli import main
+
+    if not QUALITY_CONTROL.exists():
+        pytest.skip(f"model not present: {QUALITY_CONTROL}")
+    code = main([
+        "reconcile", str(QUALITY_CONTROL), "--warehouse", str(corrupt_warehouse),
+    ])
+    assert code == 2
+    assert "Cannot open the warehouse" in capsys.readouterr().err
+
+
+def test_the_api_answers_with_a_gateway_error_not_a_dropped_connection(
+    corrupt_warehouse: Path, power_bi: SemanticGraph
+) -> None:
+    from concordance.web.api import ApiContext, ApiError, reconcile
+
+    context = ApiContext(graph=power_bi, warehouse=corrupt_warehouse)
+    with pytest.raises(ApiError) as caught:
+        reconcile(context, {})
+    assert caught.value.status == 502
+    assert str(corrupt_warehouse) in caught.value.message
