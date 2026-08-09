@@ -8,6 +8,7 @@
  * that costs a page load is provenance nobody checks.
  */
 import { useEffect, useState } from "react";
+import { recallOneOf, remember } from "@/lib/remember";
 import {
   api,
   type Confidence,
@@ -28,7 +29,18 @@ import { cx } from "@/lib/cx";
 type Kind = "business" | "functional";
 
 export function Requirements() {
-  const [kind, setKind] = useState<Kind>("business");
+  // Remembered because the two documents are read in different sittings --
+  // coming back to a BRD review and landing on the FRD is a small, repeated
+  // annoyance. The confidence filter deliberately is not: it is a momentary
+  // narrowing, and restoring it would hide requirements without saying so.
+  const [kind, setKindState] = useState<Kind>(
+    () => recallOneOf<Kind>("requirements-kind", ["business", "functional"]) ?? "business",
+  );
+
+  function setKind(next: Kind) {
+    setKindState(next);
+    remember("requirements-kind", next);
+  }
   const [data, setData] = useState<RequirementsPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [only, setOnly] = useState<Confidence | null>(null);

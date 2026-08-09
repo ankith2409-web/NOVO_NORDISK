@@ -22,3 +22,6 @@ data/snapshots/
 
 # Generated warehouse — reproducible via `scripts/build_warehouse.py`
 data/warehouse/
+
+# Vite dependency cache, created when the dev server is run from here
+.vite/

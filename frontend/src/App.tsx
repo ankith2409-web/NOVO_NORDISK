@@ -25,6 +25,7 @@ import { Drift } from "@/views/Drift";
 import { Reconcile } from "@/views/Reconcile";
 import { Review } from "@/views/Review";
 import { cx } from "@/lib/cx";
+import { recall, recallOneOf, remember } from "@/lib/remember";
 
 type ViewId = "overview" | "model" | "requirements" | "drift" | "reconcile" | "review";
 
@@ -56,19 +57,43 @@ function useTheme() {
 const DOCKED = "(min-width: 1024px)";
 
 export default function App() {
-  const [view, setView] = useState<ViewId>("overview");
+  // Restored eagerly rather than in an effect: a first paint on the Overview
+  // followed by a jump to the remembered view is a flash, not a restore.
+  const [view, setViewState] = useState<ViewId>(
+    () => recallOneOf("view", VIEWS.map((entry) => entry.id)) ?? "overview",
+  );
+
+  function setView(next: ViewId) {
+    setViewState(next);
+    remember("view", next);
+  }
   const [overview, setOverview] = useState<OverviewData | null>(null);
   // Only used to draw the switcher. Which model is *active* lives in the API
   // client, so a request cannot be issued from a view that never heard about
   // the switch.
   const [loaded, setLoaded] = useState<LoadedModel[]>([]);
   const [active, setActive] = useState("");
+  // Which model to ask about is only known after /api/models answers. Rendering
+  // the views before then would fire every view's fetch against the default and
+  // again against the restored model, and briefly show one model's figures
+  // under the other's name.
+  const [resolved, setResolved] = useState(false);
   const [theme, toggleTheme] = useTheme();
 
   // Measured rather than assumed, so a narrow window does not briefly render
   // the docked layout before an effect corrects it.
   const [wide, setWide] = useState(() => window.matchMedia(DOCKED).matches);
-  const [showCopilot, setShowCopilot] = useState(() => window.matchMedia(DOCKED).matches);
+  const [showCopilot, setShowCopilot] = useState(() => {
+    const stored = recall("copilot");
+    // Only a deliberate choice is remembered. With none, the width decides --
+    // restoring "open" onto a phone-sized window would cover the work.
+    if (stored === "open" || stored === "closed") return stored === "open";
+    return window.matchMedia(DOCKED).matches;
+  });
+
+  useEffect(() => {
+    remember("copilot", showCopilot ? "open" : "closed");
+  }, [showCopilot]);
 
   useEffect(() => {
     const query = window.matchMedia(DOCKED);
@@ -93,25 +118,36 @@ export default function App() {
   // Fetched once here and handed down. Letting the overview view fetch it too
   // meant the same request went out twice on every load.
   useEffect(() => {
+    if (!resolved) return;
     void (async () => {
       const result = await api.overview();
       if (result.ok) setOverview(result.data);
     })();
-  }, [active]);
+  }, [active, resolved]);
 
   useEffect(() => {
     void (async () => {
       const result = await api.models();
-      if (result.ok) {
-        setLoaded(result.data.models);
-        setActive(result.data.default);
-      }
+      // Resolved either way: if the server cannot be reached, the views still
+      // have to mount so the one message worth showing -- how to start it --
+      // reaches the screen.
+      setResolved(true);
+      if (!result.ok) return;
+      setLoaded(result.data.models);
+      // Validated against what this server loaded. The same browser is used
+      // against different servers, and a remembered name this one never heard
+      // of would point every request at nothing.
+      const names = result.data.models.map((entry) => entry.name);
+      const restored = recallOneOf("model", names) ?? result.data.default;
+      api.use(restored);
+      setActive(restored);
     })();
   }, []);
 
   function switchTo(name: string) {
     if (name === active) return;
     api.use(name);
+    remember("model", name);
     // Cleared rather than left showing the previous model's figures while the
     // next ones load. Stale-but-plausible numbers under a new model name is
     // the one thing this interface must never do.
@@ -225,12 +261,13 @@ export default function App() {
             switch would leave the previous model's tables and requirements on
             screen under the new model's name. */}
         <main key={active} className="min-h-0 flex-1 overflow-auto">
-          {view === "overview" && <Overview overview={overview} />}
-          {view === "model" && <Model />}
-          {view === "requirements" && <Requirements />}
-          {view === "drift" && <Drift />}
-          {view === "reconcile" && <Reconcile />}
-          {view === "review" && <Review />}
+          {!resolved && <p className="p-4 font-mono text-xs text-faint">Connecting…</p>}
+          {resolved && view === "overview" && <Overview overview={overview} />}
+          {resolved && view === "model" && <Model />}
+          {resolved && view === "requirements" && <Requirements />}
+          {resolved && view === "drift" && <Drift />}
+          {resolved && view === "reconcile" && <Reconcile />}
+          {resolved && view === "review" && <Review />}
         </main>
 
         {/* Stays mounted whether or not it is on screen: closing the panel must
