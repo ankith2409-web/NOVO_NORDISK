@@ -20,6 +20,7 @@ behaviour the whole project is built to avoid.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass, field, replace
 from enum import Enum
 
@@ -400,6 +401,28 @@ def _possible_pairings(
     return pairings[:_MAX_PAIRINGS]
 
 
+#: How each platform is named where a person reads it. The identifiers are what
+#: the code compares by; these are what the sentence says.
+_PLATFORM_NAMES = {"power_bi": "Power BI", "warehouse": "the warehouse"}
+
+
+def _phrase(
+    sets: dict[str, Collection[str]], verb: str, nothing: str
+) -> str:
+    """One readable sentence naming what each side has.
+
+    Interpolating the collection directly used to put a Python repr in front of
+    a user -- ``power_bi reads ['batch', 'testresult']`` -- in the interface, the
+    generated document and the terminal alike. What is compared has not changed;
+    only how it is said.
+    """
+    return "; ".join(
+        f"{_PLATFORM_NAMES.get(platform, platform)} {verb} "
+        f"{', '.join(sorted(values)) or nothing}"
+        for platform, values in sorted(sets.items())
+    )
+
+
 def _compare(definitions: list[MetricDefinition]) -> Comparison:
     """Judge one metric's definitions against each other."""
     differences: list[Difference] = []
@@ -410,35 +433,17 @@ def _compare(definitions: list[MetricDefinition]) -> Comparison:
 
     if len({frozenset(v) for v in table_sets.values()}) > 1:
         differences.append(
-            Difference(
-                "source tables",
-                "; ".join(
-                    f"{platform} reads {sorted(tables) or 'nothing identifiable'}"
-                    for platform, tables in sorted(table_sets.items())
-                ),
-            )
+            Difference("source tables", _phrase(table_sets, "reads", "nothing identifiable"))
         )
 
     if len({frozenset(v) for v in column_sets.values()}) > 1:
         differences.append(
-            Difference(
-                "source columns",
-                "; ".join(
-                    f"{platform} reads {sorted(columns) or 'nothing identifiable'}"
-                    for platform, columns in sorted(column_sets.items())
-                ),
-            )
+            Difference("source columns", _phrase(column_sets, "reads", "nothing identifiable"))
         )
 
     if len({frozenset(v) for v in aggregation_sets.values()}) > 1:
         differences.append(
-            Difference(
-                "aggregation",
-                "; ".join(
-                    f"{platform} applies {sorted(aggs) or 'none identifiable'}"
-                    for platform, aggs in sorted(aggregation_sets.items())
-                ),
-            )
+            Difference("aggregation", _phrase(aggregation_sets, "applies", "none identifiable"))
         )
 
     # Reading different data is the strongest available signal that two

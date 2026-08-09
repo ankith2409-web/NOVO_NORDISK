@@ -338,3 +338,20 @@ def test_the_text_report_shows_the_conflict(report) -> None:
     # The reader has to be able to see *why* without opening the model.
     assert "batch" in text
     assert "via OOS Results, Tests Performed" in text
+
+
+# -- how a difference is worded ------------------------------------------------
+
+def test_a_difference_reads_as_a_sentence_not_a_python_repr(report) -> None:
+    """``power_bi reads ['batch', 'testresult']`` was reaching the interface,
+    the generated document and the terminal alike -- an f-string interpolating
+    a list. What is compared did not change; only how it is said."""
+    comparison = _for(report, "OOS Rate")
+    detail = next(d.detail for d in comparison.differences if d.aspect == "source tables")
+
+    assert "[" not in detail and "'" not in detail
+    assert "Power BI reads" in detail
+    assert "the warehouse reads" in detail
+    # Still names both tables, and still separates the two sides.
+    assert "batch, testresult" in detail
+    assert detail.count(";") == 1

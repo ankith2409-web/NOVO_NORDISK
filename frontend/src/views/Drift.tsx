@@ -24,6 +24,23 @@ import {
 import { NotConfigured, SnapshotGap } from "@/components/NotConfigured";
 import { RichText } from "@/components/RichText";
 import { cx } from "@/lib/cx";
+import { diffLines, worthMarking, type DiffLine } from "@/lib/linediff";
+
+/** Most costly to overlook first. */
+const SEVERITY: Record<DriftChange["kind"], number> = {
+  removed: 0,
+  changed: 1,
+  added: 2,
+  renamed: 3,
+};
+
+const KINDS: (DriftChange["kind"] | null)[] = [
+  null,
+  "removed",
+  "changed",
+  "added",
+  "renamed",
+];
 
 const TONE = {
   added: "ok",
@@ -36,6 +53,7 @@ const TONE = {
 export function Drift() {
   const [data, setData] = useState<DriftPayload | null>(null);
   const [error, setError] = useState<{ status: number; message: string } | null>(null);
+  const [only, setOnly] = useState<DriftChange["kind"] | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -62,6 +80,17 @@ export function Drift() {
     );
   if (error) return <Failure message={error.message} />;
   if (!data) return <Loading what="both versions" />;
+
+  // Ordered by what it costs a reader to miss it: a removal breaks whatever
+  // referenced it, a change silently alters a number, an addition adds
+  // something nobody has reviewed, and a rename is proven not to have changed
+  // anything at all. Alphabetical within a kind, so a second run of the same
+  // comparison lists them in the same order.
+  const ordered = [...data.changes].sort(
+    (a, b) => SEVERITY[a.kind] - SEVERITY[b.kind] || a.node_id.localeCompare(b.node_id),
+  );
+  const present = new Set(ordered.map((change) => change.kind));
+  const shown = only ? ordered.filter((change) => change.kind === only) : ordered;
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -110,19 +139,12 @@ export function Drift() {
         </Empty>
       ) : (
         <>
-          <section className="flex flex-col gap-1.5">
-            <h2 className="text-sm font-semibold">
-              What moved{" "}
-              <span className="font-mono text-xs font-normal text-faint">
-                ({data.changes.length})
-              </span>
-            </h2>
-            {data.changes.map((change) => (
-              <Change key={change.node_id} change={change} />
-            ))}
-          </section>
+          {/* The consequences lead. A list of moved objects is what any diff
+              produces; which requirements no longer describe the model is the
+              part someone has to act on, and it does not belong below a wall
+              of DAX where it has to be scrolled to.
 
-          {/* Split deliberately. Listing a rename beside a changed filter under
+              Split deliberately. Listing a rename beside a changed filter under
               one "in question" heading is what makes a reviewer re-check work
               that is provably untouched -- the exact busywork this removes. */}
           <Consequences
@@ -137,6 +159,44 @@ export function Drift() {
             items={data.affected_requirements.filter((a) => !a.needs_revalidation)}
             tone="text-accent"
           />
+
+          <section className="flex flex-col gap-1.5">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1.5">
+              <h2 className="text-sm font-semibold">
+                What moved{" "}
+                <span className="font-mono text-xs font-normal text-faint">
+                  ({shown.length === data.changes.length
+                    ? data.changes.length
+                    : `${shown.length} of ${data.changes.length}`})
+                </span>
+              </h2>
+              <div className="flex flex-wrap gap-1">
+                {KINDS.filter((k) => k === null || present.has(k)).map((kind) => (
+                  <button
+                    key={kind ?? "all"}
+                    onClick={() => setOnly(kind)}
+                    aria-pressed={only === kind}
+                    className={cx(
+                      "rounded border px-1.5 py-0.5 font-mono text-[11px]",
+                      only === kind
+                        ? "border-accent/40 bg-accent-soft text-accent"
+                        : "border-hairline text-muted hover:text-ink",
+                    )}
+                  >
+                    {kind ?? "all"}
+                    <span className="ml-1 text-faint">
+                      {kind === null
+                        ? data.changes.length
+                        : data.changes.filter((c) => c.kind === kind).length}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            {shown.map((change) => (
+              <Change key={change.node_id} change={change} />
+            ))}
+          </section>
         </>
       )}
     </div>
@@ -185,6 +245,15 @@ function Consequences({
 
 
 function Change({ change }: { change: DriftChange }) {
+  // Only worth aligning when both sides exist -- an addition and a removal have
+  // nothing to align against, and marking every line of one side as new says
+  // nothing the "added" chip has not already said.
+  const marks =
+    change.before && change.after
+      ? diffLines(change.before.detail, change.after.detail)
+      : null;
+  const marked = marks && worthMarking(marks) ? marks : null;
+
   return (
     <article className="rounded border border-hairline bg-ground">
       <header className="flex items-center gap-2 border-b border-hairline px-3.5 py-2">
@@ -196,8 +265,8 @@ function Change({ change }: { change: DriftChange }) {
       </header>
 
       <div className="grid divide-y divide-hairline sm:grid-cols-2 sm:divide-x sm:divide-y-0">
-        <Side label="before" side={change.before} />
-        <Side label="after" side={change.after} />
+        <Side label="before" side={change.before} lines={marked?.before} />
+        <Side label="after" side={change.after} lines={marked?.after} />
       </div>
     </article>
   );
@@ -206,9 +275,12 @@ function Change({ change }: { change: DriftChange }) {
 function Side({
   label,
   side,
+  lines,
 }: {
   label: string;
   side: { short_fingerprint: string; detail: string } | null;
+  /** Line alignment against the other side, when there is one worth showing. */
+  lines?: DiffLine[];
 }) {
   return (
     <div className={cx("min-w-0 p-3", !side && "opacity-60")}>
@@ -220,7 +292,22 @@ function Side({
           <code className="font-mono text-[10px] text-faint">{side.short_fingerprint}</code>
         )}
       </div>
-      {side ? (
+      {side && lines ? (
+        <pre className="overflow-x-auto rounded border border-hairline bg-surface py-2 font-mono text-[11.5px] whitespace-pre-wrap">
+          {lines.map((line, index) => (
+            <div
+              key={index}
+              className={cx(
+                "px-2.5",
+                line.tag === "removed" && "bg-bad-soft text-bad",
+                line.tag === "added" && "bg-ok-soft text-ok",
+              )}
+            >
+              {line.text || "\u00a0"}
+            </div>
+          ))}
+        </pre>
+      ) : side ? (
         <pre className="overflow-x-auto rounded border border-hairline bg-surface px-2.5 py-2 font-mono text-[11.5px] whitespace-pre-wrap">
           {side.detail || "—"}
         </pre>

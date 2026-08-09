@@ -38,6 +38,7 @@ const ORDER: Verdict[] = ["divergent", "review", "consistent"];
 export function Reconcile() {
   const [data, setData] = useState<ReconcilePayload | null>(null);
   const [error, setError] = useState<{ status: number; message: string } | null>(null);
+  const [showConsistent, setShowConsistent] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -94,15 +95,37 @@ export function Reconcile() {
       {ORDER.map((verdict) => {
         const items = data.comparisons.filter((c) => c.verdict === verdict);
         if (items.length === 0) return null;
+        // The consistent ones are folded away. They are usually the majority,
+        // each is two expressions and three lists tall, and between them they
+        // push the two verdicts that need a decision off the screen. Folded,
+        // not dropped: "these four agree" is a finding, and the evidence for it
+        // has to stay one click away.
+        const foldable = verdict === "consistent";
+        const open = !foldable || showConsistent;
         return (
           <section key={verdict} className="flex flex-col gap-2">
             <h2 className="text-sm font-semibold">
               {HEADING[verdict]}{" "}
               <span className="font-mono text-xs font-normal text-faint">({items.length})</span>
+              {foldable && (
+                <button
+                  onClick={() => setShowConsistent((shown) => !shown)}
+                  aria-expanded={open}
+                  className="ml-2 rounded border border-hairline px-1.5 py-0.5 font-mono text-[11px] font-normal text-muted hover:text-ink"
+                >
+                  {open ? "hide" : "show"}
+                </button>
+              )}
             </h2>
-            {items.map((comparison) => (
-              <Metric key={comparison.metric} comparison={comparison} />
-            ))}
+            {open &&
+              items.map((comparison) => (
+                <Metric key={comparison.metric} comparison={comparison} />
+              ))}
+            {!open && (
+              <p className="font-mono text-xs text-faint">
+                {items.map((c) => c.metric).join(" · ")}
+              </p>
+            )}
           </section>
         );
       })}
