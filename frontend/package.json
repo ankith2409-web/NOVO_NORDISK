@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "build:snapshot": "VITE_SNAPSHOT=1 tsc -b && VITE_SNAPSHOT=1 vite build",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:embedded": "VITE_EMBED=1 tsc -b && VITE_EMBED=1 vite build --outDir dist-embedded && node -e \"require('fs').copyFileSync('dist-embedded/index.html','../concordance/web/static/app.html')\""
   },
   "dependencies": {
     "react": "^19.2.8",

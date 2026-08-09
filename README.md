@@ -181,22 +181,35 @@ loads six panels does not evict six real conversations from the session store.
 
 ## The interface
 
-A React app over the JSON API. It is a separate process from the Python server on
-purpose: the API is needed by any front end, so that work is never wasted, and a
-build problem in the interface cannot take the backend down with it.
+A React app over the JSON API. One command serves both:
 
 ```bash
 concordance serve data/models/QualityControl.SemanticModel \
-  --warehouse data/warehouse/quality_control.duckdb   # API on :8000
+  --warehouse data/warehouse/quality_control.duckdb \
+  --decisions concordance-decisions.jsonl
+```
 
-cd frontend && npm install && npm run dev             # interface on :5173
+Open the printed link and the whole interface is there — no Node required. The
+built app is inlined into a single file (`concordance/web/static/app.html`) and
+checked in, so cloning this repository and running one command gives someone the
+same thing a developer sees. That is deliberate: for a long stretch this server
+had the React interface in the repo and served a chat-only page instead, so the
+one command anyone would naturally run showed the least of what the project does.
+
+If the built file is ever missing, `serve` falls back to the chat-only page and
+says so at startup rather than failing.
+
+### Developing the interface
+
+```bash
+concordance serve data/models/QualityControl.SemanticModel   # API on :8000
+cd frontend && npm install && npm run dev                    # interface on :5173
 ```
 
 The dev server proxies `/api` to the Python process, so the browser stays on one
 origin and the chat's session cookie behaves exactly as it will in production.
-The server's cross-origin support is what allows the two to be served from
-different ports, but developing through it would mean testing a path the shipped
-app never takes.
+After changing the interface, `npm run build:embedded` rebuilds the inlined file
+the Python server hands out.
 
 Six views: **Overview** (counts and what could not be read), **Model** (tree,
 definition, fingerprint chain, impact), **Requirements** (BRD/FRD with evidence

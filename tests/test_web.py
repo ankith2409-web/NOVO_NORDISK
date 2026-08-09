@@ -126,7 +126,10 @@ def test_root_serves_the_page_and_sets_a_session_cookie(server: _RunningServer) 
 
     assert response.status == 200
     assert "text/html" in response.getheader("Content-Type")
-    assert "ClinicalTrialSafety" in body
+    # The built interface names the model from /api/overview rather than from
+    # server-side templating, so what `/` must contain is a page that can boot,
+    # not the model's name. The chat-only fallback still interpolates it.
+    assert "<div id=\"root\"" in body or "ClinicalTrialSafety" in body
 
     cookie = SimpleCookie()
     cookie.load(response.getheader("Set-Cookie"))
@@ -250,3 +253,57 @@ def test_overview_reflects_the_real_model(server: _RunningServer) -> None:
     payload = json.loads(response.read())
     assert payload["measures"] == 24
     assert payload["model"] == "ClinicalTrialSafety"
+
+
+# -- which page `/` actually serves -------------------------------------------
+# For a long stretch this server had the React interface sitting in the repo and
+# served the chat-only page instead, so the one command anyone would naturally
+# run showed the least of what the project does. Nothing failed; the default was
+# simply never moved. These pin the decision rather than the file.
+
+def test_the_built_interface_is_preferred_over_the_chat_page() -> None:
+    from concordance.web import server as web
+
+    if not web._APP_PAGE.is_file():
+        pytest.skip("built interface absent; run npm run build:embedded")
+    page = web._page_for("AnyModel").decode()
+    assert 'id="root"' in page, "served the chat page while the built app exists"
+    assert web.serves_full_interface() is True
+
+
+def test_the_chat_page_is_still_served_when_the_build_is_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A source checkout without Node must still get a working server, and the
+    startup banner says which page it settled for."""
+    from concordance.web import server as web
+
+    monkeypatch.setattr(web, "_APP_PAGE", tmp_path / "not-built.html")
+    page = web._page_for("AnyModel").decode()
+    assert "AnyModel" in page, "the fallback still names the model it serves"
+    assert web.serves_full_interface() is False
+
+
+def test_the_served_page_needs_no_second_request_to_render() -> None:
+    """Inlined on purpose: the Python server routes `/` and `/api`, and nothing
+    else. A page referencing a separate script, stylesheet or icon would 404 on
+    every load -- which is exactly what a stray favicon link was doing."""
+    from concordance.web import server as web
+
+    if not web._APP_PAGE.is_file():
+        pytest.skip("built interface absent; run npm run build:embedded")
+    page = web._page_for("AnyModel").decode()
+
+    # Tag-shaped, not substring-shaped: React's own bundle contains the string
+    # `rel="stylesheet"` inside its stylesheet-precedence code, and matching
+    # that would fail on a page that is in fact self-contained.
+    import re
+
+    external = [
+        tag
+        for tag in re.findall(r"<(?:link|script|img)\b[^>]*>", page)
+        for url in re.findall(r'(?:src|href)="([^"]*)"', tag)
+        if url.startswith(("/", "http://", "https://", "//"))
+    ]
+    assert not external, f"page requests assets the server does not route: {external}"
+    assert "<script" in page, "the interface has to ship its own script"

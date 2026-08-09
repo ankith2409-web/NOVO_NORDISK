@@ -25,3 +25,7 @@ data/warehouse/
 
 # Vite dependency cache, created when the dev server is run from here
 .vite/
+
+# Build output for the embedded interface; the shipped copy is
+# concordance/web/static/app.html, which is tracked deliberately.
+frontend/dist-embedded/

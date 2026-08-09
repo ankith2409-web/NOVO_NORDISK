@@ -19,7 +19,14 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
-    ...(process.env.VITE_SNAPSHOT === "1" ? [viteSingleFile()] : []),
+    // Two different reasons to inline everything into one HTML file. The
+    // snapshot build answers from captured data with no server at all; the
+    // embedded build still talks to a live /api, and is inlined only so the
+    // Python server can serve the whole interface as a single file without
+    // routing asset requests it has no other reason to route.
+    ...(process.env.VITE_SNAPSHOT === "1" || process.env.VITE_EMBED === "1"
+      ? [viteSingleFile()]
+      : []),
   ],
   resolve: {
     alias: { "@": new URL("./src", import.meta.url).pathname },

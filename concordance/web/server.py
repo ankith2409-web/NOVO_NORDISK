@@ -59,6 +59,37 @@ def allowed_origin(origin: str | None) -> str | None:
     return None
 
 
+#: The full interface, built by `npm run build:embedded` into one inlined file.
+#: Checked in, so `concordance serve` gives someone who cloned this repo the
+#: whole thing without needing Node -- the alternative is a command that quietly
+#: serves a lesser page than the one the project is about.
+_APP_PAGE = _STATIC_DIR / "app.html"
+#: The original chat-only page. Kept as the fallback for a source checkout where
+#: the built app is genuinely absent, so `serve` still does something useful
+#: rather than 500.
+_CHAT_PAGE = _STATIC_DIR / "chat.html"
+
+
+def _page_for(model_name: str) -> bytes:
+    """The page served at ``/``: the built interface if present, else the chat.
+
+    Preferring the built app is the point. For a long stretch this server had
+    the React interface sitting in the repo and served the chat page instead,
+    so the one command anyone would naturally run showed the least of what the
+    project does -- which is a documentation problem masquerading as a routing
+    default.
+    """
+    source = _APP_PAGE if _APP_PAGE.is_file() else _CHAT_PAGE
+    return source.read_text(encoding="utf-8").replace(
+        "{{MODEL_NAME}}", model_name
+    ).encode("utf-8")
+
+
+def serves_full_interface() -> bool:
+    """Whether the built interface is available to serve, for the banner."""
+    return _APP_PAGE.is_file()
+
+
 #: Plenty for any demo audience, while bounding how much a long-running server
 #: can accumulate. Every cookieless request mints a session, so without a cap a
 #: crawler -- or simply a page left open for a day -- grows this without limit,
@@ -159,9 +190,7 @@ def make_handler(
         return ModelChat(chosen.graph if chosen else graph, provider)
 
     sessions = SessionStore(_chat_for)
-    page_template = (_STATIC_DIR / "chat.html").read_text(encoding="utf-8")
-    page = page_template.replace("{{MODEL_NAME}}", graph.model.name)
-    page_bytes = page.encode("utf-8")
+    page_bytes = _page_for(graph.model.name)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "ConcordanceChat/0.1"
@@ -433,7 +462,14 @@ def serve(
     # can simply click it. Anyone else has to be given it deliberately, which is
     # the entire point.
     url = f"{base}?token={access_token}" if access_token else base
-    print(f"Concordance chat for {graph.model.name!r} — {url}")
+    print(f"Concordance — {graph.model.name!r} — {url}")
+    if not serves_full_interface():
+        # Said out loud rather than left to be discovered. Someone looking at
+        # the chat-only page has no way to know a fuller interface exists.
+        print(
+            "  serving the chat-only page: the built interface is missing. "
+            "Run `npm --prefix frontend run build:embedded` for all six views."
+        )
     if access_token:
         print("  access token required — share the link above to grant access")
     elif host not in ("127.0.0.1", "localhost", "::1"):
@@ -464,6 +500,15 @@ def serve(
             enabled = _capabilities_of(registry.contexts[registry.default])
             if enabled:
                 print(f"  also serving: {', '.join(enabled)}")
+        # Named explicitly. Serving several models writes one log per model,
+        # so the file that appears is not the path that was passed -- printing
+        # the derived names is the difference between that being a design
+        # decision and it being a surprise.
+        logs = sorted(
+            {str(c.decisions) for c in registry.contexts.values() if c.decisions}
+        )
+        if logs:
+            print(f"  review decisions -> {', '.join(logs)}")
     # `base`, not `url`: the latter may carry ?token=, which would splice the
     # query string into the middle of the path and print a nonsense address.
     print(f"  api: {len(api.ALL_ROUTES)} read-only endpoints under {base}api/")
