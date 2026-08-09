@@ -11,7 +11,12 @@
  * renders accordingly.
  */
 import { useEffect, useState } from "react";
-import { api, SNAPSHOT_MODE, type Overview as OverviewData } from "@/lib/api";
+import {
+  api,
+  SNAPSHOT_MODE,
+  type LoadedModel,
+  type Overview as OverviewData,
+} from "@/lib/api";
 import { Copilot } from "@/components/Copilot";
 import { Overview } from "@/views/Overview";
 import { Model } from "@/views/Model";
@@ -53,6 +58,11 @@ const DOCKED = "(min-width: 1024px)";
 export default function App() {
   const [view, setView] = useState<ViewId>("overview");
   const [overview, setOverview] = useState<OverviewData | null>(null);
+  // Only used to draw the switcher. Which model is *active* lives in the API
+  // client, so a request cannot be issued from a view that never heard about
+  // the switch.
+  const [loaded, setLoaded] = useState<LoadedModel[]>([]);
+  const [active, setActive] = useState("");
   const [theme, toggleTheme] = useTheme();
 
   // Measured rather than assumed, so a narrow window does not briefly render
@@ -87,11 +97,38 @@ export default function App() {
       const result = await api.overview();
       if (result.ok) setOverview(result.data);
     })();
+  }, [active]);
+
+  useEffect(() => {
+    void (async () => {
+      const result = await api.models();
+      if (result.ok) {
+        setLoaded(result.data.models);
+        setActive(result.data.default);
+      }
+    })();
   }, []);
+
+  function switchTo(name: string) {
+    if (name === active) return;
+    api.use(name);
+    // Cleared rather than left showing the previous model's figures while the
+    // next ones load. Stale-but-plausible numbers under a new model name is
+    // the one thing this interface must never do.
+    setOverview(null);
+    setActive(name);
+  }
 
   const available = VIEWS.filter(
     (entry) => !entry.needs || overview?.capabilities[entry.needs],
   );
+
+  // Drift and reconcile are configured per model, so a switch can remove the
+  // view being looked at. Falling back beats rendering a tab that is no longer
+  // in the rail.
+  useEffect(() => {
+    if (overview && !available.some((entry) => entry.id === view)) setView("overview");
+  }, [overview, view]);
 
   return (
     <div className="flex h-full flex-col bg-surface">
@@ -107,9 +144,26 @@ export default function App() {
       <header className="flex items-center gap-3 border-b border-hairline bg-ground px-3 py-2">
         <span className="font-serif text-sm font-semibold">Concordance</span>
         <span className="h-4 w-px bg-hairline" />
-        <span className="truncate font-mono text-xs text-muted">
-          {overview?.model ?? "connecting…"}
-        </span>
+        {loaded.length > 1 ? (
+          <label className="flex items-center gap-1.5">
+            <span className="sr-only">Model</span>
+            <select
+              value={active}
+              onChange={(event) => switchTo(event.target.value)}
+              className="max-w-[14rem] truncate rounded border border-hairline bg-ground px-1.5 py-0.5 font-mono text-xs text-ink"
+            >
+              {loaded.map((entry) => (
+                <option key={entry.name} value={entry.name}>
+                  {entry.name} · {entry.measures}m · {entry.tables}t
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <span className="truncate font-mono text-xs text-muted">
+            {overview?.model ?? "connecting…"}
+          </span>
+        )}
         <div className="ml-auto flex items-center gap-2">
           {overview && (
             <span className="hidden font-mono text-[11px] text-faint sm:inline">
@@ -161,7 +215,10 @@ export default function App() {
           ))}
         </nav>
 
-        <main className="min-h-0 flex-1 overflow-auto">
+        {/* Keyed on the model: every view loads on mount, so without this a
+            switch would leave the previous model's tables and requirements on
+            screen under the new model's name. */}
+        <main key={active} className="min-h-0 flex-1 overflow-auto">
           {view === "overview" && <Overview overview={overview} />}
           {view === "model" && <Model />}
           {view === "requirements" && <Requirements />}
@@ -182,6 +239,7 @@ export default function App() {
           )}
         >
           <Copilot
+            key={active}
             model={overview?.model ?? ""}
             onClose={wide ? undefined : () => setShowCopilot(false)}
           />

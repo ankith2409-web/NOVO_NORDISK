@@ -78,6 +78,63 @@ class ApiContext:
         return [r for r in RequirementDeriver(self.graph).derive() if r.kind is kind]
 
 
+@dataclass
+class ModelRegistry:
+    """The models this server was started with, addressable by name.
+
+    A request selects one with ``?model=``. That parameter names a key in this
+    registry -- fixed when the server started -- and never a path, which keeps
+    the invariant the rest of this module rests on: the browser can choose
+    among what an operator loaded, and cannot reach anything they did not.
+
+    Each model keeps its own comparison sources, so serving several does not
+    mean they share a warehouse or a drift baseline.
+    """
+
+    contexts: dict[str, ApiContext]
+    default: str
+
+    @classmethod
+    def of(cls, context: ApiContext) -> ModelRegistry:
+        """Wrap a single context, so one model is just a registry of one."""
+        name = context.graph.model.name
+        return cls(contexts={name: context}, default=name)
+
+    def resolve(self, params: Params) -> ApiContext:
+        requested = (params.get("model") or [""])[0].strip()
+        if not requested:
+            return self.contexts[self.default]
+        if requested not in self.contexts:
+            # Deliberately does not repeat what was asked for. Reflecting
+            # unbounded caller input back in an error is a habit worth not
+            # having, and the useful half of the answer is what *is* loaded --
+            # which is also the half a legitimate caller needs.
+            raise ApiError(
+                HTTPStatus.NOT_FOUND,
+                "that model is not loaded on this server",
+                loaded=sorted(self.contexts),
+            )
+        return self.contexts[requested]
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "default": self.default,
+            "models": [
+                {
+                    "name": name,
+                    "source_format": context.graph.model.source_type,
+                    "measures": len(context.graph.model.measures),
+                    "tables": len(context.graph.model.user_tables()),
+                    "capabilities": {
+                        "drift": context.compare_to is not None,
+                        "reconcile": context.warehouse is not None,
+                    },
+                }
+                for name, context in sorted(self.contexts.items())
+            ],
+        }
+
+
 # -- serialisation ------------------------------------------------------------
 
 def _requirement_dict(requirement: Requirement) -> dict[str, Any]:
@@ -389,16 +446,35 @@ ROUTES: dict[str, Callable[[ApiContext, Params], dict[str, Any]]] = {
     "/api/reconcile": reconcile,
 }
 
+#: Answered from the registry rather than from one model, so it is listed apart
+#: from the routes above -- every one of those takes a single resolved context.
+_REGISTRY_ROUTES = ("/api/models",)
 
-def handle(context: ApiContext, path: str, params: Params) -> tuple[HTTPStatus, dict[str, Any]]:
-    """Run one read-only request, turning failures into a status and a message."""
-    route = ROUTES.get(path)
-    if route is None:
-        return HTTPStatus.NOT_FOUND, {
-            "error": f"no such route: {path}",
-            "routes": sorted(ROUTES),
-        }
+ALL_ROUTES = tuple(sorted(ROUTES)) + _REGISTRY_ROUTES
+
+
+def handle(
+    source: ApiContext | ModelRegistry, path: str, params: Params
+) -> tuple[HTTPStatus, dict[str, Any]]:
+    """Run one read-only request, turning failures into a status and a message.
+
+    Accepts a bare context as well as a registry: serving one model is the
+    common case and should not have to build a registry to say so.
+    """
+    registry = source if isinstance(source, ModelRegistry) else ModelRegistry.of(source)
+
     try:
-        return HTTPStatus.OK, route(context, params)
+        if path == "/api/models":
+            return HTTPStatus.OK, registry.describe()
+
+        route = ROUTES.get(path)
+        if route is None:
+            return HTTPStatus.NOT_FOUND, {
+                "error": f"no such route: {path}",
+                "routes": list(ALL_ROUTES),
+            }
+        # Resolved inside the try so an unknown ?model= is reported the same
+        # way as any other bad parameter, rather than escaping as a 500.
+        return HTTPStatus.OK, route(registry.resolve(params), params)
     except ApiError as error:
         return error.status, error.payload()

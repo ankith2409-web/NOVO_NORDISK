@@ -423,9 +423,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
     from concordance.llm.base import LlmError
     from concordance.web.server import serve
 
-    from concordance.web.api import ApiContext
+    from concordance.web.api import ApiContext, ModelRegistry
 
-    graph = _load(args.source)
+    sources = args.source if isinstance(args.source, list) else [args.source]
+    graphs = [_load(source) for source in sources]
+    graph = graphs[0]
+
     try:
         provider = _build_provider(args)
     except LlmError as error:
@@ -433,8 +436,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
         return 2
 
     # Resolved here, once, from arguments the operator typed. The browser never
-    # names a file, so no request can reach a path that was not authorised at
-    # launch.
+    # names a file -- it names a key in the registry below -- so no request can
+    # reach a path that was not authorised at launch.
     compare_to = None
     if args.compare_to:
         compare_to = _load(args.compare_to)
@@ -444,13 +447,30 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print(f"No warehouse at {warehouse}.", file=sys.stderr)
         return 2
 
-    context = ApiContext(
-        graph=graph,
-        compare_to=compare_to,
-        compare_label=Path(args.compare_to).name if args.compare_to else "",
-        warehouse=warehouse,
-        warehouse_schema=args.schema,
-    )
+    # A comparison model and a warehouse describe *one* model, so they attach to
+    # the first -- the default the interface opens on. Saying so beats silently
+    # giving every loaded model a drift baseline that belongs to another.
+    contexts = {
+        loaded.model.name: ApiContext(
+            graph=loaded,
+            compare_to=compare_to if loaded is graph else None,
+            compare_label=(
+                Path(args.compare_to).name if args.compare_to and loaded is graph else ""
+            ),
+            warehouse=warehouse if loaded is graph else None,
+            warehouse_schema=args.schema,
+        )
+        for loaded in graphs
+    }
+    if len(contexts) != len(graphs):
+        print(
+            "Two of the given models share a name, so one would shadow the "
+            "other. Rename a folder or file so each is distinguishable.",
+            file=sys.stderr,
+        )
+        return 2
+
+    context = ModelRegistry(contexts=contexts, default=graph.model.name)
 
     # `--token` with no value mints one, so turning auth on never depends on
     # someone inventing a good secret under time pressure.
@@ -711,7 +731,13 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_drift)
 
     p = sub.add_parser("serve", help="run a local web chat interface for a model")
-    p.add_argument("source", help="path to a .pbix file or TMDL model folder")
+    p.add_argument(
+        "source",
+        nargs="+",
+        help="one or more .pbix files or TMDL model folders. The first is the "
+        "default the interface opens on, and the one --compare-to and "
+        "--warehouse attach to.",
+    )
     p.add_argument("--model", default="gemini-3.6-flash", help="model name for the chosen provider")
     _add_provider_arguments(p)
     p.add_argument("--host", default="127.0.0.1")

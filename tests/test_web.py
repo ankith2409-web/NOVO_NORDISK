@@ -43,7 +43,7 @@ def graph() -> SemanticGraph:
 def test_two_unknown_ids_get_two_independent_chats(graph: SemanticGraph) -> None:
     made = []
 
-    def factory() -> ModelChat:
+    def factory(_model: str) -> ModelChat:
         chat = ModelChat(graph, FakeProvider(script=[says("ok")]))
         made.append(chat)
         return chat
@@ -58,7 +58,7 @@ def test_two_unknown_ids_get_two_independent_chats(graph: SemanticGraph) -> None
 
 
 def test_a_known_id_returns_the_same_chat(graph: SemanticGraph) -> None:
-    store = SessionStore(lambda: ModelChat(graph, FakeProvider(script=[])))
+    store = SessionStore(lambda _model: ModelChat(graph, FakeProvider(script=[])))
     session_id, chat = store.get(None)
 
     again_id, again_chat = store.get(session_id)
@@ -68,7 +68,7 @@ def test_a_known_id_returns_the_same_chat(graph: SemanticGraph) -> None:
 
 def test_conversation_history_does_not_bleed_between_sessions(graph: SemanticGraph) -> None:
     store = SessionStore(
-        lambda: ModelChat(graph, FakeProvider(script=[says("a"), says("b"), says("c")]))
+        lambda _model: ModelChat(graph, FakeProvider(script=[says("a"), says("b"), says("c")]))
     )
     id_a, chat_a = store.get(None)
     id_b, chat_b = store.get(None)
@@ -85,7 +85,7 @@ def test_conversation_history_does_not_bleed_between_sessions(graph: SemanticGra
 
 
 def test_an_unknown_id_is_not_mistaken_for_a_known_one(graph: SemanticGraph) -> None:
-    store = SessionStore(lambda: ModelChat(graph, FakeProvider(script=[])))
+    store = SessionStore(lambda _model: ModelChat(graph, FakeProvider(script=[])))
     real_id, real_chat = store.get(None)
 
     _, other_chat = store.get("not-a-real-session-id")

@@ -76,26 +76,48 @@ class SessionStore:
     Eviction is least-recently-used. An evicted visitor is not broken, only
     forgotten -- their next request mints a fresh session and starts a new
     conversation, which is the right failure for a chat with no durable state.
+
+    When several models are served, one browser session holds one conversation
+    *per model*. That is not an implementation convenience: a chat carries the
+    tool results it has already seen, and replaying one model's tables and DAX
+    into a question about another is precisely how a grounded answer stops
+    being grounded. Switching models starts a clean conversation, and switching
+    back returns to the one it left.
     """
 
     def __init__(
-        self, factory: Callable[[], ModelChat], max_sessions: int = MAX_SESSIONS
+        self,
+        factory: Callable[[str], ModelChat],
+        max_sessions: int = MAX_SESSIONS,
     ) -> None:
         self._factory = factory
         self._max_sessions = max_sessions
-        self._sessions: OrderedDict[str, ModelChat] = OrderedDict()
+        self._sessions: OrderedDict[tuple[str, str], ModelChat] = OrderedDict()
         self._lock = threading.Lock()
 
-    def get(self, session_id: str | None) -> tuple[str, ModelChat]:
-        """Return the chat for ``session_id``, creating one if it is unknown."""
-        with self._lock:
-            if session_id and session_id in self._sessions:
-                self._sessions.move_to_end(session_id)
-                return session_id, self._sessions[session_id]
+    def get(
+        self, session_id: str | None, model: str = ""
+    ) -> tuple[str, ModelChat]:
+        """Return the chat for ``session_id`` and ``model``, creating if unknown.
 
-            new_id = secrets.token_urlsafe(16)
-            chat = self._factory()
-            self._sessions[new_id] = chat
+        The returned id is the browser's session id -- the same one across every
+        model, since it is the cookie. The model only splits the conversation
+        held behind it.
+        """
+        with self._lock:
+            if session_id and (session_id, model) in self._sessions:
+                self._sessions.move_to_end((session_id, model))
+                return session_id, self._sessions[(session_id, model)]
+
+            # An id this server already issued is kept even when this model is
+            # new to it, so switching models does not orphan the conversations
+            # already open under it. An id we have never issued is replaced
+            # rather than adopted -- ids stay server-minted, so a caller cannot
+            # choose one and have it honoured.
+            known = any(held == session_id for held, _ in self._sessions)
+            new_id = session_id if (session_id and known) else secrets.token_urlsafe(16)
+            chat = self._factory(model)
+            self._sessions[(new_id, model)] = chat
             while len(self._sessions) > self._max_sessions:
                 self._sessions.popitem(last=False)
             return new_id, chat
@@ -107,7 +129,7 @@ class SessionStore:
 def make_handler(
     graph: SemanticGraph,
     provider: LlmProvider,
-    context: api.ApiContext | None = None,
+    context: api.ApiContext | api.ModelRegistry | None = None,
     access_token: str = "",
 ) -> tuple[type[BaseHTTPRequestHandler], SessionStore]:
     """Build the request handler class for one model and provider.
@@ -128,8 +150,15 @@ def make_handler(
     the port spend its API quota. A shared token is not real identity, and does
     not pretend to be; it is the smallest honest control for that situation.
     """
-    sessions = SessionStore(lambda: ModelChat(graph, provider))
-    api_context = context or api.ApiContext(graph=graph)
+    registry = context if context is not None else api.ApiContext(graph=graph)
+    if not isinstance(registry, api.ModelRegistry):
+        registry = api.ModelRegistry.of(registry)
+
+    def _chat_for(model: str) -> ModelChat:
+        chosen = registry.contexts.get(model or registry.default)
+        return ModelChat(chosen.graph if chosen else graph, provider)
+
+    sessions = SessionStore(_chat_for)
     page_template = (_STATIC_DIR / "chat.html").read_text(encoding="utf-8")
     page = page_template.replace("{{MODEL_NAME}}", graph.model.name)
     page_bytes = page.encode("utf-8")
@@ -146,7 +175,7 @@ def make_handler(
                 return
             if parsed.path == "/":
                 self._serve_page()
-            elif parsed.path in api.ROUTES:
+            elif parsed.path in api.ALL_ROUTES:
                 self._serve_api(parsed.path, parse_qs(parsed.query))
             else:
                 self._not_found()
@@ -173,7 +202,7 @@ def make_handler(
         # -- routes ----------------------------------------------------
 
         def _serve_page(self) -> None:
-            session_id, _ = sessions.get(self._session_cookie())
+            session_id, _ = sessions.get(self._session_cookie(), registry.default)
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(page_bytes)))
@@ -191,7 +220,7 @@ def make_handler(
 
         def _serve_api(self, path: str, params: dict[str, list[str]]) -> None:
             """Read-only endpoints: no session, since the graph never changes."""
-            status, payload = api.handle(api_context, path, params)
+            status, payload = api.handle(registry, path, params)
             self._json(status, payload)
 
         def _handle_ask(self) -> None:
@@ -214,7 +243,25 @@ def make_handler(
                 self._json(HTTPStatus.BAD_REQUEST, {"error": "question must not be empty"})
                 return
 
-            session_id, chat = sessions.get(self._session_cookie())
+            model = str(payload.get("model", "") or "").strip()
+            if model and model not in registry.contexts:
+                # Answering out of the default model instead would produce a
+                # confident answer about the wrong model, which is worse than
+                # a refusal.
+                self._json(
+                    HTTPStatus.NOT_FOUND,
+                    {
+                        "error": "that model is not loaded on this server",
+                        "loaded": sorted(registry.contexts),
+                    },
+                )
+                return
+
+            # Normalised so an explicit default-model name and an omitted one
+            # share one conversation rather than quietly forking into two.
+            session_id, chat = sessions.get(
+                self._session_cookie(), model or registry.default
+            )
             try:
                 exchange = chat.ask(question)
             except LlmError as error:
@@ -317,10 +364,25 @@ def make_handler(
         def _not_found(self) -> None:
             self._json(
                 HTTPStatus.NOT_FOUND,
-                {"error": f"no such route: {self.path}", "routes": sorted(api.ROUTES)},
+                {"error": f"no such route: {self.path}", "routes": list(api.ALL_ROUTES)},
             )
 
     return Handler, sessions
+
+
+def _capabilities_of(context: api.ApiContext) -> list[str]:
+    """The optional features one loaded model can actually answer for.
+
+    Both are opt-in at startup: drift needs a second model to compare against,
+    reconcile needs a warehouse connection. Naming them in the banner is how
+    someone finds out a flag they passed did not take effect.
+    """
+    enabled = []
+    if context.compare_to is not None:
+        enabled.append("drift")
+    if context.warehouse is not None:
+        enabled.append("reconcile")
+    return enabled
 
 
 def serve(
@@ -328,7 +390,7 @@ def serve(
     provider: LlmProvider,
     host: str = "127.0.0.1",
     port: int = 8000,
-    context: api.ApiContext | None = None,
+    context: api.ApiContext | api.ModelRegistry | None = None,
     access_token: str = "",
 ) -> None:
     """Run the chat server until interrupted."""
@@ -351,19 +413,28 @@ def serve(
             f"Pass --token to require one.",
         )
     if context is not None:
-        extra = [
-            name
-            for name, enabled in (
-                ("drift", context.compare_to is not None),
-                ("reconcile", context.warehouse is not None),
-            )
-            if enabled
-        ]
-        if extra:
-            print(f"  also serving: {', '.join(extra)}")
+        # Normalised the same way the handler does, so the banner cannot drift
+        # out of step with what is actually served -- reading `.compare_to` off
+        # a registry is exactly the mistake this avoids.
+        registry = (
+            context
+            if isinstance(context, api.ModelRegistry)
+            else api.ModelRegistry.of(context)
+        )
+        if len(registry.contexts) > 1:
+            print(f"  {len(registry.contexts)} models loaded:")
+            for name in sorted(registry.contexts):
+                marker = "  (default)" if name == registry.default else ""
+                enabled = _capabilities_of(registry.contexts[name])
+                suffix = f" — {', '.join(enabled)}" if enabled else ""
+                print(f"    {name}{marker}{suffix}")
+        else:
+            enabled = _capabilities_of(registry.contexts[registry.default])
+            if enabled:
+                print(f"  also serving: {', '.join(enabled)}")
     # `base`, not `url`: the latter may carry ?token=, which would splice the
     # query string into the middle of the path and print a nonsense address.
-    print(f"  api: {len(api.ROUTES)} read-only endpoints under {base}api/")
+    print(f"  api: {len(api.ALL_ROUTES)} read-only endpoints under {base}api/")
     print("Press Ctrl-C to stop.")
     try:
         httpd.serve_forever()

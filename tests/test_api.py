@@ -76,7 +76,9 @@ def test_the_route_table_is_fully_accounted_for() -> None:
 def test_an_unknown_route_lists_the_real_ones(context: api.ApiContext) -> None:
     status, payload = api.handle(context, "/api/nope", {})
     assert status is HTTPStatus.NOT_FOUND
-    assert payload["routes"] == sorted(api.ROUTES)
+    # ALL_ROUTES, not ROUTES: /api/models is answered from the registry rather
+    # than from a single resolved model, so it lives outside the route table.
+    assert payload["routes"] == list(api.ALL_ROUTES)
 
 
 # -- nothing configured is said plainly, not crashed --------------------------
@@ -106,7 +108,11 @@ def test_the_client_cannot_name_a_file(
     """
     for key in ("path", "source", "warehouse", "compare_to", "model", "file"):
         status, payload = api.handle(context, path, {key: [attempt]})
-        assert status is HTTPStatus.NOT_IMPLEMENTED
+        # `model` is a real parameter now, but it names a key in a registry
+        # fixed at startup -- never a path -- so a path-shaped value is simply
+        # a model that is not loaded. Either refusal is correct; what must hold
+        # is that nothing was read and nothing was echoed back.
+        assert status in (HTTPStatus.NOT_IMPLEMENTED, HTTPStatus.NOT_FOUND)
         assert attempt not in json.dumps(payload)
 
 

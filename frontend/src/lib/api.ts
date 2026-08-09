@@ -33,6 +33,19 @@ export interface Overview {
   capabilities: { drift: boolean; reconcile: boolean };
 }
 
+export interface LoadedModel {
+  name: string;
+  source_format: string;
+  measures: number;
+  tables: number;
+  capabilities: { drift: boolean; reconcile: boolean };
+}
+
+export interface ModelsPayload {
+  default: string;
+  models: LoadedModel[];
+}
+
 export interface Evidence {
   node_id: string;
   fingerprint: string;
@@ -228,8 +241,29 @@ async function fromSnapshot<T>(
   };
 }
 
+/**
+ * The model every request is about.
+ *
+ * Held here rather than threaded through each view on purpose. A server can
+ * hold several models, and a switcher that moves five views while the sixth
+ * quietly keeps answering for the old one is a bug that reads as a rendering
+ * glitch. Routing it in one place means no call site can forget.
+ *
+ * Empty means "whatever the server made default", which is also the only
+ * possibility when one model is loaded -- the common case pays nothing.
+ */
+let activeModel = "";
+
+function withModel(params?: Record<string, string>): Record<string, string> | undefined {
+  // Never in snapshot mode: the snapshot is one model captured by URL, and an
+  // extra parameter would simply miss every key in it.
+  if (SNAPSHOT_MODE || !activeModel) return params;
+  return { ...(params ?? {}), model: activeModel };
+}
+
 async function get<T>(path: string, params?: Record<string, string>): Promise<Result<T>> {
   if (SNAPSHOT_MODE) return fromSnapshot<T>(path, params);
+  params = withModel(params);
   const query = params ? `?${new URLSearchParams(params)}` : "";
   let response: Response;
   try {
@@ -264,6 +298,38 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<Re
 }
 
 export const api = {
+  /** Point every subsequent request at `name`; "" restores the server default. */
+  use: (name: string) => {
+    activeModel = name;
+  },
+  active: () => activeModel,
+
+  models: async (): Promise<Result<ModelsPayload>> => {
+    if (SNAPSHOT_MODE) {
+      // A snapshot is one captured model, so the switcher has nothing to offer
+      // and should not be drawn at all.
+      const overview = await fromSnapshot<Overview>("/overview");
+      if (!overview.ok) return overview;
+      const { model, source_format, measures, user_tables, capabilities } = overview.data;
+      return {
+        ok: true,
+        data: {
+          default: model,
+          models: [
+            {
+              name: model,
+              source_format,
+              measures,
+              tables: user_tables,
+              capabilities,
+            },
+          ],
+        },
+      };
+    }
+    return get<ModelsPayload>("/models");
+  },
+
   overview: () => get<Overview>("/overview"),
   graph: () => get<GraphPayload>("/graph"),
   tables: () => get<{ tables: TableSummary[] }>("/tables"),
@@ -300,7 +366,7 @@ export const api = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question, model: activeModel }),
       });
     } catch {
       return {

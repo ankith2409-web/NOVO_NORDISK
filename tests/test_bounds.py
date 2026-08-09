@@ -95,7 +95,7 @@ def test_history_is_untouched_below_the_limit(graph: SemanticGraph) -> None:
 def test_session_count_is_capped(graph: SemanticGraph) -> None:
     """Every cookieless request mints a session; without a cap this grows forever."""
     store = SessionStore(
-        lambda: ModelChat(graph, FakeProvider(script=[])), max_sessions=5
+        lambda _model: ModelChat(graph, FakeProvider(script=[])), max_sessions=5
     )
     for _ in range(50):
         store.get(None)
@@ -105,7 +105,7 @@ def test_session_count_is_capped(graph: SemanticGraph) -> None:
 
 def test_eviction_drops_the_least_recently_used(graph: SemanticGraph) -> None:
     store = SessionStore(
-        lambda: ModelChat(graph, FakeProvider(script=[])), max_sessions=3
+        lambda _model: ModelChat(graph, FakeProvider(script=[])), max_sessions=3
     )
     first, _ = store.get(None)
     second, _ = store.get(None)
@@ -127,7 +127,7 @@ def test_an_evicted_visitor_gets_a_fresh_session_rather_than_an_error(
 ) -> None:
     """Being forgotten is the right failure for a chat with no durable state."""
     store = SessionStore(
-        lambda: ModelChat(graph, FakeProvider(script=[])), max_sessions=1
+        lambda _model: ModelChat(graph, FakeProvider(script=[])), max_sessions=1
     )
     old_id, old_chat = store.get(None)
     store.get(None)  # evicts old_id
