@@ -18,6 +18,7 @@ import {
   type Overview as OverviewData,
 } from "@/lib/api";
 import { Copilot } from "@/components/Copilot";
+import { Intro } from "@/components/Intro";
 import { Overview } from "@/views/Overview";
 import { Model } from "@/views/Model";
 import { Requirements } from "@/views/Requirements";
@@ -78,6 +79,14 @@ export default function App() {
   // again against the restored model, and briefly show one model's figures
   // under the other's name.
   const [resolved, setResolved] = useState(false);
+  // Shown once. Deliberately not waiting on the model to load: someone whose
+  // server is down should still be told what they are looking at.
+  const [intro, setIntro] = useState(() => recall("intro-seen") !== "yes");
+
+  function closeIntro() {
+    setIntro(false);
+    remember("intro-seen", "yes");
+  }
   const [theme, toggleTheme] = useTheme();
 
   // Measured rather than assumed, so a narrow window does not briefly render
@@ -221,6 +230,12 @@ export default function App() {
             copilot
           </button>
           <button
+            onClick={() => setIntro(true)}
+            className="rounded border border-hairline px-2 py-1 font-mono text-[11px] text-muted hover:text-ink"
+          >
+            guide
+          </button>
+          <button
             onClick={toggleTheme}
             className="rounded border border-hairline px-2 py-1 font-mono text-[11px] text-muted hover:text-ink"
             aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
@@ -229,6 +244,10 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {/* Covers the header too, so `aria-modal` describes what is actually the
+          case rather than claiming an inertness the layout does not provide. */}
+      {intro && <Intro overview={overview} onClose={closeIntro} />}
 
       <div className="relative flex min-h-0 flex-1">
         <nav className="flex w-36 flex-none flex-col gap-0.5 border-r border-hairline bg-ground p-2">
