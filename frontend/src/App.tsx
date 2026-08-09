@@ -119,16 +119,14 @@ export default function App() {
     setActive(name);
   }
 
-  const available = VIEWS.filter(
-    (entry) => !entry.needs || overview?.capabilities[entry.needs],
-  );
-
-  // Drift and reconcile are configured per model, so a switch can remove the
-  // view being looked at. Falling back beats rendering a tab that is no longer
-  // in the rail.
-  useEffect(() => {
-    if (overview && !available.some((entry) => entry.id === view)) setView("overview");
-  }, [overview, view]);
+  // Every view is listed, including the two that need a flag this server may
+  // not have been given. Removing them was worse than showing them unconfigured:
+  // someone who has never passed those flags never discovers the capability, and
+  // the product appears to do four things instead of six. The view itself
+  // explains what to pass.
+  function configured(entry: (typeof VIEWS)[number]): boolean {
+    return !entry.needs || !overview || overview.capabilities[entry.needs];
+  }
 
   return (
     <div className="flex h-full flex-col bg-surface">
@@ -198,19 +196,27 @@ export default function App() {
 
       <div className="relative flex min-h-0 flex-1">
         <nav className="flex w-36 flex-none flex-col gap-0.5 border-r border-hairline bg-ground p-2">
-          {available.map((entry) => (
+          {VIEWS.map((entry) => (
             <button
               key={entry.id}
               onClick={() => setView(entry.id)}
               aria-current={view === entry.id ? "page" : undefined}
+              title={
+                configured(entry) ? undefined : `${entry.label} needs a flag this server was not given`
+              }
               className={cx(
-                "rounded px-2.5 py-1.5 text-left text-sm",
+                "flex items-center justify-between gap-1 rounded px-2.5 py-1.5 text-left text-sm",
                 view === entry.id
                   ? "bg-accent-soft font-medium text-accent"
                   : "text-muted hover:bg-raised hover:text-ink",
               )}
             >
               {entry.label}
+              {/* Dimmed rather than hidden or disabled: still reachable, and
+                  reading the view is how someone finds out what to pass. */}
+              {!configured(entry) && (
+                <span className="font-mono text-[10px] text-faint">off</span>
+              )}
             </button>
           ))}
         </nav>

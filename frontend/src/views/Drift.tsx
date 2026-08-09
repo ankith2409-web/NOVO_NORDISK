@@ -11,7 +11,7 @@
  * taken over, because "the hash moved" is not a finding a reviewer can act on.
  */
 import { useEffect, useState } from "react";
-import { api, type DriftChange, type DriftPayload } from "@/lib/api";
+import { api, SNAPSHOT_MODE, type DriftChange, type DriftPayload } from "@/lib/api";
 import {
   Chip,
   ConfidenceChip,
@@ -21,6 +21,7 @@ import {
   Panel,
   Stat,
 } from "@/components/primitives";
+import { NotConfigured, SnapshotGap } from "@/components/NotConfigured";
 import { RichText } from "@/components/RichText";
 import { cx } from "@/lib/cx";
 
@@ -34,17 +35,32 @@ const TONE = {
 
 export function Drift() {
   const [data, setData] = useState<DriftPayload | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ status: number; message: string } | null>(null);
 
   useEffect(() => {
     void (async () => {
       const result = await api.drift();
       if (result.ok) setData(result.data);
-      else setError(result.message);
+      else setError({ status: result.status, message: result.message });
     })();
   }, []);
 
-  if (error) return <Failure message={error} />;
+  // 501 is the server saying a flag was not passed, which is not a failure and
+  // must not be dressed as one. Anything else genuinely went wrong.
+  if (error?.status === 501 && SNAPSHOT_MODE)
+    return <SnapshotGap title='Drift' why='Drift compares two versions of a model against each other as they are read, so there is no single capture that could hold it.' />;
+  if (error?.status === 501)
+    return (
+      <NotConfigured
+        title="Drift"
+        answers="Which objects moved between two versions of this model, and which requirements were written against the ones that moved."
+        needs="a second version of this model to compare against"
+        flag="--compare-to"
+        example="<earlier .pbix or TMDL folder>"
+        yields="Every added, removed, changed and renamed object, with the fingerprint on both sides — and separately, the requirements that need re-validating versus the ones where only a name they cite has moved."
+      />
+    );
+  if (error) return <Failure message={error.message} />;
   if (!data) return <Loading what="both versions" />;
 
   return (

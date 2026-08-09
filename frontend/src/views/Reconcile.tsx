@@ -17,11 +17,13 @@
 import { useEffect, useState } from "react";
 import {
   api,
+  SNAPSHOT_MODE,
   type Comparison,
   type MetricDefinition,
   type ReconcilePayload,
   type Verdict,
 } from "@/lib/api";
+import { NotConfigured, SnapshotGap } from "@/components/NotConfigured";
 import { Chip, Failure, Loading, Panel, Stat, VerdictChip } from "@/components/primitives";
 import { cx } from "@/lib/cx";
 
@@ -35,17 +37,30 @@ const ORDER: Verdict[] = ["divergent", "review", "consistent"];
 
 export function Reconcile() {
   const [data, setData] = useState<ReconcilePayload | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ status: number; message: string } | null>(null);
 
   useEffect(() => {
     void (async () => {
       const result = await api.reconcile();
       if (result.ok) setData(result.data);
-      else setError(result.message);
+      else setError({ status: result.status, message: result.message });
     })();
   }, []);
 
-  if (error) return <Failure message={error} />;
+  if (error?.status === 501 && SNAPSHOT_MODE)
+    return <SnapshotGap title='Cross-platform reconciliation' why='Reconciliation reads a live warehouse alongside the model, so it cannot be captured into a static page.' />;
+  if (error?.status === 501)
+    return (
+      <NotConfigured
+        title="Cross-platform reconciliation"
+        answers="Whether the numbers defined in Power BI and the ones defined in the warehouse actually agree — metric by metric, not model-wide."
+        needs="a warehouse to read the other definitions from"
+        flag="--warehouse"
+        example="path/to/warehouse.duckdb"
+        yields="Each metric matched to its warehouse counterpart, with the tables, columns and aggregations each side reads shown next to one another and the differing ones marked."
+      />
+    );
+  if (error) return <Failure message={error.message} />;
   if (!data) return <Loading what="both platforms" />;
 
   const counts = data.counts;
