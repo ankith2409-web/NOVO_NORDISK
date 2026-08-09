@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -22,6 +23,13 @@ export default defineConfig({
   ],
   resolve: {
     alias: { "@": new URL("./src", import.meta.url).pathname },
+  },
+  // `environment: "jsdom"` rather than node: the persistence module talks to
+  // localStorage, and the behaviour worth testing there is what happens when a
+  // browser refuses it -- which cannot be exercised without one to refuse.
+  test: {
+    environment: "jsdom",
+    include: ["src/**/*.test.ts"],
   },
   server: {
     port: 5173,
