@@ -133,21 +133,38 @@ export function Reconcile() {
       {data.possible_pairings.length > 0 && (
         <Panel title="Possibly the same metric under different names">
           <p className="px-3.5 pt-2.5 text-xs text-muted">
-            Close enough to be worth a look, not close enough to compare automatically.
-            No character measure can tell that two opposite words differ by three letters.
+            Questions, never findings — none of these is compared automatically. A
+            name score alone cannot tell a synonym from an antonym, so each one shows
+            what the two definitions actually read, which is usually enough to settle
+            it without opening either.
           </p>
           <ul className="mt-1.5 divide-y divide-hairline">
             {data.possible_pairings.map((pairing) => (
-              <li
-                key={`${pairing.left}~${pairing.right}`}
-                className="flex items-center gap-2 px-3.5 py-2 font-mono text-xs"
-              >
-                <span>{pairing.left}</span>
-                <span className="text-faint">~</span>
-                <span>{pairing.right}</span>
-                <span className="ml-auto text-faint tabular">
-                  {Math.round(pairing.similarity * 100)}%
-                </span>
+              <li key={`${pairing.left}~${pairing.right}`} className="px-3.5 py-2">
+                <div className="flex items-center gap-2 font-mono text-xs">
+                  <span>{pairing.left}</span>
+                  <span className="text-faint">~</span>
+                  <span>{pairing.right}</span>
+                  <span className="ml-auto flex flex-none items-center gap-1.5">
+                    {/* Named, because "found by what they read" and "found by
+                        spelling" are different strengths of claim and a reader
+                        deserves to know which one they are looking at. */}
+                    <Chip tone={pairing.contradicted ? "bad" : pairing.basis === "name" ? "neutral" : "accent"}>
+                      {pairing.basis}
+                    </Chip>
+                    <span className="tabular text-faint">
+                      name {Math.round(pairing.similarity * 100)}%
+                    </span>
+                  </span>
+                </div>
+                <p
+                  className={cx(
+                    "mt-1 text-[11.5px]",
+                    pairing.contradicted ? "text-bad" : "text-muted",
+                  )}
+                >
+                  {pairing.evidence}
+                </p>
               </li>
             ))}
           </ul>

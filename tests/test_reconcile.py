@@ -193,11 +193,27 @@ def test_names_match_across_casing_and_separators(left: str, right: str) -> None
     assert metrics.normalise_name(left) == metrics.normalise_name(right)
 
 
+def _definition(name: str, platform: str, **kwargs) -> MetricDefinition:
+    """A metric definition with only the fields a pairing decision reads."""
+    return MetricDefinition(
+        name=name,
+        platform=platform,
+        language="dax" if platform == "power_bi" else "sql",
+        expression="",
+        tables=frozenset(kwargs.get("tables", ())),
+        columns=frozenset(kwargs.get("columns", ())),
+        aggregations=frozenset(kwargs.get("aggregations", ())),
+    )
+
+
 def test_unmatched_lookalikes_are_offered_but_never_compared() -> None:
     pairings = metrics._possible_pairings(
         {
-            "power_bi": ["Average Days To Release", "Quality Status"],
-            "warehouse": ["avg_days_to_release"],
+            "power_bi": [
+                _definition("Average Days To Release", "power_bi"),
+                _definition("Quality Status", "power_bi"),
+            ],
+            "warehouse": [_definition("avg_days_to_release", "warehouse")],
         }
     )
     assert len(pairings) == 1
@@ -355,3 +371,188 @@ def test_a_difference_reads_as_a_sentence_not_a_python_repr(report) -> None:
     # Still names both tables, and still separates the two sides.
     assert "batch, testresult" in detail
     assert detail.count(";") == 1
+
+
+# -- pairing on evidence, not just on spelling --------------------------------
+# A name score cannot tell a synonym from an antonym: measured against this
+# model, "Batches Released" and "batches_rejected" score 0.80 while the true
+# pair "Right First Time %" / "right_first_time_rate" scores 0.86. These pin
+# the evidence that settles such a case, and the pairs a name score would miss
+# entirely.
+
+def test_a_pair_no_name_measure_could_find_is_found_by_what_it_reads() -> None:
+    """The capability names structurally cannot provide.
+
+    "OOS Rate" against "quality_failure_ratio" scores far below any workable
+    threshold -- lowering the cut far enough to catch it would flood the list
+    with noise. Reading the same column and applying the same aggregation is
+    what identifies it.
+    """
+    assert (
+        metrics.SequenceMatcher(None, "oosrate", "qualityfailureratio").ratio() < 0.5
+    ), "if these ever became name-similar this test would prove nothing"
+
+    pairings = metrics._possible_pairings(
+        {
+            "power_bi": [
+                _definition(
+                    "OOS Rate",
+                    "power_bi",
+                    tables={"TestResult"},
+                    columns={"ResultStatus"},
+                    aggregations={"COUNT"},
+                )
+            ],
+            "warehouse": [
+                _definition(
+                    "quality_failure_ratio",
+                    "warehouse",
+                    tables={"test_result"},
+                    columns={"result_status"},
+                    aggregations={"COUNT"},
+                )
+            ],
+        }
+    )
+    assert len(pairings) == 1
+    assert pairings[0].basis == "structure"
+    assert pairings[0].shared_columns == ("resultstatus",)
+    assert "both use" in pairings[0].evidence
+
+
+def test_a_close_name_reading_nothing_in_common_is_marked_contradicted() -> None:
+    """The "Released"/"rejected" shape. Still offered -- one side may simply be
+    unparseable -- but never ranked as though the structure agreed."""
+    pairings = metrics._possible_pairings(
+        {
+            "power_bi": [
+                _definition(
+                    "Batches Released",
+                    "power_bi",
+                    tables={"Batch"},
+                    columns={"ReleaseDate"},
+                    aggregations={"COUNT"},
+                )
+            ],
+            "warehouse": [
+                _definition(
+                    "batches_restated",
+                    "warehouse",
+                    tables={"restatement"},
+                    columns={"restated_on"},
+                    aggregations={"SUM"},
+                )
+            ],
+        }
+    )
+    assert len(pairings) == 1
+    assert pairings[0].basis == "name"
+    assert pairings[0].contradicted is True
+    assert "nothing in common" in pairings[0].evidence
+
+
+def test_agreeing_on_both_outranks_agreeing_on_either() -> None:
+    """A reviewer should meet the pairs they can settle fastest first."""
+    pairings = metrics._possible_pairings(
+        {
+            "power_bi": [
+                _definition(
+                    "Right First Time %",
+                    "power_bi",
+                    columns={"Status"},
+                    aggregations={"COUNT"},
+                ),
+                _definition("Assay Mean", "power_bi", columns={"Assay"}),
+            ],
+            "warehouse": [
+                _definition(
+                    "right_first_time_rate",
+                    "warehouse",
+                    columns={"status"},
+                    aggregations={"COUNT"},
+                ),
+                _definition("assay_max", "warehouse", columns={"potency"}),
+            ],
+        }
+    )
+    assert pairings[0].basis == "both"
+    assert pairings[0].left == "Right First Time %"
+    # The antonym pair is still offered, and still last.
+    assert pairings[-1].contradicted is True
+
+
+def test_a_shared_fact_table_alone_does_not_propose_a_pair() -> None:
+    """Two unrelated metrics over one fact table share it trivially. Proposing
+    on that alone would make every metric a candidate for every other."""
+    pairings = metrics._possible_pairings(
+        {
+            "power_bi": [
+                _definition("Headcount", "power_bi", tables={"Batch"}, columns={"Staff"})
+            ],
+            "warehouse": [
+                _definition("shipment_weight", "warehouse", tables={"batch"}, columns={"kg"})
+            ],
+        }
+    )
+    assert pairings == []
+
+
+def test_a_pairing_still_carries_no_verdict() -> None:
+    """The whole contract. Structural agreement is evidence of a shared
+    subject, never proof of a shared meaning, so nothing here may decide."""
+    pairing = metrics._possible_pairings(
+        {
+            "power_bi": [
+                _definition("OOS Rate", "power_bi", columns={"Status"}, aggregations={"COUNT"})
+            ],
+            "warehouse": [
+                _definition("failure_ratio", "warehouse", columns={"status"}, aggregations={"COUNT"})
+            ],
+        }
+    )[0]
+    assert not hasattr(pairing, "verdict")
+
+
+def test_a_shared_aggregation_over_a_shared_table_does_not_propose_a_pair() -> None:
+    """Measured, not assumed. Allowing table+aggregation to propose produced six
+    suggestions for one unmatched warehouse metric on the real QualityControl
+    fixture, down to a name similarity of 0.06 -- because nearly every metric
+    counts something over the same fact table.
+    """
+    pairings = metrics._possible_pairings(
+        {
+            "power_bi": [
+                _definition(
+                    "OOS Results PM",
+                    "power_bi",
+                    tables={"TestResult"},
+                    columns={"ResultStatus"},
+                    aggregations={"COUNT"},
+                )
+            ],
+            "warehouse": [
+                _definition(
+                    "instrument_utilisation",
+                    "warehouse",
+                    tables={"test_result"},
+                    columns={"instrument_id"},
+                    aggregations={"COUNT"},
+                )
+            ],
+        }
+    )
+    assert pairings == []
+
+
+def test_the_real_warehouse_yields_one_useful_suggestion(report) -> None:
+    """The end-to-end shape, against the real model and the real warehouse.
+
+    `Instrument Failure Rank` and `instrument_utilisation` score 0.667 on name
+    -- below the 0.80 cut, so name matching alone would never have offered them.
+    Sharing the instrument column is what surfaces the question.
+    """
+    assert len(report.possible_pairings) == 1
+    pairing = report.possible_pairings[0]
+    assert pairing.similarity < metrics._PAIRING_THRESHOLD
+    assert pairing.basis == "structure"
+    assert "instrument" in pairing.shared_columns

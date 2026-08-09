@@ -143,6 +143,12 @@ export interface ReconcilePayload {
     right: string;
     right_platform: string;
     similarity: number;
+    /** How the pair was found. "structure" catches ones no name score could. */
+    basis: "name" | "structure" | "both";
+    /** Names are close and the two read nothing in common. */
+    contradicted: boolean;
+    /** What the two actually read, as one line a reviewer can act on. */
+    evidence: string;
   }[];
   coverage_gaps: { feature: string; count: number; reason: string }[];
 }

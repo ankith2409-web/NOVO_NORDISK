@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from dataclasses import dataclass, field, replace
+from difflib import SequenceMatcher
 from enum import Enum
 
 from concordance.adapters import sql as sqladapter
@@ -120,12 +121,19 @@ class Comparison:
 
 @dataclass(frozen=True)
 class PossiblePairing:
-    """Two unmatched names close enough that they may be the same metric.
+    """Two unmatched metrics that may be the same one under different names.
 
     Deliberately not compared. Acting on a guessed pairing would attach a
     verdict to two metrics that might have nothing to do with each other, which
     is worse than saying nothing; the point is to put the question in front of
     someone who knows the answer.
+
+    What is offered alongside the guess is the evidence for it. A name score on
+    its own cannot tell a synonym from an antonym -- "Batches Released" and
+    "batches_rejected" differ by fewer characters than most true pairs do -- so
+    each suggestion also carries what the two definitions actually read. That
+    turns "these look alike" into something a reviewer can settle in seconds
+    instead of a prompt to go and open both definitions.
     """
 
     left: str
@@ -133,6 +141,35 @@ class PossiblePairing:
     right: str
     right_platform: str
     similarity: float
+    #: What both sides read, after stripping qualification and separators.
+    shared_tables: tuple[str, ...] = ()
+    shared_columns: tuple[str, ...] = ()
+    shared_aggregations: tuple[str, ...] = ()
+    #: How this pair was found. ``name`` is the old behaviour; ``structure``
+    #: catches pairs no name measure could, and ``both`` is the strongest.
+    basis: str = "name"
+    #: Names are close, and the two read nothing whatsoever in common. Not
+    #: proof they differ -- one side may simply be unparseable -- but the
+    #: shape of the "Released"/"rejected" mistake, and worth saying so.
+    contradicted: bool = False
+
+    @property
+    def evidence(self) -> str:
+        """One line a reviewer can act on without opening either definition."""
+        parts = []
+        if self.shared_tables:
+            parts.append(f"both read {', '.join(self.shared_tables)}")
+        if self.shared_columns:
+            parts.append(f"both use {', '.join(self.shared_columns)}")
+        if self.shared_aggregations:
+            parts.append(f"both apply {', '.join(self.shared_aggregations)}")
+        if not parts:
+            return (
+                "names are close but they read nothing in common"
+                if self.contradicted
+                else "nothing identifiable on at least one side"
+            )
+        return "; ".join(parts)
 
 
 @dataclass
@@ -325,6 +362,10 @@ def reconcile(*definition_sets: list[MetricDefinition]) -> ReconciliationReport:
             by_key.setdefault(definition.key, []).append(definition)
 
     report = ReconciliationReport()
+    # The unmatched definitions themselves, not only their names: what each one
+    # reads is the evidence that decides whether a near-miss on the name is a
+    # real pair or an antonym.
+    unmatched: dict[str, list[MetricDefinition]] = {}
 
     for key in sorted(by_key):
         definitions = by_key[key]
@@ -333,6 +374,7 @@ def reconcile(*definition_sets: list[MetricDefinition]) -> ReconciliationReport:
         if len(platforms) < 2:
             platform = next(iter(platforms))
             report.unique_to_platform.setdefault(platform, []).append(definitions[0].name)
+            unmatched.setdefault(platform, []).append(definitions[0])
             continue
 
         report.comparisons.append(_compare(definitions))
@@ -340,7 +382,7 @@ def reconcile(*definition_sets: list[MetricDefinition]) -> ReconciliationReport:
     for names in report.unique_to_platform.values():
         names.sort()
     report.comparisons.sort(key=lambda c: (c.verdict.value, c.metric))
-    report.possible_pairings = _possible_pairings(report.unique_to_platform)
+    report.possible_pairings = _possible_pairings(unmatched)
     return report
 
 
@@ -361,11 +403,26 @@ _PAIRING_THRESHOLD = 0.80
 #: Only the strongest are worth a person's attention.
 _MAX_PAIRINGS = 20
 
+#: How much of what two definitions read has to coincide before structure is
+#: taken as a reason to suggest a pair the names never would have. Measured as
+#: overlap over the smaller side rather than a Jaccard ratio: a warehouse view
+#: that reads three tables where the DAX measure reads one is still reading the
+#: same one, and dividing by the union would punish it for the extra breadth.
+_STRUCTURE_THRESHOLD = 0.6
+
+
+def _overlap(left: frozenset[str], right: frozenset[str]) -> float:
+    """Share of the smaller set that appears in both. 0 when either is empty."""
+    if not left or not right:
+        return 0.0
+    return len(left & right) / min(len(left), len(right))
+
 
 def _possible_pairings(
-    unique: dict[str, list[str]], threshold: float = _PAIRING_THRESHOLD
+    unmatched: dict[str, list[MetricDefinition]],
+    threshold: float = _PAIRING_THRESHOLD,
 ) -> list[PossiblePairing]:
-    """Find unmatched names on different platforms that resemble each other.
+    """Find unmatched metrics on different platforms that may be the same one.
 
     Name matching is where a report like this quietly under-delivers: two teams
     implement one KPI, spell it differently enough that the matcher misses it,
@@ -373,32 +430,91 @@ def _possible_pairings(
     that from genuine agreement -- both look like silence. Rather than loosen
     matching until false pairs creep in, close-but-unmatched names are listed
     for a human to confirm.
-    """
-    from difflib import SequenceMatcher
 
+    Names are no longer the only way in. What each definition reads -- its
+    tables, its columns, its aggregations -- is compared too, and that catches
+    the case a character measure structurally cannot: two implementations of one
+    KPI named so differently that no amount of loosening the threshold would
+    ever put them side by side. ``quality_failure_ratio`` scores 0.35 against
+    "OOS Rate" and would never be suggested, however low the cut; reading the
+    same column and applying the same aggregation is what gives it away.
+
+    The same evidence runs the other way. A pair found on name alone that turns
+    out to read nothing in common is marked as contradicted rather than
+    silently ranked alongside the good ones -- that is the shape of the
+    "Batches Released" / "batches_rejected" mistake, where an antonym scores
+    higher than most synonyms do.
+
+    Nothing here decides anything. Every pairing is still a question put to a
+    person, because structural agreement is evidence of a shared subject, not
+    proof of a shared meaning.
+    """
     pairings: list[PossiblePairing] = []
-    platforms = sorted(unique)
+    platforms = sorted(unmatched)
 
     for i, left_platform in enumerate(platforms):
         for right_platform in platforms[i + 1 :]:
-            for left in unique[left_platform]:
-                for right in unique[right_platform]:
-                    score = SequenceMatcher(
-                        None, normalise_name(left), normalise_name(right)
-                    ).ratio()
-                    if score >= threshold:
-                        pairings.append(
-                            PossiblePairing(
-                                left=left,
-                                left_platform=left_platform,
-                                right=right,
-                                right_platform=right_platform,
-                                similarity=round(score, 3),
-                            )
-                        )
+            for left in unmatched[left_platform]:
+                for right in unmatched[right_platform]:
+                    pairing = _weigh(left, right, left_platform, right_platform, threshold)
+                    if pairing is not None:
+                        pairings.append(pairing)
 
-    pairings.sort(key=lambda p: (-p.similarity, p.left, p.right))
+    # Corroborated pairs first, contradicted ones last, then by name score. A
+    # reviewer working down the list should meet the ones they can settle
+    # fastest before the ones that need both definitions opened.
+    order = {"both": 0, "structure": 1, "name": 2}
+    pairings.sort(
+        key=lambda p: (p.contradicted, order[p.basis], -p.similarity, p.left, p.right)
+    )
     return pairings[:_MAX_PAIRINGS]
+
+
+def _weigh(
+    left: MetricDefinition,
+    right: MetricDefinition,
+    left_platform: str,
+    right_platform: str,
+    threshold: float,
+) -> PossiblePairing | None:
+    """Judge one candidate pair on its name and on what it reads."""
+    name_score = SequenceMatcher(
+        None, normalise_name(left.name), normalise_name(right.name)
+    ).ratio()
+
+    tables = _bare_names(left.tables) & _bare_names(right.tables)
+    columns = _bare_names(left.columns) & _bare_names(right.columns)
+    aggregations = left.aggregations & right.aggregations
+
+    # Columns alone may propose a pair. Tables and aggregations may corroborate
+    # one and never suggest one, and that is not conservatism for its own sake:
+    # run against the real QualityControl warehouse, allowing a shared table
+    # plus a shared aggregation to propose produced six suggestions for a single
+    # unmatched metric, down to a name similarity of 0.06 -- every metric over
+    # the same fact table, because nearly every metric counts something. A list
+    # that flags everything is no more useful than one that flags nothing, which
+    # is the failure this module exists to avoid.
+    structural = _overlap(_bare_names(left.columns), _bare_names(right.columns))
+
+    by_name = name_score >= threshold
+    by_structure = structural >= _STRUCTURE_THRESHOLD
+    if not by_name and not by_structure:
+        return None
+
+    return PossiblePairing(
+        left=left.name,
+        left_platform=left_platform,
+        right=right.name,
+        right_platform=right_platform,
+        similarity=round(name_score, 3),
+        shared_tables=tuple(sorted(tables)),
+        shared_columns=tuple(sorted(columns)),
+        shared_aggregations=tuple(sorted(aggregations)),
+        basis="both" if (by_name and by_structure) else ("name" if by_name else "structure"),
+        # Only a name-based suggestion can be contradicted; one found *by*
+        # structure agrees with itself by construction.
+        contradicted=by_name and not by_structure and not (tables or columns),
+    )
 
 
 #: How each platform is named where a person reads it. The identifiers are what
@@ -524,8 +640,14 @@ def to_text(report: ReconciliationReport) -> str:
         for pairing in report.possible_pairings:
             lines.append(
                 f"  {pairing.left} [{pairing.left_platform}]  ~  "
-                f"{pairing.right} [{pairing.right_platform}]  ({pairing.similarity:.0%})"
+                f"{pairing.right} [{pairing.right_platform}]  "
+                f"(name {pairing.similarity:.0%})"
             )
+            # The evidence, not just the score. A percentage alone gives a
+            # reader nothing to decide with; what the two actually read is what
+            # settles it without opening either definition.
+            marker = "!" if pairing.contradicted else " "
+            lines.append(f"   {marker}  {pairing.evidence}")
 
     if report.unique_to_platform:
         lines.append("")

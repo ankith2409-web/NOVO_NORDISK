@@ -397,6 +397,9 @@ def reconcile(context: ApiContext, params: Params) -> dict[str, Any]:
                 "right": p.right,
                 "right_platform": p.right_platform,
                 "similarity": p.similarity,
+                "basis": p.basis,
+                "contradicted": p.contradicted,
+                "evidence": p.evidence,
             }
             for p in report.possible_pairings
         ],
