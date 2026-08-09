@@ -5,8 +5,14 @@
  * overwhelmingly hierarchical -- tables own columns, measures and drill paths --
  * and a tree renders that at any size without layout, overlap or zoom, none of
  * which pay their way here. The genuinely graph-shaped question, "what breaks if
- * I change this", is better answered by naming the affected objects than by
- * asking someone to trace edges across a canvas.
+ * I change this", is still answered by naming the affected objects: a list is
+ * exact, sorts, and does not need tracing.
+ *
+ * What a list cannot carry is distance. Two hops upstream and one hop upstream
+ * are indistinguishable once both are names in a column, so the selected object
+ * also gets a small chain drawn around it -- its ancestry and descent, bounded,
+ * and nothing else. That is a different picture from a model map, and the
+ * reason the tree above is not one.
  *
  * The whole tree comes from one `/api/graph` call. Loading each table's children
  * on expand would be a request per click for data measured in kilobytes.
@@ -15,6 +21,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type GraphPayload, type MeasureDetail } from "@/lib/api";
 import { Chip, Failure, Loading, Panel } from "@/components/primitives";
 import { EvidenceDrawer } from "@/components/EvidenceDrawer";
+import { Lineage } from "@/components/Lineage";
 import { cx } from "@/lib/cx";
 
 type Node = GraphPayload["nodes"][number] & {
@@ -201,7 +208,14 @@ export function Model() {
 
       <div className="min-h-0 flex-1 overflow-auto">
         {selected ? (
-          <Detail node={selected} />
+          <Detail
+            node={selected}
+            graph={graph}
+            onSelect={(id) => {
+              const found = (graph.nodes as Node[]).find((node) => node.id === id);
+              if (found) setSelected(found);
+            }}
+          />
         ) : (
           <p className="p-4 text-sm text-muted">
             Select an object to see how it is defined and what depends on it.
@@ -212,7 +226,15 @@ export function Model() {
   );
 }
 
-function Detail({ node }: { node: Node }) {
+function Detail({
+  node,
+  graph,
+  onSelect,
+}: {
+  node: Node;
+  graph: GraphPayload;
+  onSelect: (id: string) => void;
+}) {
   const [measure, setMeasure] = useState<MeasureDetail | null>(null);
   const [impact, setImpact] = useState<string[] | null>(null);
   const [impactProblem, setImpactProblem] = useState<string | null>(null);
@@ -282,6 +304,14 @@ function Detail({ node }: { node: Node }) {
           </pre>
         </Panel>
       )}
+
+      {/* The chain, then the two lists. The lists answer "what" exactly; the
+          chain answers "in what order, and how far away", which a flat list of
+          names cannot -- a column two hops upstream reads as a peer of the
+          measure one hop upstream once both are just names in a column. */}
+      <Panel title="Lineage">
+        <Lineage graph={graph} focus={node.id} onSelect={onSelect} />
+      </Panel>
 
       <div className="grid gap-3 lg:grid-cols-2">
         {measure && (
