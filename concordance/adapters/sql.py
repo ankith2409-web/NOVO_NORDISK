@@ -6,16 +6,22 @@ information schema describing tables and columns, and view definitions carrying
 the SQL that computes a metric. This adapter reads that shape, so a warehouse
 view lands in the same ``SemanticModel`` a ``.pbix`` does and every downstream
 feature -- documentation, the chatbot, drift, reconciliation -- works over it
-unchanged.
+unchanged. ``SqlAdapter`` itself never imports a platform-specific driver; it
+takes anything with a DB-API-shaped ``execute``, which is what makes
+``from_snowflake`` below a few lines rather than a parallel implementation.
 
 Verification is honest about its limits. The SQL path is exercised end to end
 against DuckDB, whose ``information_schema`` follows the SQL standard that
 Snowflake and Databricks also implement, so the queries and the parsing are
-genuinely tested. What is *not* tested is authenticating to a real Snowflake or
-Databricks account, because no credentials exist for this project; those
-connectors are thin wrappers that swap the DB-API connection and reuse
-everything below. The distinction is recorded here rather than glossed over,
-and repeated in the README.
+genuinely tested. ``from_snowflake`` is unit-tested against a fake cursor that
+speaks the same DB-API shape, which proves the query text, the case-folding and
+the wiring -- everything within this process's control. What that cannot prove
+is a live handshake to a real Snowflake account: this project's sandbox blocks
+outbound connections to *.snowflakecomputing.com at the network policy layer
+(a 403 on every CONNECT, confirmed against a real trial account, not assumed),
+so authenticating for real has to happen from a machine outside that policy.
+The distinction is recorded here rather than glossed over, and repeated in the
+README.
 
 Expressions are parsed with sqlglot into a real AST, for the same reason DAX is
 lexed rather than pattern-matched: identifying which tables and columns feed a
@@ -364,3 +370,70 @@ def from_duckdb(
     return SqlAdapter(
         connection, database=database, schema=schema, dialect="duckdb", name=name
     ).extract()
+
+
+class _CursorConnection:
+    """Adapts a connection that needs an explicit cursor to the single
+    ``execute`` this adapter expects.
+
+    DuckDB's connection can run a query directly, which is what ``SqlConnection``
+    is shaped around; Snowflake's (like most DB-API drivers) only runs one
+    through a cursor it hands out separately. A fresh cursor per call rather
+    than one held across calls, because the adapter issues its three reads
+    sequentially and a shared cursor would make the second overwrite the first
+    result set before it is read.
+    """
+
+    def __init__(self, connection: Any) -> None:
+        self._connection = connection
+
+    def execute(self, query: str) -> Any:
+        cursor = self._connection.cursor()
+        cursor.execute(query)
+        return cursor
+
+
+def from_snowflake(
+    account: str,
+    user: str,
+    password: str,
+    warehouse: str,
+    database: str,
+    schema: str = "PUBLIC",
+    role: str = "",
+    name: str = "",
+) -> SemanticModel:
+    """Read a Snowflake database the same way ``from_duckdb`` reads a file.
+
+    Requires ``snowflake-connector-python``, imported here rather than at
+    module level so nothing that only ever touches DuckDB is made to install a
+    driver for a warehouse it does not use.
+
+    Snowflake folds unquoted identifiers to upper case and stores them that way
+    in its information schema; a schema typed in lower case here would compare
+    against ``information_schema.tables`` and match nothing, which would look
+    identical to an empty schema rather than a case mismatch. Upper-casing here
+    is only wrong for a database or schema created with a quoted, genuinely
+    lower-case name -- the caller can still pass that through unchanged since
+    Python strings are case-sensitive by default.
+    """
+    import snowflake.connector
+
+    connection = snowflake.connector.connect(
+        account=account,
+        user=user,
+        password=password,
+        warehouse=warehouse,
+        database=database,
+        role=role or None,
+    )
+    try:
+        return SqlAdapter(
+            _CursorConnection(connection),
+            database=database.upper(),
+            schema=schema.upper(),
+            dialect="snowflake",
+            name=name,
+        ).extract()
+    finally:
+        connection.close()

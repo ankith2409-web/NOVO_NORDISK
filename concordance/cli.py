@@ -598,29 +598,91 @@ def cmd_auditpack(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_reconcile(args: argparse.Namespace) -> int:
-    """Compare one KPI's Power BI definition against the warehouse's."""
-    import duckdb
+#: Which environment variable each Snowflake connection parameter comes from.
+#: Kept out of argparse, matching how the LLM providers take their API keys --
+#: a warehouse password is exactly the kind of value a shell history or a
+#: process list should not carry.
+_SNOWFLAKE_ENV = {
+    "account": "SNOWFLAKE_ACCOUNT",
+    "user": "SNOWFLAKE_USER",
+    "password": "SNOWFLAKE_PASSWORD",
+    "warehouse": "SNOWFLAKE_WAREHOUSE",
+    "database": "SNOWFLAKE_DATABASE",
+    "role": "SNOWFLAKE_ROLE",
+}
+
+
+def _snowflake_model(schema: str):
+    """Build the warehouse-side model from Snowflake, or explain what is missing.
+
+    ``database`` is the one value with no sensible default -- unlike a password
+    or role, guessing it would silently read the wrong warehouse -- so it is
+    required explicitly rather than left to fail deep inside the connector.
+
+    A failed connection is folded into ``SourceError`` like every other input
+    problem this CLI reports, rather than left to surface as the driver's own
+    traceback. A network policy rejecting the connection and a wrong password
+    look identical from here -- both are "could not reach or use this
+    warehouse" -- so both get the same readable treatment; ``--debug`` still
+    shows the real one underneath.
+    """
+    import os
 
     from concordance.adapters import sql as sqladapter
+    from concordance.adapters.base import SourceError
+
+    values = {key: os.environ.get(var, "") for key, var in _SNOWFLAKE_ENV.items()}
+    missing = [var for key, var in _SNOWFLAKE_ENV.items() if key != "role" and not values[key]]
+    if missing:
+        print(
+            "Missing environment variable(s) for --platform snowflake: "
+            + ", ".join(missing),
+            file=sys.stderr,
+        )
+        return None
+
+    try:
+        return sqladapter.from_snowflake(schema=schema, **values)
+    except Exception as error:
+        raise SourceError(
+            f"snowflake://{values['account']}/{values['database']}",
+            f"{type(error).__name__}: {error}",
+            "Check the account identifier, credentials and network access. If "
+            "this is running somewhere with restricted outbound access, a "
+            "connection timeout here usually means that policy, not a wrong "
+            "password -- try the same command from an unrestricted network.",
+        ) from error
+
+
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    """Compare one KPI's Power BI definition against the warehouse's."""
     from concordance.reconcile import metrics
 
     graph = _load(args.source)
 
-    warehouse = Path(args.warehouse)
-    if not warehouse.exists():
-        print(
-            f"No warehouse at {warehouse}. Run scripts/build_warehouse.py to create "
-            f"the local one, or pass --warehouse.",
-            file=sys.stderr,
-        )
-        return 2
+    if args.platform == "snowflake":
+        model = _snowflake_model(args.schema or "PUBLIC")
+        if model is None:
+            return 2
+    else:
+        import duckdb
 
-    connection = duckdb.connect(str(warehouse), read_only=True)
-    try:
-        model = sqladapter.from_duckdb(connection, schema=args.schema)
-    finally:
-        connection.close()
+        from concordance.adapters import sql as sqladapter
+
+        warehouse = Path(args.warehouse)
+        if not warehouse.exists():
+            print(
+                f"No warehouse at {warehouse}. Run scripts/build_warehouse.py to create "
+                f"the local one, or pass --warehouse.",
+                file=sys.stderr,
+            )
+            return 2
+
+        connection = duckdb.connect(str(warehouse), read_only=True)
+        try:
+            model = sqladapter.from_duckdb(connection, schema=args.schema or "main")
+        finally:
+            connection.close()
 
     report = metrics.reconcile(
         metrics.from_power_bi(graph, platform=args.model_platform),
@@ -686,11 +748,25 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("source", help="path to a .pbix file or TMDL model folder")
     p.add_argument(
+        "--platform",
+        choices=("duckdb", "snowflake"),
+        default="duckdb",
+        help="which warehouse to read from. snowflake takes its account, user, "
+        "password, warehouse, database and role from SNOWFLAKE_* environment "
+        "variables rather than flags, the same way the chat's API keys are read "
+        "-- a warehouse password does not belong in a shell history",
+    )
+    p.add_argument(
         "--warehouse",
         default="data/warehouse/quality_control.duckdb",
-        help="path to a DuckDB warehouse (default data/warehouse/quality_control.duckdb)",
+        help="path to a DuckDB warehouse (default data/warehouse/quality_control.duckdb); "
+        "ignored for --platform snowflake",
     )
-    p.add_argument("--schema", default="main", help="warehouse schema to read")
+    p.add_argument(
+        "--schema",
+        default=None,
+        help="warehouse schema to read (default: main for duckdb, PUBLIC for snowflake)",
+    )
     p.add_argument("--model-platform", default="power_bi", help="label for the model side")
     p.add_argument(
         "--warehouse-platform", default="warehouse", help="label for the warehouse side"

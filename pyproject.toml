@@ -22,6 +22,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# Only needed for --platform snowflake; the DuckDB path (default) has no
+# platform-specific driver at all, and most uses of this project never touch
+# a live warehouse.
+snowflake = ["snowflake-connector-python>=3.0"]
 
 [project.scripts]
 concordance = "concordance.cli:main"
