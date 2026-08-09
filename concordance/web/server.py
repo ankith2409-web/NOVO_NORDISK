@@ -186,6 +186,8 @@ def make_handler(
                 return
             if parsed.path == "/api/ask":
                 self._handle_ask()
+            elif parsed.path == "/api/decide":
+                self._handle_decide(parse_qs(parsed.query))
             else:
                 self._not_found()
 
@@ -224,18 +226,8 @@ def make_handler(
             self._json(status, payload)
 
         def _handle_ask(self) -> None:
-            length = int(self.headers.get("Content-Length", 0) or 0)
-            if length == 0 or length > _MAX_BODY_BYTES:
-                self._json(
-                    HTTPStatus.BAD_REQUEST,
-                    {"error": "request body must be non-empty and under 10KB"},
-                )
-                return
-
-            try:
-                payload = json.loads(self.rfile.read(length))
-            except json.JSONDecodeError:
-                self._json(HTTPStatus.BAD_REQUEST, {"error": "malformed JSON body"})
+            payload = self._read_json()
+            if payload is None:
                 return
 
             question = str(payload.get("question", "")).strip()
@@ -283,6 +275,46 @@ def make_handler(
                 },
                 session_id=session_id,
             )
+
+        def _handle_decide(self, params: dict[str, list[str]]) -> None:
+            """Record a review decision.
+
+            The only endpoint on this server that writes anything. It is a POST
+            for that reason, and it is behind the same access check as
+            everything else -- a queue anyone passing by can sign off is not an
+            audit trail.
+            """
+            payload = self._read_json()
+            if payload is None:
+                return
+            try:
+                context = registry.resolve(params)
+                result = api.decide(context, payload)
+            except api.ApiError as error:
+                self._json(HTTPStatus(error.status), error.payload())
+                return
+            self._json(HTTPStatus.OK, result)
+
+        def _read_json(self) -> dict | None:
+            """The request body, or None once an error has been answered."""
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            if length == 0 or length > _MAX_BODY_BYTES:
+                self._json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": "request body must be non-empty and under 10KB"},
+                )
+                return None
+            try:
+                payload = json.loads(self.rfile.read(length))
+            except json.JSONDecodeError:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "malformed JSON body"})
+                return None
+            if not isinstance(payload, dict):
+                self._json(
+                    HTTPStatus.BAD_REQUEST, {"error": "request body must be an object"}
+                )
+                return None
+            return payload
 
         # -- helpers -----------------------------------------------------
 

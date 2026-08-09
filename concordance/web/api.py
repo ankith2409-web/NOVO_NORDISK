@@ -67,6 +67,9 @@ class ApiContext:
     compare_label: str = ""
     warehouse: Path | None = None
     warehouse_schema: str = "main"
+    #: Where review decisions are written. Absent means the queue is read-only,
+    #: which the interface says rather than showing controls that do nothing.
+    decisions: Path | None = None
 
     def requirements(self, kind: Kind) -> list[Requirement]:
         """Derive requirements on demand.
@@ -287,13 +290,134 @@ def review(context: ApiContext, params: Params) -> dict[str, Any]:
     own endpoint keeps that obligation visible instead of buried among the
     requirements that need no attention.
     """
-    pending = [
-        _requirement_dict(r)
-        for kind in Kind
-        for r in context.requirements(kind)
-        if r.needs_review
-    ]
-    return {"model": context.graph.model.name, "count": len(pending), "pending": pending}
+    log = _decision_log(context)
+    pending = []
+    for kind in Kind:
+        for requirement in context.requirements(kind):
+            if not requirement.needs_review:
+                continue
+            entry = _requirement_dict(requirement)
+            entry["standing"] = _standing_dict(log, requirement)
+            pending.append(entry)
+
+    # Counted separately rather than by filtering in the interface: "seven
+    # open, two decided, one stale" is the shape of the queue, and a caller
+    # that has to derive it will derive it differently in each place.
+    def count(status: str) -> int:
+        return sum(1 for p in pending if p["standing"]["status"] == status)
+
+    return {
+        "model": context.graph.model.name,
+        "count": len(pending),
+        "open": count("open"),
+        "decided": count("decided"),
+        "stale": count("stale"),
+        "can_decide": context.decisions is not None,
+        "pending": pending,
+    }
+
+
+def _decision_log(context: ApiContext):
+    """The log for this context, or None when none was configured.
+
+    Reopened per request rather than held: several people may have the queue
+    open, and a handle read once at startup would show each of them a trail
+    frozen before the others' decisions.
+    """
+    if context.decisions is None:
+        return None
+    from concordance.review.decisions import DecisionLog
+
+    return DecisionLog.open(context.decisions)
+
+
+def _standing_dict(log, requirement: Requirement) -> dict[str, Any]:
+    """Where one requirement stands, including why a decision stopped applying."""
+    if log is None:
+        return {"status": "open", "verdict": "", "history": []}
+
+    standing = log.standing(requirement.id, requirement.bound_fingerprints)
+    return {
+        "status": standing.status.value,
+        "verdict": standing.verdict,
+        "note": standing.latest.note if standing.latest else "",
+        "author_claimed": standing.latest.author if standing.latest else "",
+        "at": standing.latest.at if standing.latest else "",
+        "history": [
+            {
+                "verdict": d.verdict.value,
+                "note": d.note,
+                "author_claimed": d.author,
+                "at": d.at,
+            }
+            for d in standing.history
+        ],
+    }
+
+
+def decide(context: ApiContext, payload: dict[str, Any]) -> dict[str, Any]:
+    """Record one person's answer about one requirement.
+
+    The fingerprints written down are the ones derived *now*, not any supplied
+    by the caller. A client that could state what it was deciding about could
+    accept a statement while recording that it had approved something else --
+    which is the one thing this record exists to make impossible.
+    """
+    from concordance.review.decisions import DecisionLog, Verdict
+
+    if context.decisions is None:
+        raise ApiError(
+            HTTPStatus.NOT_IMPLEMENTED,
+            "this server was started without a decision log; "
+            "restart with --decisions <path.jsonl> to record review outcomes",
+        )
+
+    requirement_id = str(payload.get("requirement_id", "")).strip()
+    if not requirement_id:
+        raise ApiError(HTTPStatus.BAD_REQUEST, "requirement_id is required")
+
+    try:
+        verdict = Verdict(str(payload.get("verdict", "")).strip())
+    except ValueError:
+        raise ApiError(
+            HTTPStatus.BAD_REQUEST,
+            "verdict must be one of: " + ", ".join(v.value for v in Verdict),
+        ) from None
+
+    found = next(
+        (
+            r
+            for kind in Kind
+            for r in context.requirements(kind)
+            if r.id == requirement_id
+        ),
+        None,
+    )
+    if found is None:
+        raise ApiError(
+            HTTPStatus.NOT_FOUND, "no requirement with that id in this model"
+        )
+
+    note = str(payload.get("note", ""))
+    if len(note) > _MAX_NOTE:
+        raise ApiError(
+            HTTPStatus.BAD_REQUEST, f"note must be under {_MAX_NOTE} characters"
+        )
+
+    log = DecisionLog.open(context.decisions)
+    log.record(
+        requirement_id=found.id,
+        verdict=verdict,
+        bound_fingerprints=found.bound_fingerprints,
+        note=note,
+        author=str(payload.get("author", ""))[:_MAX_AUTHOR],
+    )
+    return {"requirement_id": found.id, "standing": _standing_dict(log, found)}
+
+
+#: A review note is a sentence or two of context, not a document.
+_MAX_NOTE = 2000
+_MAX_AUTHOR = 120
 
 
 def drift(context: ApiContext, params: Params) -> dict[str, Any]:

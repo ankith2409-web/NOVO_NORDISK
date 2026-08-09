@@ -459,6 +459,18 @@ def cmd_serve(args: argparse.Namespace) -> int:
             ),
             warehouse=warehouse if loaded is graph else None,
             warehouse_schema=args.schema,
+            # One log per model. Sharing a file between models would let a
+            # decision recorded against one model's requirement id collide
+            # with another's, and requirement ids are only unique within a
+            # model by construction.
+            decisions=(
+                Path(args.decisions).with_name(
+                    f"{Path(args.decisions).stem}.{loaded.model.name}"
+                    f"{Path(args.decisions).suffix or '.jsonl'}"
+                )
+                if args.decisions and len(graphs) > 1
+                else (Path(args.decisions) if args.decisions else None)
+            ),
         )
         for loaded in graphs
     }
@@ -824,6 +836,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--warehouse", help="a DuckDB warehouse to serve reconciliation against")
     p.add_argument("--schema", default="main", help="warehouse schema to read")
+    p.add_argument(
+        "--decisions",
+        nargs="?",
+        const="concordance-decisions.jsonl",
+        help="record review decisions to this append-only JSON Lines file, so the "
+        "Review queue can be answered rather than only read. Each decision is "
+        "bound to the fingerprints of what it was made about, so it stops "
+        "applying by itself when that logic changes. Pass the flag alone for "
+        "concordance-decisions.jsonl in the current directory.",
+    )
     p.add_argument(
         "--token",
         nargs="?",

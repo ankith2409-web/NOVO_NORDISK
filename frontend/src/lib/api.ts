@@ -73,10 +73,28 @@ export interface RequirementsPayload {
   requirements: Requirement[];
 }
 
+export type DecisionStatus = "open" | "decided" | "stale";
+
+export interface Standing {
+  status: DecisionStatus;
+  verdict: string;
+  note?: string;
+  author_claimed?: string;
+  at?: string;
+  history: { verdict: string; note: string; author_claimed: string; at: string }[];
+}
+
 export interface ReviewPayload {
   model: string;
   count: number;
-  pending: Requirement[];
+  open: number;
+  decided: number;
+  stale: number;
+  /** False when the server was started without a decision log, in which case
+   *  the queue is read-only and the interface says so rather than showing
+   *  controls that would store nothing. */
+  can_decide: boolean;
+  pending: (Requirement & { standing: Standing })[];
 }
 
 export interface MeasureDetail {
@@ -303,6 +321,43 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<Re
   return { ok: true, data: body as T };
 }
 
+async function post<T>(path: string, body: Record<string, unknown>): Promise<Result<T>> {
+  if (SNAPSHOT_MODE) {
+    return {
+      ok: false,
+      status: 501,
+      message:
+        "A snapshot is a captured reading, with nowhere to write a decision back to. " +
+        "Run `concordance serve <model> --decisions <path>` to answer the queue.",
+    };
+  }
+  let response: Response;
+  try {
+    response = await fetch(`/api${path}${activeModel ? `?model=${encodeURIComponent(activeModel)}` : ""}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      message: "Cannot reach the Concordance server.",
+    };
+  }
+  const parsed = await response.json().catch(() => null);
+  if (!response.ok) {
+    const payload = (parsed ?? {}) as { error?: string };
+    return {
+      ok: false,
+      status: response.status,
+      message: payload.error ?? `The server answered ${response.status}.`,
+    };
+  }
+  return { ok: true, data: parsed as T };
+}
+
 export const api = {
   /** Point every subsequent request at `name`; "" restores the server default. */
   use: (name: string) => {
@@ -345,6 +400,16 @@ export const api = {
   requirements: (kind: "business" | "functional") =>
     get<RequirementsPayload>("/requirements", { kind }),
   review: () => get<ReviewPayload>("/review"),
+
+  /** Record a decision. The server derives what it was made about; a caller
+   *  that could state that could approve one thing while recording another. */
+  decide: (requirement_id: string, verdict: string, note = "", author = "") =>
+    post<{ requirement_id: string; standing: Standing }>("/decide", {
+      requirement_id,
+      verdict,
+      note,
+      author,
+    }),
   drift: () => get<DriftPayload>("/drift"),
   reconcile: () => get<ReconcilePayload>("/reconcile"),
 
