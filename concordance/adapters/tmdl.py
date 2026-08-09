@@ -33,6 +33,7 @@ from concordance.adapters.base import is_measure_container, resolve_table_depend
 from concordance.fingerprint import fingerprint_dax, fingerprint_parts, fingerprint_text
 from concordance.model import (
     Column,
+    CoverageGap,
     Hierarchy,
     HierarchyLevel,
     Measure,
@@ -298,6 +299,60 @@ def _looks_like_declaration(stripped: str) -> bool:
     return first in _DECLARATION_KEYWORDS
 
 
+#: Declaration kinds this adapter turns into something in the semantic model.
+#: Anything the parser finds outside this set was read off disk and then
+#: dropped, which is exactly what a coverage gap is.
+_EXTRACTED_KINDS = frozenset(
+    {
+        "table",
+        "column",
+        "measure",
+        "hierarchy",
+        "level",
+        "relationship",
+        # Read for its M source, which becomes the table's `power_query`.
+        "partition",
+    }
+)
+
+#: Containers and metadata. Present in every model, carrying no business logic
+#: of their own, so listing them as "not extracted" would bury the two or three
+#: findings that matter under noise that is always there.
+_STRUCTURAL_KINDS = frozenset(
+    {"model", "database", "annotation", "changedProperty", "extendedProperty"}
+)
+
+#: Why each unextracted kind matters, in the terms of someone deciding whether
+#: the gap affects them. A bare "not extracted" is true but useless: it does not
+#: say whether the documentation below it is merely thinner or actually wrong.
+_GAP_REASONS = {
+    "role": (
+        "row-level security roles are present; their filters are not read, so "
+        "documentation here describes the model as an unrestricted user sees it"
+    ),
+    "perspective": (
+        "perspectives are present; the objects each one exposes are not read, so "
+        "everything is documented as though every field were visible to everyone"
+    ),
+    "culture": (
+        "translations are present; only the base-language names are read, so "
+        "names here may differ from what a user in another locale sees"
+    ),
+    "calculationGroup": (
+        "calculation groups are present; they rewrite measures at query time, so "
+        "a measure's documented expression is not the whole story where one applies"
+    ),
+    "calculationItem": (
+        "calculation items are present; each one is a DAX expression that can "
+        "replace a measure's own, and none of them are read or fingerprinted"
+    ),
+    "variation": (
+        "column variations are present; the alternate hierarchy a field can drill "
+        "through is not read"
+    ),
+}
+
+
 class TmdlAdapter:
     """Extracts a semantic model from a TMDL definition folder."""
 
@@ -331,6 +386,8 @@ class TmdlAdapter:
         relationships = definition / "relationships.tmdl"
         if relationships.is_file():
             self._read_relationships(relationships, model)
+
+        model.coverage_gaps = self._coverage_gaps(definition)
 
         resolve_table_dependencies(model)
         return model
@@ -406,6 +463,53 @@ class TmdlAdapter:
 
             for hierarchy in node.child("hierarchy"):
                 model.hierarchies.append(self._build_hierarchy(node.name, hierarchy))
+
+    def _coverage_gaps(self, definition: Path) -> list[CoverageGap]:
+        """Report what the parser read and this adapter then dropped.
+
+        Derived from the files rather than declared in a list, which is the
+        whole point: a hand-maintained list of "things we know we skip" only
+        stays true until someone adds a construct nobody thought of, and it
+        reports nothing for the model actually in front of you. Walking every
+        declaration and subtracting the ones that become model objects means a
+        construct this adapter has never heard of still gets counted.
+
+        Only `definition/tables/` and `relationships.tmdl` are read for content,
+        so a model's roles, perspectives, cultures and calculation groups all
+        land here -- and that silence was the bug. ``inspect`` printed "no
+        unextracted model features detected" for every TMDL model, which is a
+        claim about a check that was never run.
+        """
+        found: dict[str, int] = {}
+
+        def count(node: Node) -> None:
+            if node.kind not in _EXTRACTED_KINDS and node.kind not in _STRUCTURAL_KINDS:
+                found[node.kind] = found.get(node.kind, 0) + 1
+            for child in node.children:
+                count(child)
+
+        for path in sorted(definition.rglob("*.tmdl")):
+            try:
+                nodes = parse(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError):
+                # Unreadable is itself worth reporting rather than skipping in
+                # silence, but it is a different finding from "parsed and
+                # dropped" and would misreport the counts if merged into them.
+                found["unreadable file"] = found.get("unreadable file", 0) + 1
+                continue
+            for node in nodes:
+                count(node)
+
+        return [
+            CoverageGap(
+                feature=kind,
+                count=number,
+                reason=_GAP_REASONS.get(
+                    kind, "read from the model definition but not extracted"
+                ),
+            )
+            for kind, number in sorted(found.items())
+        ]
 
     def _partition_source(self, table: Node) -> str | None:
         for partition in table.child("partition"):
