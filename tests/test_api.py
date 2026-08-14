@@ -224,6 +224,47 @@ def test_drift_reports_changes_and_what_they_put_in_question() -> None:
     assert all(a["because"] for a in payload["affected_requirements"])
 
 
+def test_drift_has_no_summary_key_unless_asked_for() -> None:
+    """A summary costs a real LLM call, so it must not ride along uninvited."""
+    before = _load(MODEL)
+    after = _load(MODEL_V2)
+    context = api.ApiContext(graph=after, compare_to=before, compare_label="v1")
+
+    status, payload = api.handle(context, "/api/drift", {})
+    assert status is HTTPStatus.OK
+    assert "summary" not in payload
+
+
+def test_drift_summary_degrades_when_no_provider_is_configured() -> None:
+    """No key configured must explain the gap, not break the drift report."""
+    before = _load(MODEL)
+    after = _load(MODEL_V2)
+    context = api.ApiContext(graph=after, compare_to=before, compare_label="v1")
+
+    status, payload = api.handle(context, "/api/drift", {"summary": ["true"]})
+    assert status is HTTPStatus.OK
+    assert payload["has_drift"]  # the report itself is unaffected
+    assert payload["summary"]["text"] is None
+    assert "provider" not in payload["summary"] or payload["summary"].get("error")
+
+
+def test_drift_summary_uses_the_configured_provider() -> None:
+    from concordance.llm.fake import FakeProvider, says
+
+    before = _load(MODEL)
+    after = _load(MODEL_V2)
+    provider = FakeProvider(script=[says("A measure's filter changed.")])
+    context = api.ApiContext(
+        graph=after, compare_to=before, compare_label="v1", provider=provider
+    )
+
+    status, payload = api.handle(context, "/api/drift", {"summary": ["true"]})
+    assert status is HTTPStatus.OK
+    assert payload["summary"]["text"] == "A measure's filter changed."
+    assert payload["summary"]["provider"] == "fake"
+    assert payload["summary"]["disclaimer"]
+
+
 def test_reconcile_reports_the_divergent_metric(tmp_path_factory) -> None:
     import importlib.util
 

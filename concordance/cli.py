@@ -453,6 +453,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     contexts = {
         loaded.model.name: ApiContext(
             graph=loaded,
+            # Reused rather than reconfigured: the same fallback chain the
+            # chat already talks through, so the summary feature needs no
+            # flag of its own and degrades the same way chat does when no
+            # key is configured.
+            provider=provider,
             compare_to=compare_to if loaded is graph else None,
             compare_label=(
                 Path(args.compare_to).name if args.compare_to and loaded is graph else ""

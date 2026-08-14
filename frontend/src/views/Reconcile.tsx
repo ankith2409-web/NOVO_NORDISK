@@ -24,6 +24,7 @@ import {
   type Verdict,
 } from "@/lib/api";
 import { NotConfigured, SnapshotGap } from "@/components/NotConfigured";
+import { Summary } from "@/components/Summary";
 import { Chip, Failure, Loading, Panel, Stat, VerdictChip } from "@/components/primitives";
 import { cx } from "@/lib/cx";
 
@@ -76,6 +77,8 @@ export function Reconcile() {
           {data.model} against {data.warehouse}
         </p>
       </header>
+
+      {!SNAPSHOT_MODE && <Summary fetch={api.reconcileSummary} />}
 
       <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
         <Stat label="Defined on both" value={counts.shared_metrics} />

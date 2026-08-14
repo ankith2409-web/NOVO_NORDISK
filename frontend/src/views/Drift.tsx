@@ -23,6 +23,7 @@ import {
 } from "@/components/primitives";
 import { NotConfigured, SnapshotGap } from "@/components/NotConfigured";
 import { RichText } from "@/components/RichText";
+import { Summary } from "@/components/Summary";
 import { cx } from "@/lib/cx";
 import { diffLines, worthMarking, type DiffLine } from "@/lib/linediff";
 
@@ -100,6 +101,10 @@ export function Drift() {
           {data.before} → {data.after}
         </p>
       </header>
+
+      {data.has_drift && !SNAPSHOT_MODE && (
+        <Summary fetch={api.driftSummary} />
+      )}
 
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 xl:grid-cols-7">
         <Stat label="Added" value={data.counts.added} />

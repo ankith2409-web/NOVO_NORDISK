@@ -144,6 +144,15 @@ export interface Comparison {
   differences: { aspect: string; detail: string }[];
 }
 
+export interface Summary {
+  text: string | null;
+  /** Set when no summary could be produced -- no key configured, quota,
+   *  network -- so the interface can say why rather than showing nothing. */
+  error?: string;
+  provider?: string;
+  disclaimer?: string;
+}
+
 export interface ReconcilePayload {
   model: string;
   warehouse: string;
@@ -169,6 +178,8 @@ export interface ReconcilePayload {
     evidence: string;
   }[];
   coverage_gaps: { feature: string; count: number; reason: string }[];
+  /** Only present when requested with `?summary=true`. */
+  summary?: Summary;
 }
 
 export interface DriftChange {
@@ -203,6 +214,8 @@ export interface DriftPayload {
     because: string[];
     needs_revalidation: boolean;
   }[];
+  /** Only present when requested with `?summary=true`. */
+  summary?: Summary;
 }
 
 export interface GraphPayload {
@@ -412,6 +425,11 @@ export const api = {
     }),
   drift: () => get<DriftPayload>("/drift"),
   reconcile: () => get<ReconcilePayload>("/reconcile"),
+  // Separate calls, not a flag on the calls above: a summary is a second,
+  // slower request the caller opts into deliberately, on data it has already
+  // rendered -- not something every drift/reconcile load should wait on.
+  driftSummary: () => get<DriftPayload>("/drift", { summary: "true" }),
+  reconcileSummary: () => get<ReconcilePayload>("/reconcile", { summary: "true" }),
 
   async ask(question: string): Promise<
     Result<{

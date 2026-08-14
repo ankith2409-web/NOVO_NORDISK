@@ -70,6 +70,10 @@ class ApiContext:
     #: Where review decisions are written. Absent means the queue is read-only,
     #: which the interface says rather than showing controls that do nothing.
     decisions: Path | None = None
+    #: The provider the chat already uses. Reused, not reconfigured, for the
+    #: optional AI summary on drift and reconcile -- absent means that summary
+    #: is unavailable, the same way an absent warehouse means reconcile is.
+    provider: Any = None
 
     def requirements(self, kind: Kind) -> list[Requirement]:
         """Derive requirements on demand.
@@ -432,7 +436,7 @@ def drift(context: ApiContext, params: Params) -> dict[str, Any]:
     after = snap.take(context.graph, label=context.graph.model.name)
     report = compare(before, after, after_graph=context.graph)
 
-    return {
+    result = {
         "before": report.before_label,
         "after": report.after_label,
         "model": report.model_name,
@@ -461,6 +465,9 @@ def drift(context: ApiContext, params: Params) -> dict[str, Any]:
             for a in report.affected
         ],
     }
+    if _wants_summary(params):
+        result["summary"] = _narrate(context, "drift", result)
+    return result
 
 
 def reconcile(context: ApiContext, params: Params) -> dict[str, Any]:
@@ -499,7 +506,7 @@ def reconcile(context: ApiContext, params: Params) -> dict[str, Any]:
         metrics.from_power_bi(context.graph), metrics.from_warehouse(warehouse_model)
     )
 
-    return {
+    result = {
         "model": context.graph.model.name,
         "warehouse": str(context.warehouse.name),
         "counts": report.counts(),
@@ -545,6 +552,35 @@ def reconcile(context: ApiContext, params: Params) -> dict[str, Any]:
             for g in warehouse_model.coverage_gaps
         ],
     }
+    if _wants_summary(params):
+        result["summary"] = _narrate(context, "reconcile", result)
+    return result
+
+
+def _wants_summary(params: Params) -> bool:
+    """Opt-in only: a summary spends LLM quota and latency the caller may not want."""
+    return (params.get("summary") or [""])[0].strip().lower() in ("1", "true", "yes")
+
+
+def _narrate(context: ApiContext, kind: str, result: dict[str, Any]) -> dict[str, Any]:
+    """Best-effort AI summary. Never fails the request it rides along with.
+
+    A missing key, an exhausted quota, or a network hiccup is exactly as
+    common here as it is for the chat, and the drift or reconcile report
+    underneath is the actual answer -- it must still be returned in full.
+    """
+    from concordance.generate import narrative
+
+    if context.provider is None:
+        return {"text": None, "error": "no language model provider is configured"}
+    try:
+        if kind == "drift":
+            found = narrative.summarize_drift(result, context.provider)
+        else:
+            found = narrative.summarize_reconcile(result, context.provider)
+    except narrative.LlmError as error:
+        return {"text": None, "error": str(error)}
+    return {"text": found.text, "provider": found.provider, "disclaimer": found.disclaimer}
 
 
 def _record(record: Any) -> dict[str, Any] | None:
