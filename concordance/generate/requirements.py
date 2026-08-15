@@ -32,6 +32,7 @@ from concordance.graph.csg import (
     SemanticGraph,
     calculation_item_id,
     hierarchy_id,
+    kpi_id,
     measure_id,
     role_id,
     table_id,
@@ -103,6 +104,9 @@ class RequirementDeriver:
         out.extend(self._from_hierarchies())
         out.extend(self._from_calculated_columns())
         out.extend(self._from_roles())
+        out.extend(self._from_object_permissions())
+        out.extend(self._from_perspectives())
+        out.extend(self._from_kpis())
         out.extend(self._from_calculation_groups())
         out.extend(self._from_load_steps())
         out.extend(self._from_model_shape())
@@ -566,6 +570,159 @@ class RequirementDeriver:
                     )
                 )
 
+        return out
+
+    # -- KPIs, object security, perspectives ------------------------------------
+
+    def _from_kpis(self) -> list[Requirement]:
+        """What the business considers a good number, which the measure never says."""
+        out: list[Requirement] = []
+
+        for kpi in self.model.kpis:
+            evidence = (
+                Evidence(
+                    node_id=kpi_id(kpi.table, kpi.measure),
+                    fingerprint=kpi.fingerprint,
+                    detail="; ".join(
+                        f"{label}: {text}"
+                        for label, text in (
+                            ("target", kpi.target_expression),
+                            ("status", kpi.status_expression),
+                            ("trend", kpi.trend_expression),
+                        )
+                        if text
+                    ),
+                ),
+            )
+            ident = _identity("kpi", kpi.table, kpi.measure)
+            against = (
+                f" against {kpi.target_description}"
+                if kpi.target_description
+                else " against the target recorded in the evidence"
+            )
+
+            out.append(
+                Requirement(
+                    id=f"REQ-B-{ident}",
+                    kind=Kind.BUSINESS,
+                    category="Metrics and KPIs",
+                    statement=(
+                        f"**{kpi.measure}** shall be tracked as a key performance "
+                        f"indicator{against}, with its status reported against the "
+                        f"thresholds the model defines."
+                    ),
+                    rationale=(
+                        f"The model attaches a KPI to {kpi.qualified_name}, so the "
+                        f"business does not merely report this figure -- it judges it."
+                    ),
+                    confidence=Confidence.HIGH,
+                    evidence=evidence,
+                )
+            )
+
+            if kpi.status_expression:
+                out.append(
+                    Requirement(
+                        id=f"REQ-F-{ident}",
+                        kind=Kind.FUNCTIONAL,
+                        category="KPI thresholds",
+                        statement=(
+                            f"The status shown for **{kpi.qualified_name}** shall be "
+                            f"computed by the DAX expression recorded in the evidence "
+                            f"for this requirement, evaluated against its target."
+                        ),
+                        rationale=(
+                            "The threshold expression decides which figures are "
+                            "reported as acceptable. Changing it changes that verdict "
+                            "without changing the measure, so it is a requirement in "
+                            "its own right rather than a presentation detail."
+                        ),
+                        confidence=Confidence.HIGH,
+                        evidence=evidence,
+                    )
+                )
+
+        return out
+
+    def _from_object_permissions(self) -> list[Requirement]:
+        """Fields a role cannot see at all -- distinct from seeing fewer rows."""
+        out: list[Requirement] = []
+        hidden: dict[str, list[str]] = {}
+        for permission in self.model.object_permissions:
+            if permission.hides:
+                hidden.setdefault(permission.role, []).append(permission.target)
+
+        for role, targets in sorted(hidden.items()):
+            out.append(
+                Requirement(
+                    id=f"REQ-B-{_identity('ols', role)}",
+                    kind=Kind.BUSINESS,
+                    category="Access and visibility",
+                    statement=(
+                        f"Users assigned the **{role}** role shall not have access to "
+                        f"{_join(f'**{t}**' for t in sorted(targets))}."
+                    ),
+                    rationale=(
+                        "Object-level security hides these entirely rather than "
+                        "filtering their rows, so a member of this role cannot see "
+                        "that the field exists, let alone its values."
+                    ),
+                    confidence=Confidence.HIGH,
+                    evidence=tuple(
+                        Evidence(
+                            node_id=role_id(role),
+                            fingerprint=fingerprint_parts("ols", role, target),
+                            detail=f"{target}: no access",
+                        )
+                        for target in sorted(targets)
+                    ),
+                )
+            )
+        return out
+
+    def _from_perspectives(self) -> list[Requirement]:
+        """What each audience is actually shown."""
+        out: list[Requirement] = []
+
+        for perspective in self.model.perspectives:
+            if not perspective.members:
+                continue
+            measures = [m.name for m in perspective.members if m.object_kind == "Measure"]
+            out.append(
+                Requirement(
+                    id=f"REQ-B-{_identity('perspective', perspective.name)}",
+                    kind=Kind.BUSINESS,
+                    category="Access and visibility",
+                    statement=(
+                        f"The **{perspective.name}** view shall expose "
+                        f"{_join(f'**{t}**' for t in perspective.tables)}"
+                        + (
+                            f", offering {_join(f'**{m}**' for m in sorted(measures))}."
+                            if measures
+                            else "."
+                        )
+                    ),
+                    rationale=(
+                        f"The model defines a perspective named {perspective.name} "
+                        f"covering {len(perspective.members)} object(s). A perspective "
+                        f"is a scope statement: this audience is given this subset, not "
+                        f"the whole model."
+                    ),
+                    confidence=Confidence.HIGH,
+                    evidence=(
+                        Evidence(
+                            node_id=f"perspective:{perspective.name}",
+                            fingerprint=perspective.fingerprint,
+                            detail=", ".join(
+                                f"{m.object_kind} {m.table}[{m.name}]"
+                                if m.object_kind != "Table"
+                                else f"Table {m.name}"
+                                for m in perspective.members
+                            ),
+                        ),
+                    ),
+                )
+            )
         return out
 
     # -- calculation groups -----------------------------------------------------

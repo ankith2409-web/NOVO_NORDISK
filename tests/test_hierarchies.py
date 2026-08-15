@@ -139,7 +139,7 @@ def test_hierarchy_fingerprints_are_stable_across_extractions() -> None:
 # -- coverage reporting ------------------------------------------------------
 
 class _RawWithUnextractedFeatures:
-    """Stands in for a model using features none of the samples contain."""
+    """Stands in for a model using features the samples do not contain."""
 
     tmschema_kpis = pd.DataFrame([{"Name": "Revenue KPI"}, {"Name": "Margin KPI"}])
     rls = pd.DataFrame([{"Role": "Sales EMEA"}])
@@ -147,21 +147,34 @@ class _RawWithUnextractedFeatures:
     tmschema_calculation_groups = pd.DataFrame([{"Name": "Time Intelligence"}])
     tmschema_calculation_items = pd.DataFrame([])
     tmschema_perspectives = None
+    tmschema_cultures = pd.DataFrame([{"Name": "en-US"}, {"Name": "da-DK"}])
+    tmschema_variations = pd.DataFrame([{"Name": "Variation"}])
 
 
 def test_unextracted_features_are_reported_when_present() -> None:
     gaps = PbixAdapter()._coverage_gaps(_RawWithUnextractedFeatures())
     reported = {g.feature: g.count for g in gaps}
 
-    assert reported["KPI objects"] == 2
-    # Empty and absent tables are not gaps -- nothing was lost.
-    assert "object-level security" not in reported
-    assert "perspectives" not in reported
+    assert reported["translations"] == 2
+    assert reported["column variations"] == 1
 
-    # Calculation groups are extracted now, so claiming they are unread would
-    # be the mirror image of the original bug: a disclaimer that outlived what
-    # it disclaimed.
-    assert "calculation groups" not in reported
+    # KPIs, calculation groups and object-level security are extracted now, so
+    # claiming they are unread would be the mirror image of the original bug:
+    # a disclaimer that outlived what it disclaimed.
+    for extracted in ("KPI objects", "calculation groups", "object-level security"):
+        assert extracted not in reported
+
+
+def test_a_models_own_base_language_is_not_a_translation() -> None:
+    """Every model carries exactly one culture -- the language it is written
+    in. A gap raised at one row would fire on every model ever read, and a
+    warning that is always present is one nobody reads."""
+
+    class OneCulture(_RawWithUnextractedFeatures):
+        tmschema_cultures = pd.DataFrame([{"Name": "en-US"}])
+
+    reported = {g.feature for g in PbixAdapter()._coverage_gaps(OneCulture())}
+    assert "translations" not in reported
 
 
 def test_rls_still_reports_what_this_format_cannot_show() -> None:
@@ -179,13 +192,24 @@ def test_rls_still_reports_what_this_format_cannot_show() -> None:
 
 
 @pytest.mark.parametrize("name", SAMPLES)
-def test_sample_models_report_no_coverage_gaps(name: str) -> None:
-    """These three genuinely have no KPIs, RLS or calculation groups."""
-    assert PbixAdapter().extract(str(_available(name))).coverage_gaps == []
+def test_sample_models_report_only_what_is_genuinely_unread(name: str) -> None:
+    """These three have no KPIs, RLS, OLS, perspectives or calculation groups,
+    so none of those may be claimed as gaps.
+
+    Column variations may be, and are: two of the three samples carry them,
+    and until the feature list was corrected nothing looked for them at all --
+    the documentation said they were reported while this adapter never
+    checked, which is the precise failure the coverage machinery exists to
+    prevent, committed by the machinery itself.
+    """
+    gaps = {g.feature for g in PbixAdapter().extract(str(_available(name))).coverage_gaps}
+    assert gaps <= {"column variations"}
 
 
 def test_coverage_gaps_reach_the_serialised_graph(adventure_works: SemanticGraph) -> None:
     """Whatever consumes the graph downstream must be able to see the gaps."""
     payload = adventure_works.to_dict()
     assert "coverage_gaps" in payload
-    assert payload["stats"]["coverage_gaps"] == 0
+    # AdventureWorks carries three column variations, so this is also a check
+    # that a real gap survives serialisation rather than only an empty one.
+    assert payload["stats"]["coverage_gaps"] == 1

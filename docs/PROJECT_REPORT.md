@@ -31,9 +31,9 @@ moment that link breaks.
 ### 3.1 Model extraction
 Reads a Power BI model in either of its two real formats — a compiled `.pbix` file or a
 TMDL project folder — into one internal representation covering tables, columns,
-measures, relationships, hierarchies, row-level security roles, calculation groups, and
-which file or database each table is loaded from together with the transformation steps
-applied on the way in.
+measures, relationships, hierarchies, row-level and object-level security, calculation
+groups, KPI targets and status thresholds, perspectives, and which file or database each
+table is loaded from together with the transformation steps applied on the way in.
 
 ### 3.2 Automated BRD/FRD generation
 Produces business and functional requirement statements directly from the model's
@@ -131,7 +131,7 @@ piece of work against a stable interface rather than a redesign.
 
 ## 5. Verification
 
-- **571 automated Python tests, 32 automated frontend tests**, all passing.
+- **584 automated Python tests, 32 automated frontend tests**, all passing.
 - Tests for the load-bearing claims were deliberately broken once and confirmed to fail,
   to prove they actually catch the problems they claim to — including the one asserting a
   reviewer cannot sign off under another reviewer's name.
@@ -165,11 +165,11 @@ KPIs are not currently represented in any sample model.
 
 ## 7. Known limitations, stated plainly
 
-- KPI objects, object-level security, perspectives, translations and column variations are
-  detected and reported as present, but their contents are not read. The tool says so on
-  every model it processes rather than leaving a reader to assume they were covered. In
-  the `.pbix` format specifically, a security role that filters no table cannot be seen at
-  all by the underlying reader — reported as a gap rather than quietly omitted.
+- Translations and column variations are detected and reported as present, but their
+  contents are not read. A model's single base culture is deliberately not counted as a
+  translation, since a warning that appears on every model is one nobody reads. In the
+  `.pbix` format specifically, a security role that filters no table cannot be seen at all
+  by the underlying reader — reported as a gap rather than quietly omitted.
 - Requirement wording is generated from rules rather than by a language model. Sentences
   now vary according to what each measure actually does, but the vocabulary is finite by
   construction — this buys reproducibility and traceability at some cost in fluency, and

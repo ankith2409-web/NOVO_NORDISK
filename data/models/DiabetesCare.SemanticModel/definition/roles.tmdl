@@ -6,6 +6,11 @@ role 'Cohort Clinician'
 
 	tablePermission Patient = Patient[Age Band] = "50 and over"
 
+		/// The familial-risk score is a research field, not a care field.
+		/// Hidden outright rather than filtered: a clinician should not see
+		/// that the column exists.
+		columnPermission DiabetesPedigreeFunction = None
+
 /// Analysts working on aggregate prevalence never need identifiable rows,
 /// but do need the whole population -- so this role restricts nothing and
 /// exists to be documented as unrestricted rather than left implicit.

@@ -1,0 +1,17 @@
+/// What a population-health analyst is shown: prevalence and risk rates,
+/// without the per-patient measurement columns behind them.
+perspective 'Population Health'
+
+	perspectiveTable 'Diabetes Metrics'
+
+		perspectiveMeasure 'Diabetes Prevalence'
+
+		perspectiveMeasure 'Obesity Rate'
+
+		perspectiveMeasure 'Elevated Glucose Rate'
+
+		perspectiveMeasure 'Patient Count'
+
+	perspectiveTable Patient
+
+		perspectiveColumn 'Age Band'

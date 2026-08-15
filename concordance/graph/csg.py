@@ -55,6 +55,10 @@ def calculation_item_id(table: str, name: str) -> str:
     return f"calculation_item:{table}[{name}]"
 
 
+def kpi_id(table: str, measure: str) -> str:
+    return f"kpi:{table}[{measure}]"
+
+
 def source_id(kind: str, detail: str) -> str:
     """Identified by what it points at, not by which table found it.
 
@@ -155,6 +159,7 @@ class SemanticGraph:
         self._add_hierarchies()
         self._add_roles()
         self._add_calculation_groups()
+        self._add_kpis()
         self._link_measure_dependencies()
         self._link_calculated_columns()
 
@@ -243,6 +248,48 @@ class SemanticGraph:
                     table_id(group.table),
                     key=EdgeKind.REWRITES,
                     kind=EdgeKind.REWRITES,
+                )
+
+    def _add_kpis(self) -> None:
+        """A KPI is its own node, edged to the measure it decorates.
+
+        Not folded into that measure: the measure says what the number is, the
+        KPI says what the business calls acceptable, and the two change
+        independently. Moving a status threshold from 80% to 90% turns amber
+        figures red without touching a line of the measure's DAX -- which is
+        exactly the kind of change that has to be visible to drift.
+        """
+        for kpi in self.model.kpis:
+            node = kpi_id(kpi.table, kpi.measure)
+            self.graph.add_node(
+                node,
+                kind=ObjectKind.KPI.value,
+                name=kpi.measure,
+                table=kpi.table,
+                fingerprint=kpi.fingerprint,
+                description=kpi.description,
+                expression="; ".join(
+                    f"{label}: {text}"
+                    for label, text in (
+                        ("target", kpi.target_expression),
+                        ("status", kpi.status_expression),
+                        ("trend", kpi.trend_expression),
+                    )
+                    if text
+                ),
+            )
+            target = measure_id(kpi.table, kpi.measure)
+            if target in self.graph:
+                self.graph.add_edge(
+                    node, target, key=EdgeKind.REFERENCES, kind=EdgeKind.REFERENCES
+                )
+            else:
+                self.unresolved.append(
+                    UnresolvedReference(
+                        source=node,
+                        target=target,
+                        reason="the KPI decorates a measure that is not in this model",
+                    )
                 )
 
     def _add_sources(self, table) -> None:

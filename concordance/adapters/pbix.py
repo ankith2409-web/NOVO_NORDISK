@@ -27,7 +27,11 @@ from concordance.model import (
     CoverageGap,
     Hierarchy,
     HierarchyLevel,
+    Kpi,
     Measure,
+    ObjectPermission,
+    Perspective,
+    PerspectiveMember,
     Relationship,
     SecurityRole,
     SemanticModel,
@@ -49,10 +53,19 @@ from concordance.normalize.mquery import canonicalise as canonicalise_m
 #: column names are a published contract rather than an inference from whatever
 #: sample happened to be at hand. Extraction is written against that contract
 #: and tested against frames shaped by it.
-_UNEXTRACTED_FEATURES: tuple[tuple[str, str], ...] = (
-    ("tmschema_kpis", "KPI objects"),
-    ("ols", "object-level security"),
-    ("tmschema_perspectives", "perspectives"),
+#: (frame, label, minimum count that means something). Neither of these was on
+#: the list before, which was itself a hole: the documentation claimed
+#: translations and column variations were reported, and for this format
+#: nothing ever looked.
+_UNEXTRACTED_FEATURES: tuple[tuple[str, str, int], ...] = (
+    # Every model carries exactly one base culture -- `en-US` in all three
+    # samples. That is the language the model is written in, not a translation
+    # of it, so a gap raised at one row would fire on every model ever read and
+    # teach a reader to skip the section. Two or more means somebody actually
+    # translated something, and then the names in this document are not the
+    # names all of its readers see.
+    ("tmschema_cultures", "translations", 2),
+    ("tmschema_variations", "column variations", 1),
 )
 
 #: What PBIXRay's `rls` frame cannot show, however well it is read. Its query
@@ -153,6 +166,9 @@ class PbixAdapter:
             _safe(raw, "tmschema_calculation_groups"),
             _safe(raw, "tmschema_calculation_items"),
         )
+        model.kpis = build_kpis(_safe(raw, "tmschema_kpis"))
+        model.object_permissions = build_object_permissions(_safe(raw, "ols"))
+        model.perspectives = build_perspectives(_safe(raw, "perspectives"))
         model.coverage_gaps = self._coverage_gaps(raw)
         resolve_table_dependencies(model)
         return model
@@ -211,7 +227,7 @@ class PbixAdapter:
     def _coverage_gaps(self, raw: PBIXRay) -> list[CoverageGap]:
         """Report model features present in the source but not yet extracted."""
         gaps: list[CoverageGap] = []
-        for attribute, label in _UNEXTRACTED_FEATURES:
+        for attribute, label, minimum in _UNEXTRACTED_FEATURES:
             frame = _safe(raw, attribute)
             if frame is None:
                 continue
@@ -219,7 +235,7 @@ class PbixAdapter:
                 count = len(frame)
             except TypeError:
                 continue
-            if count:
+            if count >= minimum:
                 gaps.append(
                     CoverageGap(
                         feature=label,
@@ -488,6 +504,102 @@ def build_calculation_groups(groups_frame, items_frame) -> list[CalculationGroup
             )
         )
     return out
+
+
+def build_kpis(frame) -> list[Kpi]:
+    """KPIs from PBIXRay's ``tmschema_kpis`` frame.
+
+    Columns come from that query: ``MeasureName``, ``TableName``,
+    ``TargetExpression``, ``StatusExpression``, ``TrendExpression`` and their
+    descriptions. Fingerprinted over the three expressions together, because
+    all three decide what the report calls good and none of them appear in the
+    measure's own DAX.
+    """
+    out: list[Kpi] = []
+    for row in _rows(frame):
+        table = str(row.get("TableName", "") or "").strip()
+        measure = str(row.get("MeasureName", "") or "").strip()
+        if not table or not measure:
+            continue
+        target = str(row.get("TargetExpression", "") or "").strip()
+        status = str(row.get("StatusExpression", "") or "").strip()
+        trend = str(row.get("TrendExpression", "") or "").strip()
+        out.append(
+            Kpi(
+                table=table,
+                measure=measure,
+                target_expression=target,
+                status_expression=status,
+                trend_expression=trend,
+                fingerprint=fingerprint_parts(table, measure, target, status, trend),
+                description=_text_or_none(row.get("Description")),
+                target_description=_text_or_none(row.get("TargetDescription")),
+                status_description=_text_or_none(row.get("StatusDescription")),
+            )
+        )
+    return out
+
+
+def build_object_permissions(frame) -> list[ObjectPermission]:
+    """Object-level security from PBIXRay's ``ols`` frame.
+
+    Columns ``RoleName``, ``TableName``, ``ColumnName``, ``Scope``,
+    ``Permission``. Rows whose permission is ``Default`` are dropped: that
+    value means "no OLS restriction", and it is the ordinary row-level case
+    already reported through `rls`. Keeping them would list every RLS role as
+    though it hid something.
+    """
+    out: list[ObjectPermission] = []
+    for row in _rows(frame):
+        role = str(row.get("RoleName", "") or "").strip()
+        table = str(row.get("TableName", "") or "").strip()
+        permission = str(row.get("Permission", "") or "").strip()
+        if not role or not table or not permission:
+            continue
+        if permission.casefold() == "default":
+            continue
+        out.append(
+            ObjectPermission(
+                role=role,
+                table=table,
+                column=_text_or_none(row.get("ColumnName")),
+                permission=permission,
+            )
+        )
+    return out
+
+
+def build_perspectives(frame) -> list[Perspective]:
+    """Perspectives from PBIXRay's consolidated ``perspectives`` frame.
+
+    One row per included object -- ``PerspectiveName``, ``ObjectType``,
+    ``TableName``, ``ObjectName`` -- rolled back up into one entry per
+    perspective here.
+    """
+    members: dict[str, list[PerspectiveMember]] = {}
+    for row in _rows(frame):
+        name = str(row.get("PerspectiveName", "") or "").strip()
+        if not name:
+            continue
+        members.setdefault(name, []).append(
+            PerspectiveMember(
+                object_kind=str(row.get("ObjectType", "") or "").strip() or "Object",
+                table=str(row.get("TableName", "") or "").strip(),
+                name=str(row.get("ObjectName", "") or "").strip(),
+            )
+        )
+
+    return [
+        Perspective(
+            name=name,
+            members=tuple(entries),
+            fingerprint=fingerprint_parts(
+                name,
+                *(f"{m.object_kind}:{m.table}:{m.name}" for m in entries),
+            ),
+        )
+        for name, entries in sorted(members.items())
+    ]
 
 
 def _text_or_none(value) -> str | None:

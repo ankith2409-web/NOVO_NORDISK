@@ -30,6 +30,10 @@ class ObjectKind(Enum):
     #: A calculation group item. Rewrites measures at query time, so a measure's
     #: documented expression is not the whole story wherever one applies.
     CALCULATION_ITEM = "calculation_item"
+    #: A KPI's target and thresholds. Its own node because it carries DAX the
+    #: measure it decorates does not, and moving a threshold changes which
+    #: figures a report calls acceptable while that measure stays identical.
+    KPI = "kpi"
 
 
 @dataclass(frozen=True)
@@ -206,6 +210,93 @@ class CalculationGroup:
 
 
 @dataclass(frozen=True)
+class Kpi:
+    """A measure tracked against a target, with status and trend thresholds.
+
+    The problem statement asks for KPIs by name, and a KPI is not the measure
+    it decorates: the measure says what the number *is*, the KPI says what the
+    business considers good. "Revenue" is a metric; "Revenue against a target
+    of 10M, red below 80%" is a requirement, and the thresholds live only
+    here. The expressions are DAX and are fingerprinted, because moving a
+    threshold changes which figures a report calls acceptable while the
+    measure behind it is untouched.
+    """
+
+    table: str
+    measure: str
+    target_expression: str
+    status_expression: str
+    trend_expression: str
+    fingerprint: str
+    description: str | None = None
+    target_description: str | None = None
+    status_description: str | None = None
+
+    @property
+    def qualified_name(self) -> str:
+        return f"{self.table}[{self.measure}]"
+
+
+@dataclass(frozen=True)
+class ObjectPermission:
+    """One column or table a role may or may not see at all.
+
+    Distinct from `TablePermission`, which filters *rows*. This hides the
+    object itself: a reader under this role does not merely see fewer rows,
+    they cannot see the field exists. A document describing a column that half
+    its audience cannot access is describing a model none of them use.
+    """
+
+    role: str
+    table: str
+    #: None when the whole table is secured rather than one column.
+    column: str | None
+    #: "None" hides the object; "Read" makes it explicitly visible.
+    permission: str
+
+    @property
+    def target(self) -> str:
+        return f"{self.table}[{self.column}]" if self.column else self.table
+
+    @property
+    def hides(self) -> bool:
+        return self.permission.casefold() == "none"
+
+
+@dataclass(frozen=True)
+class PerspectiveMember:
+    """One object exposed by a perspective."""
+
+    #: "Table", "Column", "Measure" or "Hierarchy".
+    object_kind: str
+    table: str
+    name: str
+
+
+@dataclass(frozen=True)
+class Perspective:
+    """A named subset of the model shown to one audience.
+
+    Worth documenting because a perspective is a scope statement: the Finance
+    view of a model is a different product from the Operations view, and a
+    requirements document that describes the union of both describes something
+    nobody is actually given.
+    """
+
+    name: str
+    members: tuple[PerspectiveMember, ...]
+    fingerprint: str
+
+    @property
+    def tables(self) -> tuple[str, ...]:
+        seen: list[str] = []
+        for member in self.members:
+            if member.table and member.table not in seen:
+                seen.append(member.table)
+        return tuple(seen)
+
+
+@dataclass(frozen=True)
 class CoverageGap:
     """A model feature the source reports but this adapter does not yet extract.
 
@@ -234,6 +325,9 @@ class SemanticModel:
     hierarchies: list[Hierarchy] = field(default_factory=list)
     roles: list[SecurityRole] = field(default_factory=list)
     calculation_groups: list[CalculationGroup] = field(default_factory=list)
+    kpis: list[Kpi] = field(default_factory=list)
+    object_permissions: list[ObjectPermission] = field(default_factory=list)
+    perspectives: list[Perspective] = field(default_factory=list)
     coverage_gaps: list[CoverageGap] = field(default_factory=list)
 
     def user_tables(self) -> list[Table]:
@@ -257,4 +351,6 @@ class SemanticModel:
             "calculation_items": sum(
                 len(group.items) for group in self.calculation_groups
             ),
+            "kpis": len(self.kpis),
+            "perspectives": len(self.perspectives),
         }

@@ -38,7 +38,11 @@ from concordance.model import (
     CoverageGap,
     Hierarchy,
     HierarchyLevel,
+    Kpi,
     Measure,
+    ObjectPermission,
+    Perspective,
+    PerspectiveMember,
     Relationship,
     SecurityRole,
     SemanticModel,
@@ -282,6 +286,14 @@ _DECLARATION_KEYWORDS = {
     "relationship", "model", "database", "role", "perspective", "culture",
     "annotation", "changedProperty", "calculationGroup", "calculationItem",
     "extendedProperty", "variation",
+    # A measure's KPI block and a perspective's membership. Without these the
+    # parser had no reason to treat them as declarations: `kpi` flattened its
+    # target and status expressions into the *measure's* properties, and
+    # `perspectiveTable Sales` -- no colon, no equals -- was skipped outright,
+    # so a perspective parsed with no members at all.
+    "kpi",
+    "perspectiveTable", "perspectiveColumn", "perspectiveMeasure",
+    "perspectiveHierarchy",
 }
 
 
@@ -325,6 +337,16 @@ _EXTRACTED_KINDS = frozenset(
         # with each item fingerprinted.
         "calculationGroup",
         "calculationItem",
+        # Object-level security: a column hidden outright rather than filtered.
+        "columnPermission",
+        # A measure's target and status thresholds, read into `model.kpis`.
+        "kpi",
+        # Perspectives and their membership, read into `model.perspectives`.
+        "perspective",
+        "perspectiveTable",
+        "perspectiveColumn",
+        "perspectiveMeasure",
+        "perspectiveHierarchy",
     }
 )
 
@@ -339,10 +361,6 @@ _STRUCTURAL_KINDS = frozenset(
 #: the gap affects them. A bare "not extracted" is true but useless: it does not
 #: say whether the documentation below it is merely thinner or actually wrong.
 _GAP_REASONS = {
-    "perspective": (
-        "perspectives are present; the objects each one exposes are not read, so "
-        "everything is documented as though every field were visible to everyone"
-    ),
     "culture": (
         "translations are present; only the base-language names are read, so "
         "names here may differ from what a user in another locale sees"
@@ -395,6 +413,7 @@ class TmdlAdapter:
         # Power BI export, inline in model.tmdl in a hand-written one -- so
         # they are found by walking rather than by expecting a fixed path.
         self._read_roles(definition, model)
+        self._read_perspectives(definition, model)
 
         model.coverage_gaps = self._coverage_gaps(definition)
 
@@ -494,6 +513,8 @@ class TmdlAdapter:
                 model.measures.append(
                     self._build_measure(node.name, measure, known)
                 )
+                for kpi in measure.child("kpi"):
+                    model.kpis.append(self._build_kpi(node.name, measure, kpi))
 
             for hierarchy in node.child("hierarchy"):
                 model.hierarchies.append(self._build_hierarchy(node.name, hierarchy))
@@ -542,8 +563,66 @@ class TmdlAdapter:
             description=node.description,
         )
 
+    def _build_kpi(self, table: str, measure: Node, node: Node) -> Kpi:
+        """A measure's KPI block: what the business considers a good number."""
+        target = (node.properties.get("targetExpression") or "").strip()
+        status = (node.properties.get("statusExpression") or "").strip()
+        trend = (node.properties.get("trendExpression") or "").strip()
+        return Kpi(
+            table=table,
+            measure=measure.name,
+            target_expression=target,
+            status_expression=status,
+            trend_expression=trend,
+            fingerprint=fingerprint_parts(table, measure.name, target, status, trend),
+            description=node.description,
+            target_description=node.properties.get("targetDescription"),
+            status_description=node.properties.get("statusDescription"),
+        )
+
+    def _read_perspectives(self, definition: Path, model: SemanticModel) -> None:
+        """Collect perspectives and the objects each one exposes."""
+        seen: set[str] = set()
+        for path in sorted(definition.rglob("*.tmdl")):
+            try:
+                nodes = parse(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError):
+                continue
+            for node in self._walk(nodes):
+                if node.kind != "perspective" or node.name in seen:
+                    continue
+                seen.add(node.name)
+                model.perspectives.append(self._build_perspective(node))
+
+    def _build_perspective(self, node: Node) -> Perspective:
+        members: list[PerspectiveMember] = []
+        for table in node.child("perspectiveTable"):
+            members.append(
+                PerspectiveMember(object_kind="Table", table=table.name, name=table.name)
+            )
+            for kind, label in (
+                ("perspectiveColumn", "Column"),
+                ("perspectiveMeasure", "Measure"),
+                ("perspectiveHierarchy", "Hierarchy"),
+            ):
+                for child in table.child(kind):
+                    members.append(
+                        PerspectiveMember(
+                            object_kind=label, table=table.name, name=child.name
+                        )
+                    )
+        return Perspective(
+            name=node.name,
+            members=tuple(members),
+            fingerprint=fingerprint_parts(
+                node.name,
+                *(f"{m.object_kind}:{m.table}:{m.name}" for m in members),
+            ),
+        )
+
     def _read_roles(self, definition: Path, model: SemanticModel) -> None:
         """Collect every security role in the definition, wherever it is written."""
+        self._object_permissions: list[ObjectPermission] = []
         seen: set[str] = set()
         for path in sorted(definition.rglob("*.tmdl")):
             try:
@@ -555,6 +634,7 @@ class TmdlAdapter:
                     continue
                 seen.add(node.name)
                 model.roles.append(self._build_role(node))
+        model.object_permissions = self._object_permissions
 
     def _walk(self, nodes: list[Node]):
         for node in nodes:
@@ -564,6 +644,17 @@ class TmdlAdapter:
     def _build_role(self, node: Node) -> SecurityRole:
         permissions: list[TablePermission] = []
         for permission in node.child("tablePermission"):
+            for column in permission.child("columnPermission"):
+                # `columnPermission Salary = None` hides the field outright --
+                # a different thing from filtering rows, and recorded apart.
+                self._object_permissions.append(
+                    ObjectPermission(
+                        role=node.name,
+                        table=permission.name,
+                        column=column.name,
+                        permission=(column.expression or "").strip() or "None",
+                    )
+                )
             expression = (permission.expression or "").strip()
             permissions.append(
                 TablePermission(

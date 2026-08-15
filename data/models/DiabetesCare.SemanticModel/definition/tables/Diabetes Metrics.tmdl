@@ -20,6 +20,18 @@ table 'Diabetes Metrics'
 		formatString: 0.0%
 		displayFolder: Cohort
 
+		/// Tracked against the cohort-wide rate: a subgroup materially above
+		/// the population baseline is the finding this report exists to
+		/// surface.
+		kpi
+			targetExpression = [Overall Diabetes Prevalence]
+			targetDescription: Cohort-wide prevalence
+			statusGraphic: Traffic Light - Single
+			statusExpression =
+				VAR Ratio = DIVIDE([Diabetes Prevalence], [Overall Diabetes Prevalence])
+				RETURN
+				    IF(Ratio <= 1, 1, IF(Ratio <= 1.25, 0, -1))
+
 	/// Prevalence against the whole cohort regardless of any slicer -- the
 	/// baseline a filtered prevalence is compared against.
 	measure 'Overall Diabetes Prevalence' = CALCULATE([Diabetes Prevalence], ALL(Patient))

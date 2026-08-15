@@ -96,9 +96,21 @@ def test_calculation_groups_stop_being_a_gap_once_they_are_read(
     ]
 
 
-def test_perspectives_are_reported(model_root: Path) -> None:
-    write(model_root, "perspectives.tmdl", "perspective Clinical\n\n\tperspectiveTable Patient\n")
-    assert gaps(model_root)["perspective"] == 1
+def test_perspectives_stop_being_a_gap_once_they_are_read(model_root: Path) -> None:
+    write(
+        model_root,
+        "perspectives.tmdl",
+        "perspective Clinical\n\n\tperspectiveTable Patient\n\n"
+        "\t\tperspectiveMeasure 'Patient Count'\n",
+    )
+    assert "perspective" not in gaps(model_root)
+
+    model = TmdlAdapter().extract(str(model_root))
+    assert [p.name for p in model.perspectives] == ["Clinical"]
+    # Membership, not just the name: a perspective whose contents are unknown
+    # says nothing about what its audience is actually shown.
+    assert model.perspectives[0].tables == ("Patient",)
+    assert {m.name for m in model.perspectives[0].members} == {"Patient", "Patient Count"}
 
 
 def test_translations_are_reported(model_root: Path) -> None:

@@ -24,7 +24,7 @@ untouched.
 
 | Feature | What it does | Where |
 |---|---|---|
-| **Model extraction** | Reads a `.pbix` file or a TMDL model folder into one internal representation: tables, columns, measures, relationships, hierarchies, row-level security roles, calculation groups, and the file/warehouse each table loads from together with the transformation steps applied on the way in | `concordance/adapters/` |
+| **Model extraction** | Reads a `.pbix` file or a TMDL model folder into one internal representation: tables, columns, measures, relationships, hierarchies, row-level and object-level security, calculation groups, KPI targets and thresholds, perspectives, and the file/warehouse each table loads from together with the transformation steps applied on the way in | `concordance/adapters/` |
 | **BRD/FRD generation** | Derives business and functional requirement statements from the model's structure. Each one carries the object(s) it was derived from and a SHA-256 fingerprint of the logic | `concordance/generate/` |
 | **Fingerprinting** | Canonicalizes DAX (via a hand-written lexer, not regex) before hashing, so reformatting a measure never looks like a change, but a changed filter or constant always does | `concordance/fingerprint.py`, `concordance/normalize/dax.py` |
 | **Drift detection** | Compares two versions of a model and reports what was added, removed, changed, or renamed — renames are *proven* by identical fingerprint, not guessed by name similarity — and which requirements that puts in question. Covers the three places a change moves every number while all measure fingerprints stay identical: an RLS filter, a calculation group item, and a table's load query | `concordance/drift/` |
@@ -274,7 +274,7 @@ Node required).
 
 ## 14. Testing
 
-**571 Python tests, 32 frontend tests.** Both suites are written against real behavior,
+**584 Python tests, 32 frontend tests.** Both suites are written against real behavior,
 not mocks of it wherever a real dependency is available — DuckDB stands in for a warehouse
 credential-free, and the fixture models in `data/models/` are real (if small) Power BI
 files, not synthetic data.
@@ -297,12 +297,12 @@ standard:
   repository. The `SqlAdapter` underneath is dialect-agnostic (via `sqlglot`), so adding
   Snowflake, Databricks or Redshift later is a new `from_x()` connector function against a
   stable interface, not new comparison logic.
-- **KPI objects, object-level security, perspectives, translations and column variations**
-  are detected and reported as coverage gaps but not interpreted — the tool says they
-  exist and what that means for the document's completeness, without reading their
-  contents. For `.pbix` specifically, a security role that filters no table is invisible
-  to the reader underneath, and model-level permissions are never surfaced; both are
-  stated as gaps rather than defaulted to a plausible value.
+- **Translations and column variations** are detected and reported as coverage gaps but
+  not interpreted. A model's single base culture is deliberately *not* counted as a
+  translation — a warning that fires on every model ever read is one nobody reads.
+  For `.pbix` specifically, a security role that filters no table is invisible to the
+  reader underneath, and model-level permissions are never surfaced; both are stated as
+  gaps rather than defaulted to a plausible value.
 - **No LLM in requirement generation**, by design (determinism and traceability).
   Sentences now vary with what each measure actually does, but the vocabulary is finite by
   construction; fluency is the price paid for a document that is byte-identical on every
