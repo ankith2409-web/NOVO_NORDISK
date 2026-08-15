@@ -21,32 +21,51 @@ from pbixray import PBIXRay
 from concordance.adapters.base import is_measure_container, resolve_table_dependencies
 from concordance.fingerprint import fingerprint_dax, fingerprint_parts, fingerprint_text
 from concordance.model import (
+    CalculationGroup,
+    CalculationItem,
     Column,
     CoverageGap,
     Hierarchy,
     HierarchyLevel,
     Measure,
     Relationship,
+    SecurityRole,
     SemanticModel,
     Table,
+    TablePermission,
 )
 from concordance.normalize.dax import extract_references
 from concordance.normalize.mquery import canonicalise as canonicalise_m
 
-#: Model features PBIXRay surfaces that this adapter does not yet turn into
-#: graph objects. All three sample models report zero rows *and no columns* for
-#: every one of these, so their schemas cannot be learned from the data on hand
-#: -- writing extraction code against a guessed column layout would be exactly
-#: the kind of confident-but-wrong work this project is meant to catch. Instead
-#: their presence is counted and reported, so an unseen model that does use them
-#: produces a visible gap rather than a silently incomplete graph.
+#: Model features PBIXRay surfaces that this adapter does not turn into graph
+#: objects. Every sample model reports zero rows *and no columns* for these, so
+#: their layout cannot be learned by inspecting the data on hand -- their
+#: presence is counted and reported instead, so an unseen model that does use
+#: them produces a visible gap rather than a silently incomplete graph.
+#:
+#: RLS and calculation groups used to be on this list for the same reason. They
+#: came off it once it was clear the schema did not have to be guessed at all:
+#: PBIXRay builds these frames from SQL written out in its own source, so the
+#: column names are a published contract rather than an inference from whatever
+#: sample happened to be at hand. Extraction is written against that contract
+#: and tested against frames shaped by it.
 _UNEXTRACTED_FEATURES: tuple[tuple[str, str], ...] = (
     ("tmschema_kpis", "KPI objects"),
-    ("rls", "row-level security roles"),
     ("ols", "object-level security"),
-    ("tmschema_calculation_groups", "calculation groups"),
-    ("tmschema_calculation_items", "calculation items"),
     ("tmschema_perspectives", "perspectives"),
+)
+
+#: What PBIXRay's `rls` frame cannot show, however well it is read. Its query
+#: joins TablePermission, so a role that filters no table produces no row at
+#: all, and it never selects Role.ModelPermission. Both are stated as gaps
+#: whenever RLS is present rather than papered over with a default: a document
+#: claiming to list every role, from a source that structurally cannot show
+#: the filter-less ones, is exactly the overstatement this project exists to
+#: catch.
+_RLS_RESIDUAL_GAP = (
+    "roles that filter no table, and every role's model-level permission, are "
+    "not visible through this file format's reader -- table filters are read "
+    "in full, so a role appears here only if it restricts at least one table"
 )
 
 #: Power BI creates a hidden date table per date column, plus a template table.
@@ -129,6 +148,11 @@ class PbixAdapter:
 
         model.relationships = self._build_relationships(raw)
         model.hierarchies = self._build_hierarchies(raw)
+        model.roles = build_roles(_safe(raw, "rls"))
+        model.calculation_groups = build_calculation_groups(
+            _safe(raw, "tmschema_calculation_groups"),
+            _safe(raw, "tmschema_calculation_items"),
+        )
         model.coverage_gaps = self._coverage_gaps(raw)
         resolve_table_dependencies(model)
         return model
@@ -203,6 +227,22 @@ class PbixAdapter:
                         reason="present in the model but not yet extracted by this adapter",
                     )
                 )
+
+        # Reported even though RLS *is* extracted now, because what is read is
+        # not everything there is. See `_RLS_RESIDUAL_GAP`.
+        rls = _safe(raw, "rls")
+        try:
+            present = len(rls) if rls is not None else 0
+        except TypeError:
+            present = 0
+        if present:
+            gaps.append(
+                CoverageGap(
+                    feature="row-level security role metadata",
+                    count=present,
+                    reason=_RLS_RESIDUAL_GAP,
+                )
+            )
         return gaps
 
     def _power_query_by_table(self, raw: PBIXRay) -> dict[str, str]:
@@ -342,6 +382,129 @@ class PbixAdapter:
                 )
             )
         return out
+
+
+def build_roles(frame) -> list[SecurityRole]:
+    """Security roles from PBIXRay's ``rls`` frame.
+
+    One row per (role, table) permission -- columns ``RoleName``,
+    ``RoleDescription``, ``TableName``, ``FilterExpression`` -- so rows are
+    grouped back into a role here. Taken from the query in PBIXRay's own
+    source rather than inferred from a sample, which is what makes this
+    extraction rather than guesswork.
+
+    A module-level function, not a method, so it can be exercised against
+    frames of the documented shape without constructing a PBIXRay -- none of
+    the sample .pbix files in this repository define any roles.
+    """
+    permissions: dict[str, list[TablePermission]] = {}
+    descriptions: dict[str, str | None] = {}
+
+    for row in _rows(frame):
+        role = str(row.get("RoleName", "") or "").strip()
+        table = str(row.get("TableName", "") or "").strip()
+        if not role or not table:
+            continue
+        expression = str(row.get("FilterExpression", "") or "").strip()
+        descriptions.setdefault(role, _text_or_none(row.get("RoleDescription")))
+        permissions.setdefault(role, []).append(
+            TablePermission(
+                table=table,
+                expression=expression,
+                fingerprint=(
+                    fingerprint_dax(expression)
+                    if expression
+                    else fingerprint_parts(role, table)
+                ),
+            )
+        )
+
+    return [
+        SecurityRole(
+            name=role,
+            # PBIXRay's query never selects Role.ModelPermission, so this is
+            # not read from the file. Reported as a coverage gap rather than
+            # presented as though it had been -- see `_RLS_RESIDUAL_GAP`.
+            model_permission="",
+            permissions=tuple(entries),
+            fingerprint=fingerprint_parts(role, *(p.fingerprint for p in entries)),
+            description=descriptions.get(role),
+        )
+        for role, entries in sorted(permissions.items())
+    ]
+
+
+def build_calculation_groups(groups_frame, items_frame) -> list[CalculationGroup]:
+    """Calculation groups and their items, joined on the table they sit on.
+
+    PBIXRay exposes the group (``TableName``, ``Precedence``, ``Description``)
+    and its items (``TableName``, ``Name``, ``Expression``, ``Ordinal``) as two
+    frames. Items carry ``TableName`` themselves, so the join is by that rather
+    than by CalculationGroupID -- the id is an internal key with no meaning
+    outside the file, and the name is what everything downstream addresses.
+    """
+    items: dict[str, list[CalculationItem]] = {}
+    for row in _rows(items_frame):
+        table = str(row.get("TableName", "") or "").strip()
+        name = str(row.get("Name", "") or "").strip()
+        if not table or not name:
+            continue
+        expression = str(row.get("Expression", "") or "").strip()
+        items.setdefault(table, []).append(
+            CalculationItem(
+                name=name,
+                expression=expression,
+                fingerprint=(
+                    fingerprint_dax(expression)
+                    if expression
+                    else fingerprint_parts(table, name)
+                ),
+                ordinal=int(row.get("Ordinal", 0) or 0),
+                # Only an id for the format definition is exposed, never the
+                # expression itself, so there is nothing honest to put here.
+                format_expression=None,
+            )
+        )
+    for entries in items.values():
+        entries.sort(key=lambda item: (item.ordinal, item.name))
+
+    out: list[CalculationGroup] = []
+    seen: set[str] = set()
+    for row in _rows(groups_frame):
+        table = str(row.get("TableName", "") or "").strip()
+        if not table or table in seen:
+            continue
+        seen.add(table)
+        entries = tuple(items.get(table, ()))
+        out.append(
+            CalculationGroup(
+                table=table,
+                items=entries,
+                fingerprint=fingerprint_parts(
+                    table, *(item.fingerprint for item in entries)
+                ),
+                precedence=_int_or_none(row.get("Precedence")),
+                description=_text_or_none(row.get("Description")),
+            )
+        )
+    return out
+
+
+def _text_or_none(value) -> str | None:
+    """A frame cell as text, treating pandas' NaN and empty alike as absent."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _int_or_none(value) -> int | None:
+    try:
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _safe(raw: PBIXRay, attribute: str):

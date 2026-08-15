@@ -70,7 +70,10 @@ requirements need a reference update, not re-validation.
 
 ## 4. Results on real models
 
-Six real models were used, in both Power BI formats — nothing synthetic.
+Seven models were used, in both Power BI formats. Six mirror real structure; the seventh,
+`DiabetesCare`, is built on a real public dataset — 768 patient records from the Pima
+Indians Diabetes study — kept with its known missing-value encoding intact rather than
+cleaned.
 
 **Drift, `ClinicalTrialSafety` v1 → v2:** 1 added, 1 removed, 4 changed, 103 unchanged —
 and **8 requirements identified as now in question**. Listing changed objects is what any
@@ -100,11 +103,14 @@ name, below any workable threshold.
 
 This is the part that is hardest to demo and matters most in a regulated industry.
 
-- **It says what it did not read.** Roles, calculation groups, perspectives and
-  translations are counted and named, with the consequence stated — an unread calculation
-  group means a measure's documented expression is not the whole story where one applies.
-  This is derived from the files rather than a hand-maintained list, so a construct the
-  code has never heard of is still counted.
+- **It says what it did not read.** KPI objects, object-level security, perspectives and
+  translations are counted and named, with the consequence of each stated. This is derived
+  from the files rather than a hand-maintained list, which cuts both ways: a construct the
+  code has never heard of is still counted, and extending extraction shrinks the
+  disclaimer automatically — reading row-level security and calculation groups removed
+  them from the list with no list to edit. Where a format's reader is the limit rather
+  than this code, that is said too: a `.pbix` security role filtering no table cannot be
+  seen at all, so it is reported as a gap instead of being quietly absent.
 - **It marks what it inferred.** A statement derived from structure rather than declared
   by the model is flagged low-confidence and queued for a person, never asserted quietly.
 - **It lets a sign-off expire.** A review decision is bound to the fingerprints it was
@@ -116,7 +122,7 @@ This is the part that is hardest to demo and matters most in a regulated industr
 
 ## 6. Engineering
 
-- **10,713 lines of Python, 4,081 of TypeScript, 591 automated tests** (559 Python, 32
+- **10,713 lines of Python, 4,081 of TypeScript, 603 automated tests** (571 Python, 32
   frontend). Tests were mutation-checked — each confirmed to fail when the logic it covers
   is deliberately broken, because a test that cannot fail protects nothing and a green run
   does not show that. The check applies to the load-bearing claims as well as the frontend:

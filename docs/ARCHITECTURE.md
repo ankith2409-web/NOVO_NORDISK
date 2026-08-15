@@ -93,9 +93,13 @@ generated document to disagree about the same model.
 Three adapters, one shared output shape (`SemanticModel`):
 
 - **`pbix.py`** — reads Power BI's compiled `.pbix` format via `pbixray`. Also extracts
-  each table's Power Query (M) source text and the model's coverage gaps (features present
-  in the file that this adapter does not yet turn into graph objects — perspectives,
-  translations, column variations — reported, never silently dropped).
+  each table's Power Query (M) source text, row-level security roles, calculation groups,
+  and the model's coverage gaps (features present in the file that this adapter does not
+  turn into graph objects — KPI objects, object-level security, perspectives — reported,
+  never silently dropped). RLS and calculation groups are read against the SQL PBIXRay
+  publishes in its own source rather than against a layout guessed from a sample, which is
+  what made extracting them defensible; what that reader structurally cannot show — a role
+  filtering no table, and model-level permissions — is still reported as a gap.
 - **`tmdl.py`** — a hand-written parser for Microsoft's TMDL text format (indentation and
   keyword-based, ~600 lines, no third-party TMDL library exists). Recently extended to
   derive coverage gaps the same way `pbix.py` does, by walking every declaration in the
@@ -270,7 +274,7 @@ Node required).
 
 ## 14. Testing
 
-**559 Python tests, 32 frontend tests.** Both suites are written against real behavior,
+**571 Python tests, 32 frontend tests.** Both suites are written against real behavior,
 not mocks of it wherever a real dependency is available — DuckDB stands in for a warehouse
 credential-free, and the fixture models in `data/models/` are real (if small) Power BI
 files, not synthetic data.
@@ -293,9 +297,12 @@ standard:
   repository. The `SqlAdapter` underneath is dialect-agnostic (via `sqlglot`), so adding
   Snowflake, Databricks or Redshift later is a new `from_x()` connector function against a
   stable interface, not new comparison logic.
-- **Perspectives, translations and column variations** are detected and reported as
-  coverage gaps but not interpreted — the tool says they exist and what that means for
-  the document's completeness, without reading their contents.
+- **KPI objects, object-level security, perspectives, translations and column variations**
+  are detected and reported as coverage gaps but not interpreted — the tool says they
+  exist and what that means for the document's completeness, without reading their
+  contents. For `.pbix` specifically, a security role that filters no table is invisible
+  to the reader underneath, and model-level permissions are never surfaced; both are
+  stated as gaps rather than defaulted to a plausible value.
 - **No LLM in requirement generation**, by design (determinism and traceability).
   Sentences now vary with what each measure actually does, but the vocabulary is finite by
   construction; fluency is the price paid for a document that is byte-identical on every

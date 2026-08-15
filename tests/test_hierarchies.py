@@ -154,11 +154,28 @@ def test_unextracted_features_are_reported_when_present() -> None:
     reported = {g.feature: g.count for g in gaps}
 
     assert reported["KPI objects"] == 2
-    assert reported["row-level security roles"] == 1
-    assert reported["calculation groups"] == 1
     # Empty and absent tables are not gaps -- nothing was lost.
     assert "object-level security" not in reported
     assert "perspectives" not in reported
+
+    # Calculation groups are extracted now, so claiming they are unread would
+    # be the mirror image of the original bug: a disclaimer that outlived what
+    # it disclaimed.
+    assert "calculation groups" not in reported
+
+
+def test_rls_still_reports_what_this_format_cannot_show() -> None:
+    """Reading the filters does not make the picture complete, and the gap has
+    to say which half is missing. PBIXRay's query joins TablePermission, so a
+    role restricting no table produces no row at all, and Role.ModelPermission
+    is never selected -- a document listing "every role" from that source would
+    be overstating what it knows."""
+    gaps = PbixAdapter()._coverage_gaps(_RawWithUnextractedFeatures())
+    residual = next(g for g in gaps if g.feature == "row-level security role metadata")
+
+    assert residual.count == 1
+    assert "filter no table" in residual.reason
+    assert "model-level permission" in residual.reason
 
 
 @pytest.mark.parametrize("name", SAMPLES)

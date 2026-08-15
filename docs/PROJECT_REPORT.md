@@ -131,7 +131,7 @@ piece of work against a stable interface rather than a redesign.
 
 ## 5. Verification
 
-- **559 automated Python tests, 32 automated frontend tests**, all passing.
+- **571 automated Python tests, 32 automated frontend tests**, all passing.
 - Tests for the load-bearing claims were deliberately broken once and confirmed to fail,
   to prove they actually catch the problems they claim to — including the one asserting a
   reviewer cannot sign off under another reviewer's name.
@@ -165,9 +165,11 @@ KPIs are not currently represented in any sample model.
 
 ## 7. Known limitations, stated plainly
 
-- Perspectives, translations and column variations are detected and reported as present,
-  but their contents are not read. The tool says so on every model it processes rather
-  than leaving a reader to assume they were covered.
+- KPI objects, object-level security, perspectives, translations and column variations are
+  detected and reported as present, but their contents are not read. The tool says so on
+  every model it processes rather than leaving a reader to assume they were covered. In
+  the `.pbix` format specifically, a security role that filters no table cannot be seen at
+  all by the underlying reader — reported as a gap rather than quietly omitted.
 - Requirement wording is generated from rules rather than by a language model. Sentences
   now vary according to what each measure actually does, but the vocabulary is finite by
   construction — this buys reproducibility and traceability at some cost in fluency, and
