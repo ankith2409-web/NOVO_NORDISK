@@ -104,6 +104,7 @@ class RequirementDeriver:
         out.extend(self._from_calculated_columns())
         out.extend(self._from_roles())
         out.extend(self._from_calculation_groups())
+        out.extend(self._from_load_steps())
         out.extend(self._from_model_shape())
         # Sorted for deterministic document order; ids stay stable regardless.
         return sorted(out, key=lambda r: (r.kind.value, r.category, r.id))
@@ -624,6 +625,94 @@ class RequirementDeriver:
 
         return out
 
+    # -- how each table is loaded ----------------------------------------------
+
+    def _from_load_steps(self) -> list[Requirement]:
+        """What the Power Query does between the source and the table.
+
+        The finding worth surfacing is narrower than "here are the steps": some
+        steps change how many rows survive. A table loaded from a file and then
+        filtered is not that file, and anyone reconciling a figure against the
+        source directly will get a different number with nothing in the
+        document to explain the difference. Naming those steps specifically is
+        the difference between a list and a warning.
+        """
+        from concordance.normalize.mquery import extract_steps
+
+        out: list[Requirement] = []
+
+        for table in sorted(self.model.user_tables(), key=lambda t: t.name):
+            if not table.power_query:
+                continue
+            steps = extract_steps(table.power_query)
+            evidence = (
+                Evidence(
+                    node_id=table_id(table.name),
+                    fingerprint=table.fingerprint,
+                    detail=table.power_query.strip(),
+                ),
+            )
+            reshaping = [s for s in steps if s.changes_row_count]
+
+            # Effect first, step name in brackets: the sentence is read for what
+            # the query does, and the step names are the reference someone needs
+            # only once they open the query itself.
+            described = [f"{s.effect} (**{s.name}**)" for s in steps if s.effect]
+            unknown = [s for s in steps if not s.effect]
+            listing = _join(described) if described else ""
+            note = ""
+            if unknown:
+                # Named rather than omitted: a step this module cannot describe
+                # is still a step that runs, and silently listing only the
+                # recognised ones would misrepresent the query as shorter than
+                # it is.
+                note = (
+                    f" {len(unknown)} further step(s) apply functions this tool does "
+                    f"not describe ({_join(sorted({s.function or s.name for s in unknown}))}); "
+                    f"the query itself is recorded in the evidence."
+                )
+
+            if steps:
+                statement = (
+                    f"**{table.name}** shall be populated by the {len(steps)}-step "
+                    f"Power Query recorded in the evidence for this requirement"
+                    + (f", which in order {listing}" if listing else "")
+                    + f".{note}"
+                )
+            else:
+                # Legal M: a query can be one expression with no `let` block.
+                # Still worth a requirement, so every table loaded from
+                # somewhere has exactly one statement covering how.
+                statement = (
+                    f"**{table.name}** shall be populated by the single-expression "
+                    f"Power Query recorded in the evidence for this requirement."
+                )
+            if reshaping:
+                statement += (
+                    f" Because {_join(f'**{s.name}**' for s in reshaping)} can change "
+                    f"how many rows survive, this table is not a row-for-row copy of "
+                    f"its source and figures reconciled directly against that source "
+                    f"may legitimately differ."
+                )
+
+            out.append(
+                Requirement(
+                    id=f"REQ-F-{_identity('load', table.name)}",
+                    kind=Kind.FUNCTIONAL,
+                    category="Data acquisition",
+                    statement=statement,
+                    rationale=(
+                        "The M query is the contract with the upstream system: it "
+                        "determines which rows and columns reach the model, so a "
+                        "change to it changes every metric computed over this table."
+                    ),
+                    confidence=Confidence.HIGH,
+                    evidence=evidence,
+                )
+            )
+
+        return out
+
     # -- overall shape ---------------------------------------------------------
 
     def _from_model_shape(self) -> list[Requirement]:
@@ -667,36 +756,12 @@ class RequirementDeriver:
                 )
             )
 
-        sourced = [t for t in self.model.tables if t.power_query and not t.is_system]
-        if sourced:
-            out.append(
-                Requirement(
-                    # Same reasoning as the Scope requirement above: singleton
-                    # per model, so the file name buys no uniqueness and only
-                    # costs stability.
-                    id=f"REQ-F-{_identity('ingest')}",
-                    kind=Kind.FUNCTIONAL,
-                    category="Data acquisition",
-                    statement=(
-                        f"{len(sourced)} tables shall be populated by their recorded "
-                        f"Power Query (M) transformations, which define the source "
-                        f"system, filtering and shaping applied before load."
-                    ),
-                    rationale=(
-                        "The M queries are the contract with upstream systems; a change "
-                        "there changes what data reaches every downstream metric."
-                    ),
-                    confidence=Confidence.HIGH,
-                    evidence=tuple(
-                        Evidence(
-                            node_id=table_id(t.name),
-                            fingerprint=t.fingerprint,
-                            detail=f"Power Query defined for {t.name}",
-                        )
-                        for t in sorted(sourced, key=lambda t: t.name)
-                    ),
-                )
-            )
+        # The model-wide "N tables are populated by their Power Query" statement
+        # that used to live here is gone. It claimed the M "defines the source
+        # system, filtering and shaping applied before load" while reading none
+        # of it, and `_from_load_steps` now says that per table from the steps
+        # actually parsed -- a summary asserting what a real requirement states
+        # is duplication in the best case and a stale claim in the worst.
 
         # Anything the extractor could not cover is stated as a documented gap
         # rather than left for a reader to assume was absent.

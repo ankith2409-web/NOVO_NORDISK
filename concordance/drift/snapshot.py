@@ -163,7 +163,7 @@ def take(graph: SemanticGraph, label: str = "") -> Snapshot:
 
 def _detail_of(data: dict[str, Any]) -> str:
     """The human-readable form of whatever this object's fingerprint covers."""
-    for key in ("expression", "path"):
+    for key in ("expression", "path", "power_query"):
         value = data.get(key)
         if value:
             return str(value).strip()

@@ -302,6 +302,195 @@ def extract_sources(m: str) -> tuple[SourceReference, ...]:
     return tuple(found)
 
 
+def canonicalise(m: str) -> str:
+    """An M query reduced to the form that decides whether it is the same query.
+
+    The same guarantee `normalize.dax` gives DAX, for the same reason: a query
+    reindented or recommented has not changed what it loads, and reporting it
+    as drift trains people to ignore drift. Comments and whitespace go; string
+    literals are preserved exactly, because a path or a server name differing
+    by a space is a genuinely different source.
+    """
+    return " ".join(
+        token.raw
+        for token in lex(m)
+        if token.kind not in (Kind.WS, Kind.COMMENT)
+    )
+
+
+@dataclass(frozen=True)
+class Step:
+    """One binding in an M query's ``let`` block -- an applied step.
+
+    What a step *is* matters to a requirements document for a reason the
+    source alone does not cover: a table loaded from ``patients.csv`` and then
+    filtered is not ``patients.csv``. Anyone reconciling a figure against the
+    source file will get a different number and have nothing in the document
+    explaining why. The steps are where that explanation lives.
+    """
+
+    ordinal: int
+    name: str
+    #: The outermost M function the step applies, when it applies a named one.
+    function: str
+    #: The binding's right-hand side as written.
+    expression: str
+    #: Plain-language effect, empty when the function is not one we describe.
+    effect: str
+    #: Whether this step can change how many rows the table has. The single
+    #: most consequential property of a step for anyone comparing the table
+    #: against its source.
+    changes_row_count: bool = False
+
+
+#: M function -> what it does, in a reader's terms. A fixed list for the same
+#: reason `_CONNECTORS` is one: a confident wrong description of a
+#: transformation is worse than admitting the step was not recognised.
+_EFFECTS: dict[str, tuple[str, bool]] = {
+    # (description, changes_row_count)
+    "Table.SelectRows": ("filters rows to those matching a condition", True),
+    "Table.Distinct": ("removes duplicate rows", True),
+    "Table.FirstN": ("keeps only the first N rows", True),
+    "Table.Skip": ("discards leading rows", True),
+    "Table.Range": ("keeps a range of rows", True),
+    "Table.RemoveLastN": ("discards trailing rows", True),
+    "Table.Group": ("groups rows and aggregates within each group", True),
+    "Table.Combine": ("appends the rows of another query", True),
+    "Table.Join": ("joins another query, which can drop or duplicate rows", True),
+    "Table.NestedJoin": ("joins another query as a nested column", True),
+    "Table.ExpandTableColumn": ("expands a nested join, which can duplicate rows", True),
+    "Table.SelectColumns": ("keeps only the named columns", False),
+    "Table.RemoveColumns": ("removes columns", False),
+    "Table.RenameColumns": ("renames columns", False),
+    "Table.ReorderColumns": ("reorders columns", False),
+    "Table.TransformColumnTypes": ("sets the data type of columns", False),
+    "Table.TransformColumns": ("transforms column values", False),
+    "Table.AddColumn": ("adds a column computed from the others", False),
+    "Table.AddIndexColumn": ("adds a sequential index column", False),
+    "Table.ReplaceValue": ("replaces matching values", False),
+    # Not flagged as changing the row count, though strictly they move one row
+    # across the header boundary. The flag exists to warn that a table is not
+    # its source; promoting a header row is the expected shape of reading a
+    # file, and listing it beside a real filter would dilute the warning into
+    # noise that appears on almost every query.
+    "Table.PromoteHeaders": ("promotes the first row to column headers", False),
+    "Table.DemoteHeaders": ("demotes the header row into the data", False),
+    "Table.Sort": ("sorts rows", False),
+    "Table.Pivot": ("pivots values into columns", True),
+    "Table.Unpivot": ("unpivots columns into rows", True),
+    "Table.UnpivotOtherColumns": ("unpivots columns into rows", True),
+    "Table.FillDown": ("fills blank values downward", False),
+    "Table.FillUp": ("fills blank values upward", False),
+    "Csv.Document": ("parses the bytes as delimited text", False),
+    "Excel.Workbook": ("reads the workbook's sheets and tables", False),
+    "Json.Document": ("parses the bytes as JSON", False),
+    "Xml.Tables": ("parses the bytes as XML", False),
+    "File.Contents": ("reads the file's bytes", False),
+    "Value.NativeQuery": ("runs a query written by hand against the source", False),
+}
+
+
+def extract_steps(m: str) -> tuple[Step, ...]:
+    """The applied steps of a query's ``let`` block, in order.
+
+    Returns an empty tuple for a query with no ``let`` -- a single-expression
+    query is legal M and simply has no steps to name. As with
+    ``extract_sources``, a step whose function is not in ``_EFFECTS`` is
+    reported with the function named and no description, rather than dropped
+    or guessed at.
+    """
+    tokens = lex(m)
+    significant = [
+        (index, token)
+        for index, token in enumerate(tokens)
+        if token.kind not in (Kind.WS, Kind.COMMENT)
+    ]
+
+    start = next(
+        (
+            position
+            for position, (_, token) in enumerate(significant)
+            if token.kind is Kind.IDENT and token.raw == "let"
+        ),
+        None,
+    )
+    if start is None:
+        return ()
+
+    steps: list[Step] = []
+    position = start + 1
+    while position + 1 < len(significant):
+        _, name_token = significant[position]
+        if name_token.kind is not Kind.IDENT or name_token.raw == "in":
+            break
+        if significant[position + 1][1].raw != "=":
+            break
+
+        # Everything up to this binding's own comma. Depth-tracked so the
+        # commas inside a record, a list or a nested call -- which is most of
+        # them -- do not end the step early.
+        depth = 0
+        cursor = position + 2
+        first_index = significant[cursor][0] if cursor < len(significant) else None
+        end_index = len(tokens)
+        end_position = len(significant)
+        while cursor < len(significant):
+            index, token = significant[cursor]
+            if token.kind is Kind.OP:
+                if token.raw in "([{":
+                    depth += 1
+                elif token.raw in ")]}":
+                    depth -= 1
+                elif token.raw == "," and depth == 0:
+                    end_index, end_position = index, cursor + 1
+                    break
+            elif token.kind is Kind.IDENT and token.raw == "in" and depth == 0:
+                end_index, end_position = index, cursor
+                break
+            cursor += 1
+        else:
+            end_position = len(significant)
+
+        body = significant[position + 2 : (end_position if end_position <= len(significant) else len(significant))]
+        function = _applied_function([t for _, t in body])
+        description, moves_rows = _EFFECTS.get(function, ("", False))
+        steps.append(
+            Step(
+                ordinal=len(steps),
+                name=name_token.value,
+                function=function,
+                expression=(
+                    "".join(t.raw for t in tokens[first_index:end_index]).strip()
+                    if first_index is not None
+                    else ""
+                ),
+                effect=description,
+                changes_row_count=moves_rows,
+            )
+        )
+
+        if end_position >= len(significant):
+            break
+        position = end_position
+
+    return tuple(steps)
+
+
+def _applied_function(body: list[Token]) -> str:
+    """The outermost named function a step applies.
+
+    The first identifier that is actually *called* -- followed by an open
+    paren. In M's applied-step style that is the operation the step performs;
+    anything deeper is an argument to it.
+    """
+    for index, token in enumerate(body):
+        if token.kind is not Kind.IDENT or "." not in token.value:
+            continue
+        if index + 1 < len(body) and body[index + 1].raw == "(":
+            return token.value
+    return ""
+
+
 def _first_string_argument(tokens: list[Token], open_paren: int) -> str | None:
     """The first string literal in this call's own argument list.
 

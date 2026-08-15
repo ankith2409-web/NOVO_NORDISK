@@ -108,6 +108,11 @@ class SemanticGraph:
                 # such a table has no way to tell it apart from real data.
                 is_measure_only=table.is_measure_only,
                 has_power_query=table.power_query is not None,
+                # Carried so a snapshot's `detail` can show the query a table's
+                # fingerprint is taken over. Without it a changed load query
+                # reports "before: Patient / after: Patient" -- correct, and
+                # useless to the person deciding whether it matters.
+                power_query=table.power_query,
             )
             self._add_sources(table)
 

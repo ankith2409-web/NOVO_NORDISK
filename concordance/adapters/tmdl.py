@@ -46,6 +46,7 @@ from concordance.model import (
     TablePermission,
 )
 from concordance.normalize.dax import extract_references
+from concordance.normalize.mquery import canonicalise as canonicalise_m
 
 _FENCE = "```"
 
@@ -441,10 +442,22 @@ class TmdlAdapter:
             columns = node.child("column")
             measures = node.child("measure")
 
+            power_query = self._partition_source(node)
             model.tables.append(
                 Table(
                     name=node.name,
-                    fingerprint=fingerprint_text(node.name),
+                    # Over the load query as well as the name. A table's name
+                    # alone was the whole fingerprint, which meant editing the
+                    # M -- changing which rows reach every downstream metric --
+                    # was invisible to drift, while the requirement generated
+                    # from it claimed the M "defines the source system,
+                    # filtering and shaping applied before load". Canonicalised
+                    # first, so reindenting a query is still not a change.
+                    fingerprint=(
+                        fingerprint_parts(node.name, canonicalise_m(power_query))
+                        if power_query
+                        else fingerprint_text(node.name)
+                    ),
                     is_system=False,  # TMDL models do not carry auto date tables
                     is_measure_only=is_measure_container(
                         has_measures=bool(measures),
@@ -452,7 +465,7 @@ class TmdlAdapter:
                             1 for c in columns if not c.properties.get("isHidden")
                         ),
                     ),
-                    power_query=self._partition_source(node),
+                    power_query=power_query,
                 )
             )
 
