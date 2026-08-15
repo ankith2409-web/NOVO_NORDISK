@@ -24,6 +24,7 @@ from concordance.model import (
     CalculationGroup,
     CalculationItem,
     Column,
+    ColumnVariation,
     CoverageGap,
     Hierarchy,
     HierarchyLevel,
@@ -65,7 +66,20 @@ _UNEXTRACTED_FEATURES: tuple[tuple[str, str, int], ...] = (
     # translated something, and then the names in this document are not the
     # names all of its readers see.
     ("tmschema_cultures", "translations", 2),
-    ("tmschema_variations", "column variations", 1),
+)
+
+#: Translations stop here deliberately. The frame carries `ObjectType` as a
+#: bare integer and `ObjectID` as a key into a different table per type, and
+#: PBIXRay publishes no mapping for that enum -- unlike every other construct
+#: read here, whose columns come from SQL in its own source. Guessing which
+#: integer means "measure" would attach translated names to the wrong objects,
+#: and a document confidently calling one measure by another's French name is
+#: worse than one that says it did not read the translations.
+_TRANSLATION_GAP = (
+    "translated object names are present but not attached to their objects: the "
+    "reader exposes the target as an untyped id and publishes no mapping for it, "
+    "so which name belongs to which measure cannot be established without "
+    "guessing"
 )
 
 #: What PBIXRay's `rls` frame cannot show, however well it is read. Its query
@@ -161,7 +175,10 @@ class PbixAdapter:
 
         model.relationships = self._build_relationships(raw)
         model.hierarchies = self._build_hierarchies(raw)
-        model.roles = build_roles(_safe(raw, "rls"))
+        model.roles = _with_members(
+            build_roles(_safe(raw, "rls")),
+            members_by_role(_safe(raw, "tmschema_role_memberships")),
+        )
         model.calculation_groups = build_calculation_groups(
             _safe(raw, "tmschema_calculation_groups"),
             _safe(raw, "tmschema_calculation_items"),
@@ -169,6 +186,9 @@ class PbixAdapter:
         model.kpis = build_kpis(_safe(raw, "tmschema_kpis"))
         model.object_permissions = build_object_permissions(_safe(raw, "ols"))
         model.perspectives = build_perspectives(_safe(raw, "perspectives"))
+        model.variations = build_variations(
+            _safe(raw, "tmschema_variations"), _safe(raw, "tmschema_hierarchies")
+        )
         model.coverage_gaps = self._coverage_gaps(raw)
         resolve_table_dependencies(model)
         return model
@@ -243,6 +263,20 @@ class PbixAdapter:
                         reason="present in the model but not yet extracted by this adapter",
                     )
                 )
+
+        translations = _safe(raw, "tmschema_translations")
+        try:
+            translated = len(translations) if translations is not None else 0
+        except TypeError:
+            translated = 0
+        if translated:
+            gaps.append(
+                CoverageGap(
+                    feature="object name translations",
+                    count=translated,
+                    reason=_TRANSLATION_GAP,
+                )
+            )
 
         # Reported even though RLS *is* extracted now, because what is read is
         # not everything there is. See `_RLS_RESIDUAL_GAP`.
@@ -506,6 +540,59 @@ def build_calculation_groups(groups_frame, items_frame) -> list[CalculationGroup
     return out
 
 
+def build_variations(frame, hierarchies_frame=None) -> list[ColumnVariation]:
+    """Column variations from PBIXRay's ``tmschema_variations`` frame.
+
+    Columns ``TableName``, ``ColumnName``, ``Name``, ``DefaultHierarchyID``,
+    ``IsDefault``. The hierarchy id is resolved against
+    ``tmschema_hierarchies`` when that frame is supplied; unresolved, it is
+    left as None rather than reported as a numeric id nobody can act on.
+    """
+    by_id: dict[str, str] = {}
+    for row in _rows(hierarchies_frame):
+        key = str(row.get("ID", "") or "").strip()
+        table = str(row.get("TableName", "") or "").strip()
+        name = str(row.get("Name", "") or "").strip()
+        if key and name:
+            by_id[key] = f"{table}[{name}]" if table else name
+
+    out: list[ColumnVariation] = []
+    for row in _rows(frame):
+        table = str(row.get("TableName", "") or "").strip()
+        column = str(row.get("ColumnName", "") or "").strip()
+        if not table or not column:
+            continue
+        hierarchy_key = str(row.get("DefaultHierarchyID", "") or "").strip()
+        out.append(
+            ColumnVariation(
+                table=table,
+                column=column,
+                name=str(row.get("Name", "") or "").strip() or "Variation",
+                default_hierarchy=by_id.get(hierarchy_key),
+                is_default=bool(int(row.get("IsDefault", 0) or 0)),
+            )
+        )
+    return out
+
+
+def members_by_role(frame) -> dict[str, tuple[str, ...]]:
+    """Role membership from ``tmschema_role_memberships``.
+
+    Columns ``RoleName`` and ``MemberName``. Worth reading for its own sake --
+    "who is in this role" is half of what an access review asks -- and it also
+    reaches roles the `rls` frame cannot: that query joins TablePermission, so
+    a role filtering no table has no row there, while a role with members has
+    one here.
+    """
+    out: dict[str, list[str]] = {}
+    for row in _rows(frame):
+        role = str(row.get("RoleName", "") or "").strip()
+        member = str(row.get("MemberName", "") or "").strip()
+        if role and member:
+            out.setdefault(role, []).append(member)
+    return {role: tuple(sorted(set(names))) for role, names in out.items()}
+
+
 def build_kpis(frame) -> list[Kpi]:
     """KPIs from PBIXRay's ``tmschema_kpis`` frame.
 
@@ -600,6 +687,32 @@ def build_perspectives(frame) -> list[Perspective]:
         )
         for name, entries in sorted(members.items())
     ]
+
+
+def _with_members(
+    roles: list[SecurityRole], members: dict[str, tuple[str, ...]]
+) -> list[SecurityRole]:
+    """Attach membership, and surface roles the `rls` frame could not show.
+
+    A role that filters no table has no row in `rls` at all. If it has
+    members, it has a row here -- so this is the one place such a role becomes
+    visible, and it is added rather than dropped.
+    """
+    from dataclasses import replace
+
+    out = [replace(role, members=members.get(role.name, ())) for role in roles]
+    known = {role.name for role in roles}
+    for name in sorted(set(members) - known):
+        out.append(
+            SecurityRole(
+                name=name,
+                model_permission="",
+                permissions=(),
+                fingerprint=fingerprint_parts("role", name),
+                members=members[name],
+            )
+        )
+    return out
 
 
 def _text_or_none(value) -> str | None:

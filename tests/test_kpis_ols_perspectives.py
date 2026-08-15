@@ -237,3 +237,104 @@ def test_absent_frames_yield_nothing() -> None:
     assert build_kpis(None) == []
     assert build_object_permissions(None) == []
     assert build_perspectives(None) == []
+
+
+# -- column variations and role membership ------------------------------------
+
+def test_a_variation_resolves_to_the_hierarchy_it_navigates() -> None:
+    from concordance.adapters.pbix import build_variations
+
+    variations = build_variations(
+        pd.DataFrame(
+            [{"TableName": "Calendar", "ColumnName": "Date", "Name": "Variation",
+              "DefaultHierarchyID": 1524, "IsDefault": 1}]
+        ),
+        pd.DataFrame([{"ID": 1524, "TableName": "Calendar", "Name": "Date Hierarchy"}]),
+    )
+    assert len(variations) == 1
+    assert variations[0].qualified_name == "Calendar[Date]"
+    assert variations[0].default_hierarchy == "Calendar[Date Hierarchy]"
+    assert variations[0].is_default is True
+
+
+def test_an_unresolvable_hierarchy_is_left_absent_not_shown_as_an_id() -> None:
+    """A numeric key in a requirements document is noise nobody can act on."""
+    from concordance.adapters.pbix import build_variations
+
+    variations = build_variations(
+        pd.DataFrame(
+            [{"TableName": "T", "ColumnName": "C", "Name": "V",
+              "DefaultHierarchyID": 999, "IsDefault": 0}]
+        ),
+        pd.DataFrame([]),
+    )
+    assert variations[0].default_hierarchy is None
+
+
+def test_an_auto_date_variation_is_described_not_reproduced() -> None:
+    """Nearly every real variation points at a generated LocalDateTable_<guid>
+    hierarchy. Naming it in the statement would put a GUID in a business
+    document and describe a table this tool hides everywhere else."""
+    from concordance.adapters.pbix import PbixAdapter
+
+    source = Path("data/models/AdventureWorks_Sales.pbix")
+    if not source.exists():
+        pytest.skip(f"model not present: {source}")
+
+    derived = RequirementDeriver(
+        SemanticGraph(PbixAdapter().extract(str(source)))
+    ).derive()
+    drills = [r for r in derived if r.category == "Navigation and drill paths"]
+    assert drills, "AdventureWorks carries three variations"
+
+    for requirement in drills:
+        assert "automatic date hierarchy" in requirement.statement
+        assert "LocalDateTable_" not in requirement.statement
+        # The evidence still records the real target: the statement is for
+        # reading, the evidence is for checking.
+        assert "LocalDateTable_" in requirement.evidence[0].detail
+
+
+def test_membership_reaches_roles_the_rls_frame_cannot_show() -> None:
+    """A role filtering no table has no row in `rls` at all -- that query joins
+    TablePermission. If it has members it has a row here, which is the one
+    place such a role becomes visible."""
+    from concordance.adapters.pbix import _with_members, build_roles
+
+    roles = _with_members(
+        build_roles(
+            pd.DataFrame(
+                [{"TableName": "Sales", "RoleName": "EMEA", "RoleDescription": None,
+                  "FilterExpression": "[R] = 1", "State": "Ready",
+                  "MetadataPermission": None}],
+                columns=["TableName", "RoleName", "RoleDescription",
+                         "FilterExpression", "State", "MetadataPermission"],
+            )
+        ),
+        {"EMEA": ("anna@example.com",), "Auditors": ("bo@example.com",)},
+    )
+
+    by_name = {r.name: r for r in roles}
+    assert by_name["EMEA"].members == ("anna@example.com",)
+    # Never seen by `rls`, recovered here rather than dropped.
+    assert by_name["Auditors"].members == ("bo@example.com",)
+    assert by_name["Auditors"].permissions == ()
+
+
+def test_a_tmdl_variation_is_read_from_the_column_it_sits_on(tmp_path: Path) -> None:
+    root = tmp_path / "V.SemanticModel"
+    write(root, "model.tmdl", "model Model\n\tculture: en-GB\n")
+    write(root, "database.tmdl", "database V\n\tcompatibilityLevel: 1567\n")
+    write(
+        root,
+        "tables/Calendar.tmdl",
+        "table Calendar\n\n\tcolumn Date\n\t\tdataType: dateTime\n\n"
+        "\t\tvariation Variation\n\t\t\tisDefault\n"
+        "\t\t\tdefaultHierarchy: Calendar.'Date Hierarchy'\n",
+    )
+    model = TmdlAdapter().extract(str(root))
+
+    assert len(model.variations) == 1
+    assert model.variations[0].qualified_name == "Calendar[Date]"
+    assert model.variations[0].is_default is True
+    assert model.coverage_gaps == [], "a variation that is read is not a gap"

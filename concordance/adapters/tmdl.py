@@ -35,6 +35,7 @@ from concordance.model import (
     CalculationGroup,
     CalculationItem,
     Column,
+    ColumnVariation,
     CoverageGap,
     Hierarchy,
     HierarchyLevel,
@@ -339,6 +340,8 @@ _EXTRACTED_KINDS = frozenset(
         "calculationItem",
         # Object-level security: a column hidden outright rather than filtered.
         "columnPermission",
+        # A column's alternate drill path, read into `model.variations`.
+        "variation",
         # A measure's target and status thresholds, read into `model.kpis`.
         "kpi",
         # Perspectives and their membership, read into `model.perspectives`.
@@ -364,10 +367,6 @@ _GAP_REASONS = {
     "culture": (
         "translations are present; only the base-language names are read, so "
         "names here may differ from what a user in another locale sees"
-    ),
-    "variation": (
-        "column variations are present; the alternate hierarchy a field can drill "
-        "through is not read"
     ),
 }
 
@@ -489,6 +488,18 @@ class TmdlAdapter:
             )
 
             for column in columns:
+                for variation in column.child("variation"):
+                    model.variations.append(
+                        ColumnVariation(
+                            table=node.name,
+                            column=column.name,
+                            name=variation.name or "Variation",
+                            default_hierarchy=(
+                                variation.properties.get("defaultHierarchy") or None
+                            ),
+                            is_default="isDefault" in variation.properties,
+                        )
+                    )
                 expression = column.expression
                 model.columns.append(
                     Column(

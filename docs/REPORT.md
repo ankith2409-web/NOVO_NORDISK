@@ -103,8 +103,11 @@ name, below any workable threshold.
 
 This is the part that is hardest to demo and matters most in a regulated industry.
 
-- **It says what it did not read.** Translations and column variations are counted and
-  named, with the consequence of each stated. This is derived
+- **It says what it did not read.** Translated object names are counted and named, with
+  the consequence stated and — unusually — the reason: every other construct is read
+  against a schema the source publishes, while a translation names its target through an
+  untyped id with no published mapping, so attaching names to objects would be guesswork.
+  This is derived
   from the files rather than a hand-maintained list, which cuts both ways: a construct the
   code has never heard of is still counted, and extending extraction shrinks the
   disclaimer automatically — reading row-level security and calculation groups removed
@@ -122,7 +125,7 @@ This is the part that is hardest to demo and matters most in a regulated industr
 
 ## 6. Engineering
 
-- **10,713 lines of Python, 4,081 of TypeScript, 616 automated tests** (584 Python, 32
+- **10,713 lines of Python, 4,081 of TypeScript, 622 automated tests** (590 Python, 32
   frontend). Tests were mutation-checked — each confirmed to fail when the logic it covers
   is deliberately broken, because a test that cannot fail protects nothing and a green run
   does not show that. The check applies to the load-bearing claims as well as the frontend:

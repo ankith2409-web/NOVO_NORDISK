@@ -32,8 +32,9 @@ moment that link breaks.
 Reads a Power BI model in either of its two real formats — a compiled `.pbix` file or a
 TMDL project folder — into one internal representation covering tables, columns,
 measures, relationships, hierarchies, row-level and object-level security, calculation
-groups, KPI targets and status thresholds, perspectives, and which file or database each
-table is loaded from together with the transformation steps applied on the way in.
+groups, KPI targets and status thresholds, perspectives, role membership, column drill
+variations, and which file or database each table is loaded from together with the
+transformation steps applied on the way in.
 
 ### 3.2 Automated BRD/FRD generation
 Produces business and functional requirement statements directly from the model's
@@ -131,7 +132,7 @@ piece of work against a stable interface rather than a redesign.
 
 ## 5. Verification
 
-- **584 automated Python tests, 32 automated frontend tests**, all passing.
+- **590 automated Python tests, 32 automated frontend tests**, all passing.
 - Tests for the load-bearing claims were deliberately broken once and confirmed to fail,
   to prove they actually catch the problems they claim to — including the one asserting a
   reviewer cannot sign off under another reviewer's name.
@@ -165,11 +166,15 @@ KPIs are not currently represented in any sample model.
 
 ## 7. Known limitations, stated plainly
 
-- Translations and column variations are detected and reported as present, but their
-  contents are not read. A model's single base culture is deliberately not counted as a
-  translation, since a warning that appears on every model is one nobody reads. In the
-  `.pbix` format specifically, a security role that filters no table cannot be seen at all
-  by the underlying reader — reported as a gap rather than quietly omitted.
+- Translated object names are the one construct still reported rather than read. Every
+  other construct is read against a schema the underlying reader publishes; a translation
+  names its target through an untyped integer with no published mapping, so attaching each
+  translated name to the right object would require guessing — and a document that calls
+  one measure by another's translated name is worse than one that says it did not read
+  them. A model's single base culture is deliberately not counted as a translation, since
+  a warning that appears on every model is one nobody reads.
+- In the `.pbix` format, a role's model-level permission is never surfaced by the reader
+  and is left empty rather than filled in with a plausible default.
 - Requirement wording is generated from rules rather than by a language model. Sentences
   now vary according to what each measure actually does, but the vocabulary is finite by
   construction — this buys reproducibility and traceability at some cost in fluency, and

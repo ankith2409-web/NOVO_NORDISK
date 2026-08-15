@@ -149,6 +149,9 @@ class _RawWithUnextractedFeatures:
     tmschema_perspectives = None
     tmschema_cultures = pd.DataFrame([{"Name": "en-US"}, {"Name": "da-DK"}])
     tmschema_variations = pd.DataFrame([{"Name": "Variation"}])
+    tmschema_translations = pd.DataFrame(
+        [{"CultureName": "da-DK", "ObjectType": 3, "ObjectID": 91, "Value": "Salg"}]
+    )
 
 
 def test_unextracted_features_are_reported_when_present() -> None:
@@ -156,13 +159,28 @@ def test_unextracted_features_are_reported_when_present() -> None:
     reported = {g.feature: g.count for g in gaps}
 
     assert reported["translations"] == 2
-    assert reported["column variations"] == 1
 
-    # KPIs, calculation groups and object-level security are extracted now, so
+    # KPIs, calculation groups, OLS and variations are extracted now, so
     # claiming they are unread would be the mirror image of the original bug:
     # a disclaimer that outlived what it disclaimed.
-    for extracted in ("KPI objects", "calculation groups", "object-level security"):
+    for extracted in (
+        "KPI objects", "calculation groups", "object-level security",
+        "column variations",
+    ):
         assert extracted not in reported
+
+
+def test_translated_names_are_reported_as_unattached_rather_than_guessed() -> None:
+    """Every other construct here is read against SQL PBIXRay publishes in its
+    own source. Translations are the exception: the target arrives as a bare
+    integer ObjectType with no published mapping, so attaching a Danish name to
+    a measure would be a guess -- and calling one measure by another's
+    translated name is worse than saying the translations were not read."""
+    gaps = PbixAdapter()._coverage_gaps(_RawWithUnextractedFeatures())
+    residual = next(g for g in gaps if g.feature == "object name translations")
+
+    assert residual.count == 1
+    assert "without" in residual.reason and "guessing" in residual.reason
 
 
 def test_a_models_own_base_language_is_not_a_translation() -> None:
@@ -192,24 +210,18 @@ def test_rls_still_reports_what_this_format_cannot_show() -> None:
 
 
 @pytest.mark.parametrize("name", SAMPLES)
-def test_sample_models_report_only_what_is_genuinely_unread(name: str) -> None:
-    """These three have no KPIs, RLS, OLS, perspectives or calculation groups,
-    so none of those may be claimed as gaps.
+def test_sample_models_report_nothing_unread(name: str) -> None:
+    """Everything these three contain is now read.
 
-    Column variations may be, and are: two of the three samples carry them,
-    and until the feature list was corrected nothing looked for them at all --
-    the documentation said they were reported while this adapter never
-    checked, which is the precise failure the coverage machinery exists to
-    prevent, committed by the machinery itself.
+    The claim is only worth anything because the checker can distinguish the
+    two cases -- `test_unextracted_features_are_reported_when_present` shows
+    it still reports what it cannot read.
     """
-    gaps = {g.feature for g in PbixAdapter().extract(str(_available(name))).coverage_gaps}
-    assert gaps <= {"column variations"}
+    assert PbixAdapter().extract(str(_available(name))).coverage_gaps == []
 
 
 def test_coverage_gaps_reach_the_serialised_graph(adventure_works: SemanticGraph) -> None:
     """Whatever consumes the graph downstream must be able to see the gaps."""
     payload = adventure_works.to_dict()
     assert "coverage_gaps" in payload
-    # AdventureWorks carries three column variations, so this is also a check
-    # that a real gap survives serialisation rather than only an empty one.
-    assert payload["stats"]["coverage_gaps"] == 1
+    assert payload["stats"]["coverage_gaps"] == 0

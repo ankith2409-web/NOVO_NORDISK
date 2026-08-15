@@ -31,6 +31,7 @@ from concordance.generate import patterns, phrasing
 from concordance.graph.csg import (
     SemanticGraph,
     calculation_item_id,
+    column_id,
     hierarchy_id,
     kpi_id,
     measure_id,
@@ -106,6 +107,7 @@ class RequirementDeriver:
         out.extend(self._from_roles())
         out.extend(self._from_object_permissions())
         out.extend(self._from_perspectives())
+        out.extend(self._from_variations())
         out.extend(self._from_kpis())
         out.extend(self._from_calculation_groups())
         out.extend(self._from_load_steps())
@@ -675,6 +677,71 @@ class RequirementDeriver:
                             detail=f"{target}: no access",
                         )
                         for target in sorted(targets)
+                    ),
+                )
+            )
+        return out
+
+    def _from_variations(self) -> list[Requirement]:
+        """What drilling a column actually does, when it is not the obvious thing.
+
+        Almost every variation in a real model points at one of Power BI's
+        auto-generated `LocalDateTable_<guid>` hierarchies -- its automatic
+        date plumbing. Printing that name would put a GUID into a business
+        document and describe a table this tool deliberately hides everywhere
+        else, so those are stated for what they are instead.
+        """
+        out: list[Requirement] = []
+
+        for variation in sorted(
+            self.model.variations, key=lambda v: (v.table, v.column, v.name)
+        ):
+            target = variation.default_hierarchy or ""
+            owner = target.split("[")[0].split(".")[0].strip("' ")
+            automatic = not target or owner in self._system_tables
+
+            if automatic:
+                statement = (
+                    f"Users shall be able to drill **{variation.qualified_name}** "
+                    f"through Power BI's automatic date hierarchy."
+                )
+                rationale = (
+                    "The column carries a variation pointing at a generated date "
+                    "hierarchy, which Power BI creates and maintains itself. Named "
+                    "rather than reproduced: the generated table's identifier is not "
+                    "something anyone can act on."
+                )
+            else:
+                statement = (
+                    f"Drilling **{variation.qualified_name}** shall navigate "
+                    f"**{target}** rather than the column's own values."
+                )
+                rationale = (
+                    "The column defines a variation, so expanding it walks a "
+                    "different hierarchy than its own field suggests -- behaviour "
+                    "nothing in the column's definition reveals."
+                )
+
+            out.append(
+                Requirement(
+                    id=f"REQ-B-{_identity('variation', variation.table, variation.column, variation.name)}",
+                    kind=Kind.BUSINESS,
+                    category="Navigation and drill paths",
+                    statement=statement,
+                    rationale=rationale,
+                    confidence=Confidence.HIGH,
+                    evidence=(
+                        Evidence(
+                            node_id=column_id(variation.table, variation.column),
+                            fingerprint=fingerprint_parts(
+                                "variation", variation.table, variation.column,
+                                variation.name, target,
+                            ),
+                            detail=(
+                                f"variation {variation.name}"
+                                + (f" -> {target}" if target else "")
+                            ),
+                        ),
                     ),
                 )
             )

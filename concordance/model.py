@@ -173,6 +173,10 @@ class SecurityRole:
     permissions: tuple[TablePermission, ...]
     fingerprint: str
     description: str | None = None
+    #: Who belongs to this role, where the source records it. Power BI keeps
+    #: membership in the service rather than the model for a published report,
+    #: so an empty tuple means "not stated here", never "nobody".
+    members: tuple[str, ...] = ()
 
     @property
     def restricted_tables(self) -> tuple[str, ...]:
@@ -207,6 +211,28 @@ class CalculationGroup:
     fingerprint: str
     precedence: int | None = None
     description: str | None = None
+
+
+@dataclass(frozen=True)
+class ColumnVariation:
+    """An alternate drill path a column offers.
+
+    A variation redirects what happens when a user drills a field: the column
+    stays where it is, but expanding it walks a different hierarchy. That is a
+    reporting behaviour a BRD should state, and it is invisible in the
+    column's own definition.
+    """
+
+    table: str
+    column: str
+    name: str
+    #: The hierarchy drilling walks instead, when it could be resolved.
+    default_hierarchy: str | None = None
+    is_default: bool = False
+
+    @property
+    def qualified_name(self) -> str:
+        return f"{self.table}[{self.column}]"
 
 
 @dataclass(frozen=True)
@@ -326,6 +352,7 @@ class SemanticModel:
     roles: list[SecurityRole] = field(default_factory=list)
     calculation_groups: list[CalculationGroup] = field(default_factory=list)
     kpis: list[Kpi] = field(default_factory=list)
+    variations: list[ColumnVariation] = field(default_factory=list)
     object_permissions: list[ObjectPermission] = field(default_factory=list)
     perspectives: list[Perspective] = field(default_factory=list)
     coverage_gaps: list[CoverageGap] = field(default_factory=list)
