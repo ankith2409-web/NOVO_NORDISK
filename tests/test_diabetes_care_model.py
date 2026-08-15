@@ -42,9 +42,32 @@ def test_the_real_dataset_is_present_and_the_shape_the_model_expects() -> None:
 
 def test_the_model_extracts_with_no_unread_constructs() -> None:
     graph = SemanticGraph(TmdlAdapter().extract(str(_available())))
-    assert {t.name for t in graph.model.user_tables()} == {"Patient", "Diabetes Metrics"}
+    assert {t.name for t in graph.model.user_tables()} == {
+        "Patient", "Diabetes Metrics", "Risk Lens",
+    }
     assert len(graph.model.measures) == 12
     assert graph.model.coverage_gaps == []
+
+
+def test_the_security_roles_and_risk_lens_are_read_not_merely_noticed() -> None:
+    """This model carries the two constructs that used to be coverage gaps, so
+    it is where their extraction is exercised against a real file rather than
+    a fixture built inside a test."""
+    model = TmdlAdapter().extract(str(_available()))
+
+    roles = {r.name: r for r in model.roles}
+    assert set(roles) == {"Cohort Clinician", "Population Analyst"}
+    # One restricts rows, one deliberately does not -- both must be documented.
+    assert roles["Cohort Clinician"].restricted_tables == ("Patient",)
+    assert roles["Population Analyst"].permissions == ()
+    assert roles["Cohort Clinician"].permissions[0].fingerprint
+
+    group = model.calculation_groups[0]
+    assert group.table == "Risk Lens"
+    assert [i.name for i in group.items] == [
+        "All Patients", "Elevated Glucose Only", "Share Of Population",
+    ]
+    assert all(i.fingerprint for i in group.items)
 
 
 def test_every_measure_fingerprints_and_every_requirement_derives_high_confidence() -> None:

@@ -32,14 +32,18 @@ from pathlib import Path
 from concordance.adapters.base import is_measure_container, resolve_table_dependencies
 from concordance.fingerprint import fingerprint_dax, fingerprint_parts, fingerprint_text
 from concordance.model import (
+    CalculationGroup,
+    CalculationItem,
     Column,
     CoverageGap,
     Hierarchy,
     HierarchyLevel,
     Measure,
     Relationship,
+    SecurityRole,
     SemanticModel,
     Table,
+    TablePermission,
 )
 from concordance.normalize.dax import extract_references
 
@@ -312,6 +316,14 @@ _EXTRACTED_KINDS = frozenset(
         "relationship",
         # Read for its M source, which becomes the table's `power_query`.
         "partition",
+        # Row-level security, read into `model.roles` with each table filter
+        # fingerprinted.
+        "role",
+        "tablePermission",
+        # Query-time measure rewrites, read into `model.calculation_groups`
+        # with each item fingerprinted.
+        "calculationGroup",
+        "calculationItem",
     }
 )
 
@@ -326,10 +338,6 @@ _STRUCTURAL_KINDS = frozenset(
 #: the gap affects them. A bare "not extracted" is true but useless: it does not
 #: say whether the documentation below it is merely thinner or actually wrong.
 _GAP_REASONS = {
-    "role": (
-        "row-level security roles are present; their filters are not read, so "
-        "documentation here describes the model as an unrestricted user sees it"
-    ),
     "perspective": (
         "perspectives are present; the objects each one exposes are not read, so "
         "everything is documented as though every field were visible to everyone"
@@ -337,14 +345,6 @@ _GAP_REASONS = {
     "culture": (
         "translations are present; only the base-language names are read, so "
         "names here may differ from what a user in another locale sees"
-    ),
-    "calculationGroup": (
-        "calculation groups are present; they rewrite measures at query time, so "
-        "a measure's documented expression is not the whole story where one applies"
-    ),
-    "calculationItem": (
-        "calculation items are present; each one is a DAX expression that can "
-        "replace a measure's own, and none of them are read or fingerprinted"
     ),
     "variation": (
         "column variations are present; the alternate hierarchy a field can drill "
@@ -376,16 +376,24 @@ class TmdlAdapter:
             source_type=self.source_type,
         )
 
-        table_dir = definition / "tables"
-        table_files = (
-            sorted(table_dir.glob("*.tmdl")) if table_dir.is_dir() else []
-        )
-        for path in table_files:
-            self._read_table(path, model)
+        # Read from anywhere under the definition, not only `tables/`. Power BI
+        # writes tables there, but a hand-authored model need not, and a `table`
+        # declared elsewhere used to vanish in silence: never extracted, and
+        # never reported as a gap either, because `table` is on the extracted
+        # list. Walking the whole definition is what closes that -- found by a
+        # calculation group written to its own file and simply disappearing.
+        seen_tables: set[str] = set()
+        for path in sorted(definition.rglob("*.tmdl")):
+            self._read_table(path, model, seen_tables)
 
         relationships = definition / "relationships.tmdl"
         if relationships.is_file():
             self._read_relationships(relationships, model)
+
+        # Roles live wherever the author put them -- their own folder in a
+        # Power BI export, inline in model.tmdl in a hand-written one -- so
+        # they are found by walking rather than by expecting a fixed path.
+        self._read_roles(definition, model)
 
         model.coverage_gaps = self._coverage_gaps(definition)
 
@@ -412,10 +420,23 @@ class TmdlAdapter:
                 return name[: -len(suffix)]
         return name
 
-    def _read_table(self, path: Path, model: SemanticModel) -> None:
-        for node in parse(path.read_text(encoding="utf-8")):
+    def _read_table(
+        self, path: Path, model: SemanticModel, seen: set[str] | None = None
+    ) -> None:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            # Counted as an unreadable file by `_coverage_gaps`, which is the
+            # right place to report it; failing the whole extraction here would
+            # lose every table that did read.
+            return
+        for node in parse(text):
             if node.kind != "table":
                 continue
+            if seen is not None:
+                if node.name in seen:
+                    continue
+                seen.add(node.name)
 
             columns = node.child("column")
             measures = node.child("measure")
@@ -463,6 +484,96 @@ class TmdlAdapter:
 
             for hierarchy in node.child("hierarchy"):
                 model.hierarchies.append(self._build_hierarchy(node.name, hierarchy))
+
+            for group in node.child("calculationGroup"):
+                model.calculation_groups.append(
+                    self._build_calculation_group(node.name, group)
+                )
+
+    def _build_calculation_group(self, table: str, node: Node) -> CalculationGroup:
+        """A calculation group and the DAX each of its items substitutes.
+
+        Each item is fingerprinted in its own right. That is the point of
+        reading them at all: an edit to a YTD item changes every measure the
+        group is applied to, while every one of those measures keeps the
+        fingerprint it had. Without an item-level hash, the single change that
+        moved the most numbers in the model is the one drift cannot see.
+        """
+        items: list[CalculationItem] = []
+        for ordinal, item in enumerate(node.child("calculationItem")):
+            expression = (item.expression or "").strip()
+            format_expression = item.properties.get("formatStringExpression")
+            items.append(
+                CalculationItem(
+                    name=item.name,
+                    expression=expression,
+                    fingerprint=(
+                        fingerprint_dax(expression)
+                        if expression
+                        else fingerprint_parts(table, item.name)
+                    ),
+                    ordinal=ordinal,
+                    format_expression=format_expression,
+                )
+            )
+
+        precedence = node.properties.get("precedence")
+        return CalculationGroup(
+            table=table,
+            items=tuple(items),
+            # Over the items' fingerprints rather than their text: the group's
+            # identity is the set of rewrites it performs, so reordering the
+            # file without changing a rule is correctly not a change.
+            fingerprint=fingerprint_parts(table, *(i.fingerprint for i in items)),
+            precedence=int(precedence) if precedence and precedence.isdigit() else None,
+            description=node.description,
+        )
+
+    def _read_roles(self, definition: Path, model: SemanticModel) -> None:
+        """Collect every security role in the definition, wherever it is written."""
+        seen: set[str] = set()
+        for path in sorted(definition.rglob("*.tmdl")):
+            try:
+                nodes = parse(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError):
+                continue
+            for node in self._walk(nodes):
+                if node.kind != "role" or node.name in seen:
+                    continue
+                seen.add(node.name)
+                model.roles.append(self._build_role(node))
+
+    def _walk(self, nodes: list[Node]):
+        for node in nodes:
+            yield node
+            yield from self._walk(node.children)
+
+    def _build_role(self, node: Node) -> SecurityRole:
+        permissions: list[TablePermission] = []
+        for permission in node.child("tablePermission"):
+            expression = (permission.expression or "").strip()
+            permissions.append(
+                TablePermission(
+                    table=permission.name,
+                    expression=expression,
+                    fingerprint=(
+                        fingerprint_dax(expression)
+                        if expression
+                        else fingerprint_parts(node.name, permission.name)
+                    ),
+                )
+            )
+        return SecurityRole(
+            name=node.name,
+            # A role with no stated permission reads the model; that is Power
+            # BI's default, and recording it as "" would read as unknown.
+            model_permission=node.properties.get("modelPermission", "read"),
+            permissions=tuple(permissions),
+            fingerprint=fingerprint_parts(
+                node.name, *(p.fingerprint for p in permissions)
+            ),
+            description=node.description,
+        )
 
     def _coverage_gaps(self, definition: Path) -> list[CoverageGap]:
         """Report what the parser read and this adapter then dropped.

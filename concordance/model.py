@@ -24,6 +24,12 @@ class ObjectKind(Enum):
     #: earns a node: it is where the model stops and the platform beneath it
     #: begins, and a lineage that ends at the table cannot show that seam.
     SOURCE = "source"
+    #: A row-level security role. Earns a node because it changes what a figure
+    #: *is* for a given reader, which no measure's own expression records.
+    ROLE = "role"
+    #: A calculation group item. Rewrites measures at query time, so a measure's
+    #: documented expression is not the whole story wherever one applies.
+    CALCULATION_ITEM = "calculation_item"
 
 
 @dataclass(frozen=True)
@@ -133,6 +139,73 @@ class Hierarchy:
 
 
 @dataclass(frozen=True)
+class TablePermission:
+    """One table's row filter inside a security role.
+
+    The expression is DAX and is fingerprinted like any other, because a
+    change to it changes who sees which rows -- a silent edit here alters
+    every figure a restricted reader sees while every measure's own
+    fingerprint stays identical.
+    """
+
+    table: str
+    expression: str
+    fingerprint: str
+
+
+@dataclass(frozen=True)
+class SecurityRole:
+    """A row-level security role and the row filters it applies.
+
+    Documenting a model without these describes it as an unrestricted user
+    sees it. Two readers running the same report under different roles get
+    different numbers from identical DAX, and nothing in the measure explains
+    why -- so the filters have to be part of the specification, not a footnote.
+    """
+
+    name: str
+    #: `read`, `readRefresh`, `none` -- what the role may do model-wide.
+    model_permission: str
+    permissions: tuple[TablePermission, ...]
+    fingerprint: str
+    description: str | None = None
+
+    @property
+    def restricted_tables(self) -> tuple[str, ...]:
+        return tuple(p.table for p in self.permissions)
+
+
+@dataclass(frozen=True)
+class CalculationItem:
+    """One rewrite rule within a calculation group."""
+
+    name: str
+    expression: str
+    fingerprint: str
+    ordinal: int = 0
+    #: Applied to whatever measure the item wraps, when the model sets one.
+    format_expression: str | None = None
+
+
+@dataclass(frozen=True)
+class CalculationGroup:
+    """A table whose items rewrite measures at query time.
+
+    The reason this cannot be left out of a specification: with a calculation
+    group in the model, `[Revenue]` on a report is not necessarily the
+    expression `[Revenue]` is defined as. The item selected in the slicer
+    substitutes itself around it. A document that shows only the measure's own
+    DAX is describing something the report may never actually evaluate.
+    """
+
+    table: str
+    items: tuple[CalculationItem, ...]
+    fingerprint: str
+    precedence: int | None = None
+    description: str | None = None
+
+
+@dataclass(frozen=True)
 class CoverageGap:
     """A model feature the source reports but this adapter does not yet extract.
 
@@ -159,6 +232,8 @@ class SemanticModel:
     measures: list[Measure] = field(default_factory=list)
     relationships: list[Relationship] = field(default_factory=list)
     hierarchies: list[Hierarchy] = field(default_factory=list)
+    roles: list[SecurityRole] = field(default_factory=list)
+    calculation_groups: list[CalculationGroup] = field(default_factory=list)
     coverage_gaps: list[CoverageGap] = field(default_factory=list)
 
     def user_tables(self) -> list[Table]:
@@ -178,4 +253,8 @@ class SemanticModel:
             "relationships": len(self.relationships),
             "hierarchies": len(self.hierarchies),
             "user_hierarchies": len(self.user_hierarchies()),
+            "roles": len(self.roles),
+            "calculation_items": sum(
+                len(group.items) for group in self.calculation_groups
+            ),
         }

@@ -28,7 +28,14 @@ from enum import Enum
 
 from concordance.fingerprint import fingerprint_parts, short
 from concordance.generate import patterns
-from concordance.graph.csg import SemanticGraph, hierarchy_id, measure_id, table_id
+from concordance.graph.csg import (
+    SemanticGraph,
+    calculation_item_id,
+    hierarchy_id,
+    measure_id,
+    role_id,
+    table_id,
+)
 
 
 class Confidence(Enum):
@@ -95,6 +102,8 @@ class RequirementDeriver:
         out.extend(self._from_relationships())
         out.extend(self._from_hierarchies())
         out.extend(self._from_calculated_columns())
+        out.extend(self._from_roles())
+        out.extend(self._from_calculation_groups())
         out.extend(self._from_model_shape())
         # Sorted for deterministic document order; ids stay stable regardless.
         return sorted(out, key=lambda r: (r.kind.value, r.category, r.id))
@@ -433,6 +442,185 @@ class RequirementDeriver:
                     evidence=evidence,
                 )
             )
+
+        return out
+
+    # -- row-level security -----------------------------------------------------
+
+    def _from_roles(self) -> list[Requirement]:
+        """Who sees which rows -- a requirement no measure's own DAX records.
+
+        Worth stating in both documents for different reasons. The business
+        needs to know a restriction exists at all, because it changes what a
+        figure *means* for a given reader. The functional side needs the
+        filter expression itself, because that is the thing an implementer has
+        to reproduce and the thing whose edit silently changes every number a
+        restricted user sees.
+        """
+        out: list[Requirement] = []
+
+        for role in self.model.roles:
+            # The node id is the role's, not a per-permission one, because that
+            # is what drift reports a change against -- evidence pointing at an
+            # id no snapshot contains would leave the requirement silently
+            # unlinked, which is the one failure this whole scheme exists to
+            # prevent. The *fingerprint* stays per-permission, so a decision
+            # recorded against one filter goes stale when that filter moves.
+            evidence = tuple(
+                Evidence(
+                    node_id=role_id(role.name),
+                    fingerprint=p.fingerprint,
+                    detail=f"{p.table}: {p.expression}",
+                )
+                for p in role.permissions
+            ) or (
+                Evidence(
+                    node_id=role_id(role.name),
+                    fingerprint=role.fingerprint,
+                    detail=f"modelPermission: {role.model_permission}",
+                ),
+            )
+            ident = _identity("role", role.name)
+            tables = sorted({p.table for p in role.permissions})
+
+            if tables:
+                statement = (
+                    f"Users assigned the **{role.name}** role shall see only the rows "
+                    f"of {_join(f'**{t}**' for t in tables)} that the role's filter "
+                    f"admits."
+                )
+                rationale = (
+                    f"The model defines a row-level security role named {role.name} "
+                    f"with a filter on {_join(tables)}, so figures reported to a member "
+                    f"of this role are computed over a subset of the data."
+                )
+            else:
+                # A role with no table filters still restricts: it governs
+                # model-wide permission. Saying "sees only the rows the filter
+                # admits" when there is no filter would be plainly false.
+                statement = (
+                    f"The **{role.name}** role shall grant "
+                    f"*{role.model_permission}* access to the model without "
+                    f"restricting any table's rows."
+                )
+                rationale = (
+                    f"The role is defined with modelPermission "
+                    f"{role.model_permission} and no table filters."
+                )
+
+            out.append(
+                Requirement(
+                    id=f"REQ-B-{ident}",
+                    kind=Kind.BUSINESS,
+                    category="Access and visibility",
+                    statement=statement,
+                    rationale=rationale,
+                    confidence=Confidence.HIGH,
+                    evidence=evidence,
+                )
+            )
+
+            for permission in role.permissions:
+                if not permission.expression:
+                    continue
+                out.append(
+                    Requirement(
+                        id=f"REQ-F-{_identity('role', role.name, permission.table)}",
+                        kind=Kind.FUNCTIONAL,
+                        category="Row-level security",
+                        statement=(
+                            f"Access to **{permission.table}** under the "
+                            f"**{role.name}** role shall be filtered by the DAX "
+                            f"expression recorded in the evidence for this "
+                            f"requirement."
+                        ),
+                        rationale=(
+                            "The filter is evaluated for every query a member of this "
+                            "role runs, so it determines the figures they see; any "
+                            "change to it changes those figures without changing any "
+                            "measure."
+                        ),
+                        confidence=Confidence.HIGH,
+                        evidence=(
+                            Evidence(
+                                node_id=role_id(role.name),
+                                fingerprint=permission.fingerprint,
+                                detail=permission.expression,
+                            ),
+                        ),
+                    )
+                )
+
+        return out
+
+    # -- calculation groups -----------------------------------------------------
+
+    def _from_calculation_groups(self) -> list[Requirement]:
+        """The rewrites that make a measure's own expression not the whole story."""
+        out: list[Requirement] = []
+
+        for group in self.model.calculation_groups:
+            if not group.items:
+                continue
+
+            names = [item.name for item in group.items]
+            out.append(
+                Requirement(
+                    id=f"REQ-B-{_identity('calculation_group', group.table)}",
+                    kind=Kind.BUSINESS,
+                    category="Metrics and KPIs",
+                    statement=(
+                        f"Users shall be able to view any reported metric through the "
+                        f"**{group.table}** calculation group, which offers "
+                        f"{_join(f'**{n}**' for n in names)}."
+                    ),
+                    rationale=(
+                        f"The model defines a calculation group on {group.table} with "
+                        f"{len(names)} item(s). Selecting one substitutes its own "
+                        f"expression around whichever measure is on the report, so "
+                        f"these are analytical options offered to every metric rather "
+                        f"than metrics in their own right."
+                    ),
+                    confidence=Confidence.HIGH,
+                    evidence=tuple(
+                        Evidence(
+                            node_id=calculation_item_id(group.table, item.name),
+                            fingerprint=item.fingerprint,
+                            detail=item.expression,
+                        )
+                        for item in group.items
+                    ),
+                )
+            )
+
+            for item in group.items:
+                if not item.expression:
+                    continue
+                out.append(
+                    Requirement(
+                        id=f"REQ-F-{_identity('calculation_item', group.table, item.name)}",
+                        kind=Kind.FUNCTIONAL,
+                        category="Calculation groups",
+                        statement=(
+                            f"Selecting **{item.name}** from **{group.table}** shall "
+                            f"evaluate the active measure through the DAX expression "
+                            f"recorded in the evidence for this requirement."
+                        ),
+                        rationale=(
+                            "The item replaces the measure's own evaluation wherever it "
+                            "is applied, so the figure a report shows is this expression "
+                            "wrapped around the measure -- not the measure's DAX alone."
+                        ),
+                        confidence=Confidence.HIGH,
+                        evidence=(
+                            Evidence(
+                                node_id=calculation_item_id(group.table, item.name),
+                                fingerprint=item.fingerprint,
+                                detail=item.expression,
+                            ),
+                        ),
+                    )
+                )
 
         return out
 

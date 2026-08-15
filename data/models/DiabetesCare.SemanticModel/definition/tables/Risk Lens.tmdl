@@ -1,0 +1,30 @@
+/// Applies a risk-stratification lens to whichever metric is on the report.
+/// A calculation group rather than five more measures: the same three views
+/// are wanted for prevalence, obesity rate and average glucose alike, and
+/// writing them out per metric is what makes a model unmaintainable.
+table 'Risk Lens'
+
+	calculationGroup
+		precedence: 10
+
+		/// The metric as defined, with no lens applied.
+		calculationItem 'All Patients' = SELECTEDMEASURE()
+
+		/// Restricted to patients whose glucose is at or above the screening
+		/// cut-off, so any metric can be read for the at-risk group alone.
+		calculationItem 'Elevated Glucose Only' =
+			CALCULATE(SELECTEDMEASURE(), Patient[Glucose] >= 126)
+
+		/// The at-risk group's value as a share of the whole population's,
+		/// which is the comparison a prevalence report is usually after.
+		calculationItem 'Share Of Population' =
+			DIVIDE(
+			    CALCULATE(SELECTEDMEASURE(), Patient[Glucose] >= 126),
+			    CALCULATE(SELECTEDMEASURE(), ALL(Patient)),
+			    BLANK()
+			)
+
+	column Name
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Name

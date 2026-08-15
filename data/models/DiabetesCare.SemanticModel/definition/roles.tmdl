@@ -1,0 +1,13 @@
+/// Clinical staff at a site see only the patients in their own age cohort
+/// remit. Modelled on how patient-level data is normally partitioned in a
+/// care setting rather than exposed wholesale.
+role 'Cohort Clinician'
+	modelPermission: read
+
+	tablePermission Patient = Patient[Age Band] = "50 and over"
+
+/// Analysts working on aggregate prevalence never need identifiable rows,
+/// but do need the whole population -- so this role restricts nothing and
+/// exists to be documented as unrestricted rather than left implicit.
+role 'Population Analyst'
+	modelPermission: read

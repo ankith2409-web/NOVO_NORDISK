@@ -27,6 +27,8 @@ class EdgeKind:
     REFERENCES = "references"  # measure -> column | measure
     JOINS = "joins"            # table -> table
     LOADS = "loads"            # table -> source it is loaded from
+    RESTRICTS = "restricts"    # role -> table it filters rows of
+    REWRITES = "rewrites"      # calculation item -> table it is grouped under
 
 
 def table_id(name: str) -> str:
@@ -43,6 +45,14 @@ def measure_id(table: str, name: str) -> str:
 
 def hierarchy_id(table: str, name: str) -> str:
     return f"hierarchy:{table}[{name}]"
+
+
+def role_id(name: str) -> str:
+    return f"role:{name}"
+
+
+def calculation_item_id(table: str, name: str) -> str:
+    return f"calculation_item:{table}[{name}]"
 
 
 def source_id(kind: str, detail: str) -> str:
@@ -138,6 +148,8 @@ class SemanticGraph:
             )
 
         self._add_hierarchies()
+        self._add_roles()
+        self._add_calculation_groups()
         self._link_measure_dependencies()
         self._link_calculated_columns()
 
@@ -157,6 +169,76 @@ class SemanticGraph:
                 is_active=rel.is_active,
                 fingerprint=rel.fingerprint,
             )
+
+    def _add_roles(self) -> None:
+        """Give each security role a node, edged to every table it filters.
+
+        The edge runs role -> table, so `dependents_of` a table answers "who
+        is restricted on this" -- which is the question someone asks when a
+        figure differs between two readers of the same report.
+        """
+        for role in self.model.roles:
+            node = role_id(role.name)
+            self.graph.add_node(
+                node,
+                kind=ObjectKind.ROLE.value,
+                name=role.name,
+                fingerprint=role.fingerprint,
+                model_permission=role.model_permission,
+                description=role.description,
+                # The filters themselves, so a snapshot's `detail` shows what
+                # the hash was taken over rather than only that it moved.
+                expression="; ".join(
+                    f"{p.table}: {p.expression}" for p in role.permissions
+                ),
+            )
+            for permission in role.permissions:
+                target = table_id(permission.table)
+                if target not in self.graph:
+                    self.unresolved.append(
+                        UnresolvedReference(
+                            source=node,
+                            target=target,
+                            reason="the role filters a table that is not in this model",
+                        )
+                    )
+                    continue
+                self.graph.add_edge(
+                    node,
+                    target,
+                    key=EdgeKind.RESTRICTS,
+                    kind=EdgeKind.RESTRICTS,
+                    expression=permission.expression,
+                    fingerprint=permission.fingerprint,
+                )
+
+    def _add_calculation_groups(self) -> None:
+        """One node per calculation *item*, not per group.
+
+        The item is the unit that carries DAX and the unit that can change
+        independently, so it is the unit that has to be fingerprinted. A
+        group-level node alone would report "the group changed" without
+        saying which rewrite moved.
+        """
+        for group in self.model.calculation_groups:
+            for item in group.items:
+                node = calculation_item_id(group.table, item.name)
+                self.graph.add_node(
+                    node,
+                    kind=ObjectKind.CALCULATION_ITEM.value,
+                    name=item.name,
+                    table=group.table,
+                    expression=item.expression,
+                    fingerprint=item.fingerprint,
+                    ordinal=item.ordinal,
+                    format_expression=item.format_expression,
+                )
+                self.graph.add_edge(
+                    node,
+                    table_id(group.table),
+                    key=EdgeKind.REWRITES,
+                    kind=EdgeKind.REWRITES,
+                )
 
     def _add_sources(self, table) -> None:
         """Give a table's Power Query source a node, so lineage does not stop here.

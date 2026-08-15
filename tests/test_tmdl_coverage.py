@@ -49,31 +49,34 @@ def gaps(root: Path) -> dict[str, int]:
 
 # -- the constructs that change what the documentation means ------------------
 
-def test_row_level_security_is_reported(model_root: Path) -> None:
-    """The sharpest case. Everything documented is what an unrestricted user
-    sees; a reader who does not know an RLS role exists has no way to tell."""
+def test_row_level_security_stops_being_a_gap_once_it_is_read(
+    model_root: Path,
+) -> None:
+    """The invariant has to hold in both directions.
+
+    These two constructs used to be reported here, correctly, as things the
+    adapter did not read. They are read now -- so the gap list must no longer
+    claim otherwise. That it does so without anyone editing a list is the
+    point of deriving gaps from the files: extraction growing shrinks the
+    disclaimer automatically, and the two can never drift apart.
+    """
     write(
         model_root,
         "roles.tmdl",
         "role SiteInvestigator\n\tmodelPermission: read\n\n"
         "\ttablePermission Patient = [SiteID] = USERNAME()\n",
     )
-    found = gaps(model_root)
-    assert found["role"] == 1
-    reason = next(
-        g.reason
-        for g in TmdlAdapter().extract(str(model_root)).coverage_gaps
-        if g.feature == "role"
-    )
-    assert "row-level security" in reason
-    # Says what it costs the reader, not merely that something was skipped.
-    assert "unrestricted" in reason
+    assert "role" not in gaps(model_root)
+    assert "tablePermission" not in gaps(model_root)
+
+    model = TmdlAdapter().extract(str(model_root))
+    assert [r.name for r in model.roles] == ["SiteInvestigator"]
+    assert model.roles[0].permissions[0].expression == "[SiteID] = USERNAME()"
 
 
-def test_calculation_groups_and_their_items_are_reported(model_root: Path) -> None:
-    """A calculation group rewrites a measure at query time, so a measure's
-    documented expression stops being the whole story where one applies. That
-    makes this the one gap that can make an otherwise correct document wrong."""
+def test_calculation_groups_stop_being_a_gap_once_they_are_read(
+    model_root: Path,
+) -> None:
     write(
         model_root,
         "calculationGroups.tmdl",
@@ -84,8 +87,13 @@ def test_calculation_groups_and_their_items_are_reported(model_root: Path) -> No
         "CALCULATE(SELECTEDMEASURE(), SAMEPERIODLASTYEAR('Calendar'[Date]))\n",
     )
     found = gaps(model_root)
-    assert found["calculationGroup"] == 1
-    assert found["calculationItem"] == 2, "each item is its own unread DAX expression"
+    assert "calculationGroup" not in found
+    assert "calculationItem" not in found
+
+    model = TmdlAdapter().extract(str(model_root))
+    assert [i.name for i in model.calculation_groups[0].items] == [
+        "Year to Date", "Prior Year",
+    ]
 
 
 def test_perspectives_are_reported(model_root: Path) -> None:
@@ -110,13 +118,16 @@ def test_a_construct_this_adapter_has_never_heard_of_is_still_counted(
     the parser meets a declaration with no entry in the reason table at all,
     and it still has to be counted rather than silently dropped.
     """
-    write(model_root, "roles.tmdl", "role Auditor\n\ttablePermission Patient = [X] = 1\n")
+    # Deliberately not a real TMDL keyword. `tablePermission` used to stand in
+    # here and no longer can -- it is extracted now -- which is exactly the
+    # churn this test exists to survive.
+    write(model_root, "roles.tmdl", "role Auditor\n\tqueryScopeFilter Patient = [X] = 1\n")
     found = gaps(model_root)
-    assert "tablePermission" in found
+    assert "queryScopeFilter" in found
     reason = next(
         g.reason
         for g in TmdlAdapter().extract(str(model_root)).coverage_gaps
-        if g.feature == "tablePermission"
+        if g.feature == "queryScopeFilter"
     )
     assert reason, "an unknown construct still needs some stated reason"
 

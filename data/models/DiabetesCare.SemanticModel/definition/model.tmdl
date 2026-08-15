@@ -8,3 +8,7 @@ model Model
 
 ref table Patient
 ref table 'Diabetes Metrics'
+ref table 'Risk Lens'
+
+ref role 'Cohort Clinician'
+ref role 'Population Analyst'
