@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from concordance.fingerprint import fingerprint_parts, short
-from concordance.generate import patterns
+from concordance.generate import patterns, phrasing
 from concordance.graph.csg import (
     SemanticGraph,
     calculation_item_id,
@@ -192,8 +192,9 @@ class RequirementDeriver:
             # FUNCTIONAL: exactly how it must be computed.
             dependency_note = ""
             if upstream:
+                noun = "measure" if len(upstream) == 1 else "measures"
                 dependency_note = (
-                    f" It depends on the measures {_join(f'[{m}]' for m in upstream)}, "
+                    f" It depends on the {noun} {_join(f'[{m}]' for m in upstream)}, "
                     f"which must be evaluated first."
                 )
             out.append(
@@ -201,10 +202,23 @@ class RequirementDeriver:
                     id=f"REQ-F-{_identity('measure', measure.table, measure.name)}",
                     kind=Kind.FUNCTIONAL,
                     category="Measure definitions",
+                    # Built from what was detected rather than from one fixed
+                    # frame. The old sentence was identical for every measure in
+                    # a model -- 58 times over on Sales_Returns_Sample -- which
+                    # is a document a reviewer stops reading, and a skimmed
+                    # specification is the failure this project exists to
+                    # prevent. Still derived, still deterministic: see
+                    # generate/phrasing.py.
                     statement=(
-                        f"**{measure.qualified_name}** shall be implemented exactly as "
-                        f"the DAX expression recorded in the evidence for this "
-                        f"requirement.{dependency_note}"
+                        phrasing.functional_statement(
+                            measure.qualified_name,
+                            detected,
+                            patterns.aggregation_of(measure.expression),
+                            columns,
+                            upstream,
+                        )
+                        + phrasing.secondary_note(detected)
+                        + dependency_note
                     ),
                     rationale=(
                         "The expression is the authoritative definition of the metric; "
