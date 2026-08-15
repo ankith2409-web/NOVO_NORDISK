@@ -120,14 +120,23 @@ adding a new warehouse is a small, contained piece of work rather than a redesig
 
 ## 6. What the sample data does and does not cover
 
-Six sample Power BI models are used for testing and demonstration: two clinical-trial
-safety models, one quality-control/manufacturing model, one general sales model, one
-sales-returns model, and one supply-chain model. These are **test fixtures**, not a
-built-in library of industry dashboards — Concordance does not ship pre-built content for
-any domain. Pointed at any other real Power BI model, it extracts and documents that model
-with the same behavior. Clinical trial safety and pharmaceutical quality control are
-well represented in the current sample data; hospital pharmacy analytics and detailed
-supply-chain KPIs are not currently represented in any sample model.
+Seven sample Power BI models are used for testing and demonstration: two clinical-trial
+safety models, one quality-control/manufacturing model, one diabetes/metabolic-health
+model, one general sales model, one sales-returns model, and one supply-chain model.
+These are **test fixtures**, not a built-in library of industry dashboards — Concordance
+does not ship pre-built content for any domain. Pointed at any other real Power BI model,
+it extracts and documents that model with the same behavior.
+
+Six of the seven are synthetic, authored to mirror real structure. The diabetes model is
+different: it is built directly on a real, public dataset — the Pima Indians Diabetes
+Dataset (National Institute of Diabetes and Digestive and Kidney Diseases), 768 real
+patient records — kept including its known missing-value encoding rather than cleaned, so
+the fixture reflects an actual data-quality issue rather than a tidy synthetic one. See
+`data/samples/README.md` for provenance.
+
+Clinical trial safety, pharmaceutical quality control and diabetes/metabolic health are
+now represented in the sample data; hospital pharmacy analytics and detailed supply-chain
+KPIs are not currently represented in any sample model.
 
 ## 7. Known limitations, stated plainly
 

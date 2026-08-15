@@ -1,0 +1,94 @@
+/// One row per patient assessment. Real data: the Pima Indians Diabetes
+/// Dataset (National Institute of Diabetes and Digestive and Kidney
+/// Diseases). See data/samples/README.md for provenance and the known
+/// data-quality caveat this table is left un-cleaned for.
+table Patient
+
+	column PatientID
+		dataType: int64
+		isKey
+		summarizeBy: none
+		sourceColumn: PatientID
+
+	/// Number of prior pregnancies.
+	column Pregnancies
+		dataType: int64
+		summarizeBy: average
+		sourceColumn: Pregnancies
+
+	/// Plasma glucose concentration, 2-hour oral glucose tolerance test
+	/// (mg/dL). 0 encodes a missing measurement, not a real reading -- carried
+	/// through unchanged from the source data.
+	column Glucose
+		dataType: int64
+		summarizeBy: average
+		sourceColumn: Glucose
+
+	/// Diastolic blood pressure (mm Hg). 0 encodes a missing measurement.
+	column BloodPressure
+		dataType: int64
+		summarizeBy: average
+		sourceColumn: BloodPressure
+
+	/// Triceps skinfold thickness (mm). 0 encodes a missing measurement.
+	column SkinThickness
+		dataType: int64
+		summarizeBy: average
+		sourceColumn: SkinThickness
+
+	/// 2-hour serum insulin (mu U/mL). 0 encodes a missing measurement.
+	column Insulin
+		dataType: int64
+		summarizeBy: average
+		sourceColumn: Insulin
+
+	/// Body mass index, kg/m^2. 0 encodes a missing measurement.
+	column BMI
+		dataType: double
+		summarizeBy: average
+		sourceColumn: BMI
+
+	/// A function of diabetes history in relatives and the patient's age;
+	/// higher values indicate stronger genetic/familial risk.
+	column DiabetesPedigreeFunction
+		dataType: double
+		formatString: 0.000
+		summarizeBy: average
+		sourceColumn: DiabetesPedigreeFunction
+
+	column Age
+		dataType: int64
+		summarizeBy: average
+		sourceColumn: Age
+
+	/// 1 where the patient was diagnosed diabetic, 0 otherwise -- the
+	/// dataset's ground-truth label.
+	column Outcome
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: Outcome
+
+	/// Coarse risk band used for cohort reporting rather than per-patient detail.
+	column 'Age Band' =
+		SWITCH(
+		    TRUE(),
+		    Patient[Age] < 30, "Under 30",
+		    Patient[Age] < 50, "30-49",
+		    "50 and over"
+		)
+		dataType: string
+		summarizeBy: none
+
+	partition Patient = m
+		mode: import
+		source = ```
+			let
+			    Source = Csv.Document(
+			        File.Contents("diabetes_patients.csv"),
+			        [Delimiter=",", Columns=9, Encoding=1252, QuoteStyle=QuoteStyle.None]
+			    ),
+			    Promoted = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+			    Indexed = Table.AddIndexColumn(Promoted, "PatientID", 1, 1, Int64.Type)
+			in
+			    Indexed
+			```

@@ -1,0 +1,10 @@
+/// Diabetes/metabolic health analytics: patient risk factors and prevalence.
+/// Built on the Pima Indians Diabetes Dataset (National Institute of Diabetes
+/// and Digestive and Kidney Diseases) -- real patient measurements, not a
+/// synthetic fixture. See data/samples/README.md for provenance.
+model Model
+	culture: en-GB
+	defaultPowerBIDataSourceVersion: powerBI_V3
+
+ref table Patient
+ref table 'Diabetes Metrics'

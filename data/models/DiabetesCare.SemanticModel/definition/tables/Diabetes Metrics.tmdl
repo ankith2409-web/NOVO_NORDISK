@@ -1,0 +1,63 @@
+/// Reportable diabetes-risk and prevalence KPIs. Holds no data of its own.
+table 'Diabetes Metrics'
+
+	column Placeholder
+		dataType: int64
+		isHidden
+		summarizeBy: none
+		sourceColumn: Placeholder
+
+	measure 'Patient Count' = COUNTROWS(Patient)
+		formatString: #,0
+		displayFolder: Cohort
+
+	measure 'Diabetic Count' = CALCULATE([Patient Count], Patient[Outcome] = 1)
+		formatString: #,0
+		displayFolder: Cohort
+
+	/// Share of the current view diagnosed diabetic.
+	measure 'Diabetes Prevalence' = DIVIDE([Diabetic Count], [Patient Count], BLANK())
+		formatString: 0.0%
+		displayFolder: Cohort
+
+	/// Prevalence against the whole cohort regardless of any slicer -- the
+	/// baseline a filtered prevalence is compared against.
+	measure 'Overall Diabetes Prevalence' = CALCULATE([Diabetes Prevalence], ALL(Patient))
+		formatString: 0.0%
+		displayFolder: Cohort
+
+	measure 'Average BMI' = AVERAGE(Patient[BMI])
+		formatString: #,0.0
+		displayFolder: Risk factors
+
+	measure 'Average Glucose' = AVERAGE(Patient[Glucose])
+		formatString: #,0.0
+		displayFolder: Risk factors
+
+	/// WHO obesity threshold.
+	measure 'Obese Patient Count' = CALCULATE([Patient Count], Patient[BMI] >= 30)
+		formatString: #,0
+		displayFolder: Risk factors
+
+	measure 'Obesity Rate' = DIVIDE([Obese Patient Count], [Patient Count], BLANK())
+		formatString: 0.0%
+		displayFolder: Risk factors
+
+	/// ADA fasting-equivalent threshold used here as a screening cut-off.
+	measure 'Elevated Glucose Count' = CALCULATE([Patient Count], Patient[Glucose] >= 126)
+		formatString: #,0
+		displayFolder: Risk factors
+
+	measure 'Elevated Glucose Rate' = DIVIDE([Elevated Glucose Count], [Patient Count], BLANK())
+		formatString: 0.0%
+		displayFolder: Risk factors
+
+	/// Average familial/genetic risk score among diagnosed patients only.
+	measure 'Average Pedigree Risk, Diabetic' =
+		CALCULATE(AVERAGE(Patient[DiabetesPedigreeFunction]), Patient[Outcome] = 1)
+		formatString: 0.000
+		displayFolder: Risk factors
+
+	measure 'Average Age, Diabetic' = CALCULATE(AVERAGE(Patient[Age]), Patient[Outcome] = 1)
+		formatString: #,0.0
+		displayFolder: Cohort
