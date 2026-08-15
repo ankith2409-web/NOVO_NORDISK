@@ -31,14 +31,17 @@ moment that link breaks.
 ### 3.1 Model extraction
 Reads a Power BI model in either of its two real formats — a compiled `.pbix` file or a
 TMDL project folder — into one internal representation covering tables, columns,
-measures, relationships, hierarchies, and (added this cycle) which file or database each
-table is actually loaded from.
+measures, relationships, hierarchies, row-level security roles, calculation groups, and
+which file or database each table is loaded from together with the transformation steps
+applied on the way in.
 
 ### 3.2 Automated BRD/FRD generation
 Produces business and functional requirement statements directly from the model's
 structure. No language model writes these sentences — they come from deterministic rules,
 so the same model always produces the same document, and every sentence carries the exact
-object and a cryptographic fingerprint of the logic it was derived from.
+object and a cryptographic fingerprint of the logic it was derived from. Each statement
+describes what that particular object actually does, derived from the DAX functions it
+uses, rather than repeating one fixed sentence for every measure.
 
 ### 3.3 Fingerprinting
 Every measure's DAX is parsed with a hand-written lexer (not a regular expression) into a
@@ -59,6 +62,12 @@ Compares two versions of the same model and reports what was added, removed, cha
 renamed. A rename is *proven*, not guessed — an object whose fingerprint is unchanged
 under a new name is known to be logically identical, so only requirements resting on
 genuinely changed objects are flagged for re-validation.
+
+This deliberately extends past measures to the three places where a change moves every
+number on a report while every measure's own fingerprint stays identical: a row-level
+security filter (which rows a given reader's figures are computed over), a calculation
+group item (which substitutes its own logic around whichever measure is displayed), and
+a table's load query (which rows reach the model in the first place).
 
 ### 3.5 Cross-platform reconciliation
 Compares a Power BI measure against the same metric defined in a SQL warehouse. Since DAX
@@ -84,6 +93,13 @@ Each decision is bound to the fingerprint of the logic it was made against, so i
 logic later changes, the decision automatically becomes stale — it is not silently carried
 forward onto logic nobody has actually reviewed.
 
+Reviewers can be given individual access tokens, in which case the server records the
+name it resolved from the reviewer's own token rather than a name supplied in the
+request — so a reviewer cannot sign a decision off under a colleague's name. Every entry
+also records whether its author was verified this way or merely self-declared, because a
+trail that mixes the two without saying which is which forces every entry to be treated
+as unverified.
+
 ### 3.9 Web application
 A six-view interface (Overview, Model browser with lineage, Requirements, Drift,
 Reconcile, Review) plus a docked chat panel, built in React and served directly by the
@@ -96,27 +112,36 @@ reconciliation, evidence-bundle export, and serving the web application.
 
 ## 4. Platform integration status
 
-| Platform named in the brief | Status |
+| Platform | Status |
 |---|---|
 | Power BI (`.pbix` and TMDL) | Fully implemented and tested |
-| DuckDB (warehouse reconciliation) | Fully implemented and tested — used as the credential-free default |
-| Snowflake | Connector implemented and unit-tested; not yet proven against a live account (the development network blocks that connection — confirmed, not assumed) |
-| Databricks | Not implemented |
-| AWS | Not implemented |
+| DuckDB (warehouse reconciliation) | Fully implemented and tested — the supported warehouse |
 
-The comparison logic itself is platform-agnostic (built on a general SQL parser), so
-adding a new warehouse is a small, contained piece of work rather than a redesign.
+DuckDB is a deliberate choice rather than a placeholder. It implements the same standard
+information schema that the large cloud warehouses expose, so the extraction path being
+exercised is the real one — only the connection string differs. It also needs no account,
+no credentials and no network, which means anyone can clone this repository and run the
+full reconciliation demo in one command. A cloud warehouse would have made the project's
+central feature unrunnable for anyone without a paid account.
+
+Cloud warehouse connectors (Snowflake, Databricks, AWS) are **out of scope for this
+project**. The comparison logic itself is platform-agnostic — it is built on a general SQL
+parser and compares structure, not vendor syntax — so adding one later is a contained
+piece of work against a stable interface rather than a redesign.
 
 ## 5. Verification
 
-- **504 automated Python tests, 32 automated frontend tests**, all passing.
-- Every frontend test was deliberately broken once and confirmed to fail, to prove the
-  tests actually catch the problems they claim to.
+- **559 automated Python tests, 32 automated frontend tests**, all passing.
+- Tests for the load-bearing claims were deliberately broken once and confirmed to fail,
+  to prove they actually catch the problems they claim to — including the one asserting a
+  reviewer cannot sign off under another reviewer's name.
 - Every major feature was also checked by hand against real models and a real warehouse —
   not just unit tests — which is how several real defects were found and fixed during this
-  project (a crash on a corrupted database file, a routing bug that served the wrong page,
-  a metric-pairing rule that produced far too many false suggestions).
-- ~9,390 lines of Python, ~3,586 lines of TypeScript.
+  project: a crash on a corrupted database file, a routing bug that served the wrong page,
+  a metric-pairing rule that produced far too many false suggestions, a table declared
+  outside the expected folder being dropped in silence, and a generated requirement that
+  described a ratio as a count because it read an aggregation out of the denominator.
+- ~10,700 lines of Python, ~4,080 lines of TypeScript.
 
 ## 6. What the sample data does and does not cover
 
@@ -140,15 +165,18 @@ KPIs are not currently represented in any sample model.
 
 ## 7. Known limitations, stated plainly
 
-- Row-level security roles, calculation groups, and Power Query transformation steps are
-  detected and reported as present, but their internal logic is not yet interpreted.
-- Requirement wording is deterministic and rule-based rather than freely written, so
-  models with many similar measures can produce repetitive-sounding sentences in the
-  generated document. The underlying data behind each sentence is still accurate and
-  distinct — this is a wording limitation, not a correctness one.
-- There is no user login system. Review decisions record who claims to have made them,
-  but the tool does not authenticate identity.
-- Databricks and AWS warehouse connectors do not exist yet.
+- Perspectives, translations and column variations are detected and reported as present,
+  but their contents are not read. The tool says so on every model it processes rather
+  than leaving a reader to assume they were covered.
+- Requirement wording is generated from rules rather than by a language model. Sentences
+  now vary according to what each measure actually does, but the vocabulary is finite by
+  construction — this buys reproducibility and traceability at some cost in fluency, and
+  that trade is deliberate.
+- Reconciliation compares what two definitions *structurally read* — tables, columns,
+  aggregations — not the numbers they produce. Deciding whether two arbitrary expressions
+  in two languages compute the same value is undecidable in general, which is why a third
+  verdict ("needs review") exists instead of a forced pass/fail.
+- Cloud warehouse connectors are out of scope, as set out in section 4.
 
 ## 8. Summary
 

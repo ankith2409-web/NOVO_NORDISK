@@ -24,16 +24,16 @@ untouched.
 
 | Feature | What it does | Where |
 |---|---|---|
-| **Model extraction** | Reads a `.pbix` file or a TMDL model folder into one internal representation: tables, columns, measures, relationships, hierarchies, and (new) the file/warehouse each table is loaded from | `concordance/adapters/` |
+| **Model extraction** | Reads a `.pbix` file or a TMDL model folder into one internal representation: tables, columns, measures, relationships, hierarchies, row-level security roles, calculation groups, and the file/warehouse each table loads from together with the transformation steps applied on the way in | `concordance/adapters/` |
 | **BRD/FRD generation** | Derives business and functional requirement statements from the model's structure. Each one carries the object(s) it was derived from and a SHA-256 fingerprint of the logic | `concordance/generate/` |
 | **Fingerprinting** | Canonicalizes DAX (via a hand-written lexer, not regex) before hashing, so reformatting a measure never looks like a change, but a changed filter or constant always does | `concordance/fingerprint.py`, `concordance/normalize/dax.py` |
-| **Drift detection** | Compares two versions of a model and reports what was added, removed, changed, or renamed — renames are *proven* by identical fingerprint, not guessed by name similarity — and which requirements that puts in question | `concordance/drift/` |
+| **Drift detection** | Compares two versions of a model and reports what was added, removed, changed, or renamed — renames are *proven* by identical fingerprint, not guessed by name similarity — and which requirements that puts in question. Covers the three places a change moves every number while all measure fingerprints stay identical: an RLS filter, a calculation group item, and a table's load query | `concordance/drift/` |
 | **Cross-platform reconciliation** | Compares a Power BI measure's DAX against a warehouse view's SQL by what each one structurally reads (tables, columns, aggregations), since the two never hash alike even when correct | `concordance/reconcile/` |
 | **Metric pairing** | Suggests that two differently-named metrics might be the same one, using both name similarity and structural overlap, so it catches cases a name-only match misses and demotes false positives a name-only match would create | `concordance/reconcile/metrics.py` |
 | **Lineage graph** | Traces a number from the source file/warehouse it was loaded from, through the columns and measures, to the number a report shows | `concordance/graph/csg.py`, `frontend/src/components/Lineage.tsx` |
 | **Grounded chatbot** | Answers questions about the model by calling read-only tools against the graph — never from memory — so an answer is always checkable against the model | `concordance/agent/`, `concordance/llm/` |
 | **Review / decision log** | Lets a person accept, reject, or correct a low-confidence requirement. The decision is bound to the fingerprint(s) it was made against, so it automatically goes **stale** — not silently carried over — when the underlying logic changes | `concordance/review/decisions.py` |
-| **Access control** | Optional shared-token auth for when the server is exposed beyond localhost | `concordance/web/server.py` |
+| **Access control** | Optional shared-token auth for when the server is exposed beyond localhost, or per-reviewer tokens (`--users`) so a decision records the identity the server resolved rather than one the caller supplied | `concordance/web/server.py`, `concordance/review/identity.py` |
 | **Multi-model serving** | One server process can host several models at once, each with its own independent chat session, drift baseline, and warehouse | `concordance/web/api.py` (`ModelRegistry`) |
 | **Web interface** | A six-view React app: Overview, Model (browser + lineage), Requirements, Drift, Reconcile, Review — plus a docked chat panel | `frontend/src/` |
 | **CLI** | `extract`, `inspect`, `explain`, `verify`, `ask`, `reconcile`, `drift`, `auditpack`, `snapshot`, `document`, `serve` | `concordance/cli.py` |
@@ -44,7 +44,7 @@ untouched.
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         SOURCE (one of)                              │
 │   .pbix file          TMDL folder          SQL warehouse             │
-│   (pbixray)           (hand-written        (DuckDB / Snowflake,      │
+│   (pbixray)           (hand-written        (DuckDB,                  │
 │                        TMDL parser)         via sqlglot AST)         │
 └──────────────┬───────────────┬───────────────────┬───────────────────┘
                │               │                   │
@@ -94,19 +94,20 @@ Three adapters, one shared output shape (`SemanticModel`):
 
 - **`pbix.py`** — reads Power BI's compiled `.pbix` format via `pbixray`. Also extracts
   each table's Power Query (M) source text and the model's coverage gaps (features present
-  in the file that this adapter does not yet turn into graph objects — RLS roles,
-  calculation groups, perspectives — reported, never silently dropped).
+  in the file that this adapter does not yet turn into graph objects — perspectives,
+  translations, column variations — reported, never silently dropped).
 - **`tmdl.py`** — a hand-written parser for Microsoft's TMDL text format (indentation and
   keyword-based, ~600 lines, no third-party TMDL library exists). Recently extended to
   derive coverage gaps the same way `pbix.py` does, by walking every declaration in the
-  file and subtracting the ones that become graph objects — so an unfamiliar construct
-  (verified with `tablePermission`, which was never explicitly listed) is still reported.
+  file and subtracting the ones that become graph objects — so a construct nobody listed
+  is still reported. Because the list is derived rather than declared, extending
+  extraction shrinks the disclaimer automatically: reading RLS roles and calculation
+  groups removed them from the gap list with no list to edit.
 - **`sql.py`** — reads a warehouse's `information_schema` and view definitions through any
-  DB-API-shaped connection. `from_duckdb()` is the credential-free default (used for local
-  development and testing); `from_snowflake()` wraps `snowflake-connector-python` behind
-  the same interface. Adding Databricks or another warehouse means writing one more
-  `from_x()` function — the comparison logic underneath (`SqlAdapter`) is already
-  dialect-agnostic via `sqlglot`.
+  DB-API-shaped connection. `from_duckdb()` is the supported warehouse and needs no
+  credentials, which is why the reconciliation demo runs for anyone who clones the repo.
+  Adding a cloud warehouse later means writing one more `from_x()` function — the
+  comparison logic underneath (`SqlAdapter`) is already dialect-agnostic via `sqlglot`.
 
 ### Power Query (M) lineage — `concordance/normalize/mquery.py`
 
@@ -241,7 +242,7 @@ API key.
   constant-time-compared access token for when the server is bound beyond loopback.
 
 Every error path is guarded: a missing model file, a corrupt warehouse database, a
-Snowflake connection failure, and a malformed request body all return a readable JSON
+warehouse connection failure, and a malformed request body all return a readable JSON
 error rather than a stack trace or a dropped connection — verified by deliberately
 constructing each failure and checking the actual response.
 
@@ -269,7 +270,7 @@ Node required).
 
 ## 14. Testing
 
-**504 Python tests, 32 frontend tests.** Both suites are written against real behavior,
+**559 Python tests, 32 frontend tests.** Both suites are written against real behavior,
 not mocks of it wherever a real dependency is available — DuckDB stands in for a warehouse
 credential-free, and the fixture models in `data/models/` are real (if small) Power BI
 files, not synthetic data.
@@ -285,18 +286,24 @@ Stated here in the same terms the software states them to a user, because a tool
 subject is "does this document overstate what it knows" has to hold itself to the same
 standard:
 
-- **Snowflake**: the connector (`sql.py::from_snowflake`) is written and unit-tested
-  against a fake DB-API cursor, but has never authenticated to a live account — this
-  development sandbox's network policy blocks `*.snowflakecomputing.com` outright
-  (confirmed, not assumed). It needs to be run from an unrestricted network to prove the
-  live path.
-- **Databricks and AWS** are not implemented. The `SqlAdapter` underneath is
-  dialect-agnostic (via `sqlglot`), so adding either is a new `from_x()` connector
-  function, not new comparison logic.
-- **RLS roles, calculation groups, and M transformation steps** are detected and reported
-  as coverage gaps but not interpreted — the tool tells you they exist and what that means
-  for the document's completeness, but does not read their logic.
-- **No LLM in requirement generation**, by design (determinism and traceability), which
-  means requirement prose can read repetitively in models with many similar measures.
-- **No multi-user identity.** A shared access token is not a person, and the decision log
-  records an author as a *claim*, not an authenticated fact.
+- **Cloud warehouse connectors are out of scope.** DuckDB is the supported warehouse, and
+  that is a choice rather than a shortfall: it exposes the same standard information
+  schema the cloud warehouses do, so the extraction path exercised is the real one, and it
+  needs no account or network, so the reconciliation demo runs for anyone who clones the
+  repository. The `SqlAdapter` underneath is dialect-agnostic (via `sqlglot`), so adding
+  Snowflake, Databricks or Redshift later is a new `from_x()` connector function against a
+  stable interface, not new comparison logic.
+- **Perspectives, translations and column variations** are detected and reported as
+  coverage gaps but not interpreted — the tool says they exist and what that means for
+  the document's completeness, without reading their contents.
+- **No LLM in requirement generation**, by design (determinism and traceability).
+  Sentences now vary with what each measure actually does, but the vocabulary is finite by
+  construction; fluency is the price paid for a document that is byte-identical on every
+  run and traceable to a fingerprint.
+- **Reconciliation compares structure, not values.** Whether two expressions in two
+  languages compute the same number is undecidable in general, which is why there is a
+  third verdict rather than a forced pass/fail.
+- **Identity is per-token, not per-account.** With `--users`, a decision records the name
+  resolved from the reviewer's own token and cannot be attributed to anyone else; without
+  it, the author is recorded as the claim it is. There is no password store, no session
+  login and no role hierarchy — a personal bearer token is the whole mechanism.

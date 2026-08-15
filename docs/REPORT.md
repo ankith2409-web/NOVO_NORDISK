@@ -116,10 +116,12 @@ This is the part that is hardest to demo and matters most in a regulated industr
 
 ## 6. Engineering
 
-- **9,323 lines of Python, 3,948 of TypeScript, 531 automated tests** (499 Python, 32
-  frontend). The frontend tests were mutation-checked — each was confirmed to fail when
-  the logic it covers is deliberately broken, because a test that cannot fail protects
-  nothing and a green run does not show that.
+- **10,713 lines of Python, 4,081 of TypeScript, 591 automated tests** (559 Python, 32
+  frontend). Tests were mutation-checked — each confirmed to fail when the logic it covers
+  is deliberately broken, because a test that cannot fail protects nothing and a green run
+  does not show that. The check applies to the load-bearing claims as well as the frontend:
+  the test asserting a reviewer cannot sign off under another name was verified to fail
+  when the server is allowed to take the author from the request body.
 - **sqlglot** parses warehouse SQL into a real AST for the same reason DAX is lexed.
 - **Dependency-light by choice**: the web layer is stdlib `http.server`; the lineage
   diagram is hand-laid-out SVG rather than a graph library.
@@ -131,23 +133,29 @@ This is the part that is hardest to demo and matters most in a regulated industr
 
 Several defects were found by running the software against real data rather than by unit
 tests — a Python list repr leaking into user-facing output, four bugs in warehouse
-extraction, a source-pairing rule that produced six suggestions where one was useful. Each
-is recorded in the commit history with the measurement that exposed it.
+extraction, a source-pairing rule that produced six suggestions where one was useful, a
+table declared outside the expected folder being dropped in silence, and a generated
+requirement that called a ratio a count because it read an aggregation out of the
+denominator. Each is recorded in the commit history with the measurement that exposed it.
 
 ## 7. Honest status
 
 **Proven end to end:** both Power BI formats, drift, reconciliation, lineage to source,
-the grounded chatbot, the decision log, multi-model serving, and optional access control.
+the grounded chatbot, the decision log, multi-model serving, access control, row-level
+security and calculation-group extraction, Power Query step interpretation, and
+per-reviewer identity — a reviewer presenting their own token cannot record a decision
+under a colleague's name, verified against a running server.
 
-**Written but not proven live:** a Snowflake connector ships and is unit-tested against a
-DB-API cursor. It has never authenticated to a live account — the development sandbox
-blocks that host at the network layer, confirmed against a real trial account rather than
-assumed.
+**Out of scope by decision:** cloud warehouse connectors. DuckDB exposes the same standard
+information schema, so the extraction path exercised is the real one, and it needs no
+account — which is what lets anyone clone the repository and run the reconciliation demo.
+The comparison logic is dialect-agnostic, so adding one later is a connector function
+against a stable interface.
 
-**Not built:** RLS filters, calculation-group logic and Power Query transformation steps
-are counted and named but not interpreted. There is no multi-user identity; a shared
-access token is not a person, and the decision log records an author as a *claim* rather
-than as an authenticated fact.
+**Not built:** perspectives, translations and column variations are counted and named but
+not read. Requirement prose is rule-generated rather than model-written, so its vocabulary
+is finite by construction — the price paid for a document that is byte-identical on every
+run and traceable to a fingerprint.
 
 Every one of these limits is reported by the software at the point of use, not only here.
 That is the same standard the tool applies to the models it reads, and applying it to
