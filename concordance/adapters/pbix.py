@@ -31,6 +31,7 @@ from concordance.model import (
     Table,
 )
 from concordance.normalize.dax import extract_references
+from concordance.normalize.mquery import canonicalise as canonicalise_m
 
 #: Model features PBIXRay surfaces that this adapter does not yet turn into
 #: graph objects. All three sample models report zero rows *and no columns* for
@@ -94,10 +95,21 @@ class PbixAdapter:
         implied = sorted(t for t in measure_hosts if t.casefold() not in known)
 
         for name in declared + implied:
+            query = power_query.get(name)
             model.tables.append(
                 Table(
                     name=name,
-                    fingerprint=fingerprint_text(name),
+                    # Over the load query too, exactly as the TMDL adapter does.
+                    # Held to the same rule on purpose: a guarantee that depends
+                    # on which file format a model was saved in is not a
+                    # guarantee. 15 of 18 tables in Sales_Returns_Sample carry M,
+                    # and without this their load queries could be rewritten with
+                    # nothing in the model registering a change.
+                    fingerprint=(
+                        fingerprint_parts(name, canonicalise_m(query))
+                        if query
+                        else fingerprint_text(name)
+                    ),
                     is_system=bool(_SYSTEM_TABLE.match(name)),
                     # PBIXRay does not surface column visibility, so every
                     # extracted column counts as visible here.

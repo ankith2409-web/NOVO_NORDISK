@@ -167,3 +167,28 @@ def test_an_unfiltered_table_does_not_carry_the_warning(tmp_path: Path) -> None:
     derived = RequirementDeriver(SemanticGraph(TmdlAdapter().extract(str(root)))).derive()
     statement = next(r.statement for r in derived if r.category == "Data acquisition")
     assert "not a row-for-row copy" not in statement
+
+
+def test_the_pbix_adapter_holds_the_same_rule_as_tmdl() -> None:
+    """A guarantee that depends on which file format a model was saved in is
+    not a guarantee. .pbix extracts M for most tables, and for a while
+    fingerprinted only their names -- so the blind spot closed above stayed
+    wide open for every .pbix model."""
+    from concordance.adapters.pbix import PbixAdapter
+    from concordance.fingerprint import fingerprint_text
+
+    source = Path("data/models/Sales_Returns_Sample.pbix")
+    if not source.exists():
+        pytest.skip(f"model not present: {source}")
+
+    model = PbixAdapter().extract(str(source))
+    with_query = [t for t in model.tables if t.power_query]
+    assert with_query, "the fixture is meant to carry Power Query"
+    for table in with_query:
+        assert table.fingerprint != fingerprint_text(table.name), (
+            f"{table.name} carries M that its fingerprint does not cover"
+        )
+    # And a table with no query is still identified by its name alone.
+    for table in model.tables:
+        if not table.power_query:
+            assert table.fingerprint == fingerprint_text(table.name)
