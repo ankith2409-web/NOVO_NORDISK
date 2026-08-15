@@ -26,7 +26,11 @@ function CopyButton({ value, label }: { value: string; label: string }) {
         setCopied(true);
         setTimeout(() => setCopied(false), 1400);
       }}
-      className="rounded border border-hairline px-1.5 py-0.5 font-mono text-[10px] text-faint hover:text-ink"
+      className={cx(
+        "rounded border border-hairline px-1.5 py-0.5 font-mono text-[10px]",
+        "transition-colors duration-(--duration-feedback) ease-(--ease-standard)",
+        copied ? "border-ok/40 text-ok" : "text-faint hover:text-ink",
+      )}
       aria-label={`Copy ${label}`}
     >
       {copied ? "copied" : "copy"}

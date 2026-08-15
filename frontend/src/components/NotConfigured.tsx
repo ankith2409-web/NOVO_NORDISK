@@ -18,6 +18,7 @@
  * a person ends up pasting a command that cannot work.
  */
 import { useState } from "react";
+import { Button } from "@/components/primitives";
 
 export function NotConfigured({
   title,
@@ -75,12 +76,9 @@ export function NotConfigured({
             <code className="min-w-0 flex-1 truncate font-mono text-xs text-ink">
               {flag} {example}
             </code>
-            <button
-              onClick={copy}
-              className="flex-none rounded border border-hairline px-1.5 py-0.5 font-mono text-[11px] text-muted hover:text-ink"
-            >
+            <Button onClick={copy} tone={copied ? "ok" : "quiet"} className="flex-none">
               {copied ? "copied" : "copy"}
-            </button>
+            </Button>
           </div>
 
           <p className="text-xs text-muted">{yields}</p>

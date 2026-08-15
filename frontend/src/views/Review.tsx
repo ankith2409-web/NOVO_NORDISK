@@ -24,7 +24,7 @@
  */
 import { useEffect, useState } from "react";
 import { api, type Requirement, type ReviewPayload, type Standing } from "@/lib/api";
-import { Chip, Empty, Failure, Loading, Stat } from "@/components/primitives";
+import { Button, Chip, Empty, Failure, Loading, Stat } from "@/components/primitives";
 import { RichText } from "@/components/RichText";
 import { cx } from "@/lib/cx";
 
@@ -101,12 +101,13 @@ export function Review() {
           </p>
         </div>
         {data.count > 0 && (
-          <button
+          <Button
             onClick={() => copyAll(data.pending, data.model)}
-            className="ml-auto flex-none rounded border border-hairline px-2.5 py-1 font-mono text-[11px] text-muted hover:text-ink"
+            tone={copied ? "ok" : "quiet"}
+            className="ml-auto flex-none"
           >
             {copied ? "copied" : "copy the queue"}
-          </button>
+          </Button>
         )}
       </header>
 
@@ -166,19 +167,14 @@ export function Review() {
               {data.can_decide && (
                 <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                   {(["accepted", "rejected", "corrected"] as const).map((verdict) => (
-                    <button
+                    <Button
                       key={verdict}
                       disabled={busy === requirement.id}
                       onClick={() => void record(requirement.id, verdict)}
-                      className={cx(
-                        "rounded border px-2 py-0.5 font-mono text-[11px] disabled:opacity-50",
-                        verdict === "accepted"
-                          ? "border-ok/40 text-ok hover:bg-ok-soft"
-                          : "border-hairline text-muted hover:text-ink",
-                      )}
+                      tone={verdict === "accepted" ? "ok" : "quiet"}
                     >
                       {verdict}
-                    </button>
+                    </Button>
                   ))}
                   {requirement.standing.status === "stale" && (
                     <span className="font-mono text-[11px] text-bad">

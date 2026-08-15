@@ -17,6 +17,7 @@ import {
   type LoadedModel,
   type Overview as OverviewData,
 } from "@/lib/api";
+import { Button } from "@/components/primitives";
 import { Copilot } from "@/components/Copilot";
 import { Intro } from "@/components/Intro";
 import { Overview } from "@/views/Overview";
@@ -216,32 +217,21 @@ export default function App() {
           {/* Always present. The copilot was previously hidden outright below
               1024px, which removed a core feature on a narrow window with
               nothing on screen to suggest it existed. */}
-          <button
+          <Button
             onClick={() => setShowCopilot((open) => !open)}
             aria-expanded={showCopilot}
             aria-controls="copilot"
-            className={cx(
-              "rounded border px-2 py-1 font-mono text-[11px]",
-              showCopilot
-                ? "border-accent/40 bg-accent-soft text-accent"
-                : "border-hairline text-muted hover:text-ink",
-            )}
+            tone={showCopilot ? "selected" : "quiet"}
           >
             copilot
-          </button>
-          <button
-            onClick={() => setIntro(true)}
-            className="rounded border border-hairline px-2 py-1 font-mono text-[11px] text-muted hover:text-ink"
-          >
-            guide
-          </button>
-          <button
+          </Button>
+          <Button onClick={() => setIntro(true)}>guide</Button>
+          <Button
             onClick={toggleTheme}
-            className="rounded border border-hairline px-2 py-1 font-mono text-[11px] text-muted hover:text-ink"
             aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
           >
             {theme === "dark" ? "light" : "dark"}
-          </button>
+          </Button>
         </div>
       </header>
 
@@ -261,6 +251,8 @@ export default function App() {
               }
               className={cx(
                 "flex items-center justify-between gap-1 rounded px-2.5 py-1.5 text-left text-sm",
+                "transition-colors duration-(--duration-feedback) ease-(--ease-standard)",
+                "pointer-coarse:min-h-11",
                 view === entry.id
                   ? "bg-accent-soft font-medium text-accent"
                   : "text-muted hover:bg-raised hover:text-ink",

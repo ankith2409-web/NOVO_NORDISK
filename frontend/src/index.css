@@ -18,7 +18,11 @@
   --color-raised: #eaedf1;
   --color-ink: #14171f;
   --color-muted: #59616f;
-  --color-faint: #838b98;
+  /* Measured, not chosen. #838b98 rendered secondary text at 2.93:1 against
+   * `raised` -- below the 4.5:1 floor for anything under 18.66px, which is
+   * every use of it here. Darkened along its own hue to the lightest value
+   * that clears 4.5:1 against the darkest surface it is ever set on. */
+  --color-faint: #666c76;
   --color-hairline: #dde1e7;
   --color-edge: #c8cdd6;
 
@@ -27,14 +31,67 @@
 
   --color-ok: #3f6b47;
   --color-ok-soft: #e4ede5;
-  --color-review: #8e6410;
+  /* 4.51:1 on `review-soft`. The previous #8e6410 read 4.45:1 there -- close
+   * enough to look fine and still a failure, which is the kind only a
+   * measurement catches. */
+  --color-review: #8d6310;
   --color-review-soft: #f4ebd7;
   --color-bad: #a6392f;
   --color-bad-soft: #f6e3e0;
 
+  /* System stacks, deliberately. The page is inlined into a single file served
+   * by a Python http.server that routes `/` and `/api` and nothing else, and a
+   * test asserts it requests no external asset -- a webfont import would break
+   * that and leave an air-gapped machine staring at a fallback anyway. */
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
   --font-serif: "Iowan Old Style", Charter, Georgia, serif;
+
+  /* Motion, named by intent rather than by number.
+   *
+   * Two durations, because there are two kinds of motion here and one value for
+   * both is what makes an interface feel wrong: feedback to something the user
+   * just did has to land almost immediately, while content arriving on its own
+   * needs long enough to be noticed. `--ease-exit` is faster than entry on
+   * purpose -- a thing leaving should get out of the way, not perform.
+   *
+   * This is a tool people re-read numbers in all day. Nothing that holds a
+   * figure animates; motion is limited to arrival, dismissal and feedback. */
+  --duration-feedback: 150ms;
+  --duration-enter: 260ms;
+  --duration-exit: 120ms;
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+
+  --animate-rise: rise var(--duration-enter) var(--ease-enter) both;
+  --animate-thinking: thinking 1.4s ease-in-out infinite;
+}
+
+/* Content arriving where there was none: a chat answer, a generated summary.
+ * Small travel on purpose -- 6px reads as "this is new" without the page
+ * appearing to reflow. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The only looping animation in the interface, and it earns it: it is the sole
+ * indication that a request is still in flight. Opacity only, so it composites
+ * on the GPU and never triggers layout. */
+@keyframes thinking {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 /* A dark workspace suits a tool you sit in all day, but the audit pack and the
@@ -47,7 +104,8 @@
     --color-raised: #1b2029;
     --color-ink: #e5e8ed;
     --color-muted: #9ba4b1;
-    --color-faint: #6e7785;
+    /* Same measurement, same floor: #6e7785 was 3.61:1 on `raised`. */
+    --color-faint: #7d8797;
     --color-hairline: #232932;
     --color-edge: #333b47;
 
@@ -99,11 +157,34 @@
   }
 }
 
+/* Every interactive element says so under the cursor, and none of them lose
+ * their focus ring. Set once here rather than remembered at ~20 call sites. */
+@layer base {
+  button:not(:disabled),
+  select,
+  summary,
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+}
+
+/* Honoured, and honoured completely: an infinite loop left running at 0.01ms is
+ * still a repaint every frame on a machine whose owner has asked for stillness.
+ *
+ * Nothing is lost by this. No state in the interface is conveyed by motion
+ * alone -- the thinking indicator carries the word "Thinking", an arriving
+ * answer is legible without having faded in -- which is what makes the switch
+ * safe to throw this hard. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
-    animation-duration: 0.01ms !important;
+    animation: none !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

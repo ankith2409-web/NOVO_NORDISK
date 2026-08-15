@@ -7,9 +7,70 @@
  * a projector in a bright room flattens the muted palette this tool uses on
  * purpose. A word costs a few pixels and survives all three.
  */
-import type { ReactNode } from "react";
+import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
 import type { Confidence, Verdict } from "@/lib/api";
 import { cx } from "@/lib/cx";
+
+/**
+ * The one button.
+ *
+ * Eighteen hand-rolled buttons had drifted into eighteen slightly different
+ * paddings, hover rules and focus behaviours, and only one of them showed a
+ * pointer cursor. That is the kind of inconsistency nobody reports and
+ * everybody feels.
+ *
+ * `min-h-8` on a pointer device, `min-h-11` once the primary input is coarse:
+ * 44px is the touch target a finger needs, and 44px everywhere would make a
+ * dense tool look like a phone app. The media query is the honest way to have
+ * both.
+ */
+const BUTTON_TONE = {
+  quiet: "border-hairline text-muted hover:bg-raised hover:text-ink",
+  selected: "border-accent/40 bg-accent-soft text-accent",
+  primary:
+    "border-accent bg-accent text-ground hover:brightness-110 disabled:hover:brightness-100",
+  ok: "border-ok/40 text-ok hover:bg-ok-soft",
+  review: "border-review/40 text-review hover:bg-review-soft",
+  bad: "border-bad/40 text-bad hover:bg-bad-soft",
+} as const;
+
+export function Button({
+  tone = "quiet",
+  size = "sm",
+  className,
+  children,
+  ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  tone?: keyof typeof BUTTON_TONE;
+  size?: "sm" | "icon";
+  // Declared rather than left to ride along in `...rest`. React 19 passes a
+  // ref to a function component as an ordinary prop, so the spread happens to
+  // work -- but the intro's focus trap depends on this landing on the real
+  // DOM node, and a dependency that subtle should be written down.
+  ref?: Ref<HTMLButtonElement>;
+}) {
+  return (
+    <button
+      className={cx(
+        "inline-flex items-center justify-center gap-1.5 rounded border",
+        "font-mono text-[11px] leading-none whitespace-nowrap",
+        // Colour and background only. Never size, never position: a control
+        // that moves under the cursor is a control that gets mis-clicked.
+        "transition-[color,background-color,border-color,filter]",
+        "duration-(--duration-feedback) ease-(--ease-standard)",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        size === "icon"
+          ? "size-8 p-0 pointer-coarse:size-11"
+          : "min-h-8 px-2 py-1 pointer-coarse:min-h-11 pointer-coarse:px-3",
+        BUTTON_TONE[tone],
+        className,
+      )}
+      {...rest}
+    >
+      {children}
+    </button>
+  );
+}
 
 const TONE = {
   ok: "bg-ok-soft text-ok",

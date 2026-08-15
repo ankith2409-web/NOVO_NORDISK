@@ -11,6 +11,8 @@
  */
 import { useState } from "react";
 import type { Summary as SummaryPayload } from "@/lib/api";
+import { Button } from "@/components/primitives";
+import { AlertIcon, SparkIcon } from "@/components/icons";
 
 export function Summary({
   fetch,
@@ -41,38 +43,51 @@ export function Summary({
 
   if (state === "idle") {
     return (
-      <button
-        onClick={() => void generate()}
-        className="self-start rounded border border-hairline px-2.5 py-1 font-mono text-[11px] text-muted hover:text-ink"
-      >
-        ✨ Generate AI summary
-      </button>
+      <Button onClick={() => void generate()} className="self-start">
+        <SparkIcon size={13} />
+        Generate AI summary
+      </Button>
     );
   }
 
   if (state === "loading") {
-    return <p className="font-mono text-[11px] text-faint">Asking the model for a summary…</p>;
+    return (
+      <p className="flex items-center gap-2 font-mono text-[11px] text-faint">
+        <span className="flex gap-1" aria-hidden="true">
+          {[0, 1, 2].map((index) => (
+            <span
+              key={index}
+              className="size-1.5 rounded-full bg-faint animate-(--animate-thinking)"
+              style={{ animationDelay: `${index * 160}ms` }}
+            />
+          ))}
+        </span>
+        Asking the model for a summary…
+      </p>
+    );
   }
 
   if (state === "failed") {
     return (
-      <p className="font-mono text-[11px] text-faint">
+      <p className="flex items-center gap-1.5 font-mono text-[11px] text-faint">
+        <AlertIcon size={13} className="flex-none" />
         No AI summary: {failure}
       </p>
     );
   }
 
   return (
-    <div className="rounded border border-accent/30 bg-accent-soft px-3.5 py-2.5">
+    <div className="animate-(--animate-rise) rounded border border-accent/30 bg-accent-soft px-3.5 py-2.5">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="font-mono text-[10px] tracking-[0.08em] text-accent uppercase">
+        <span className="flex items-center gap-1.5 font-mono text-[10px] tracking-[0.08em] text-accent uppercase">
+          <SparkIcon size={12} />
           AI-generated summary
         </span>
         {summary?.provider && (
           <span className="font-mono text-[10px] text-faint">{summary.provider}</span>
         )}
       </div>
-      <p className="mt-1 text-sm">{summary?.text}</p>
+      <p className="mt-1 text-sm leading-relaxed">{summary?.text}</p>
       <p className="mt-1.5 font-mono text-[10.5px] text-faint">
         {summary?.disclaimer ?? "Verify against the evidence below."}
       </p>

@@ -12,15 +12,7 @@
  */
 import { useEffect, useState } from "react";
 import { api, SNAPSHOT_MODE, type DriftChange, type DriftPayload } from "@/lib/api";
-import {
-  Chip,
-  ConfidenceChip,
-  Empty,
-  Failure,
-  Loading,
-  Panel,
-  Stat,
-} from "@/components/primitives";
+import { Button, Chip, ConfidenceChip, Empty, Failure, Loading, Panel, Stat } from "@/components/primitives";
 import { NotConfigured, SnapshotGap } from "@/components/NotConfigured";
 import { RichText } from "@/components/RichText";
 import { Summary } from "@/components/Summary";
@@ -177,24 +169,25 @@ export function Drift() {
               </h2>
               <div className="flex flex-wrap gap-1">
                 {KINDS.filter((k) => k === null || present.has(k)).map((kind) => (
-                  <button
+                  <Button
                     key={kind ?? "all"}
                     onClick={() => setOnly(kind)}
                     aria-pressed={only === kind}
-                    className={cx(
-                      "rounded border px-1.5 py-0.5 font-mono text-[11px]",
-                      only === kind
-                        ? "border-accent/40 bg-accent-soft text-accent"
-                        : "border-hairline text-muted hover:text-ink",
-                    )}
+                    tone={only === kind ? "selected" : "quiet"}
                   >
                     {kind ?? "all"}
-                    <span className="ml-1 text-faint">
+                    {/* Inherits the button's own colour rather than pinning
+                        `text-faint`. Fixed to the token it failed at 3.85:1 on
+                        the selected button's accent background in dark mode,
+                        and dimming by opacity fails worse in light mode -- the
+                        count's subordinacy comes from its position, which
+                        costs no contrast at all. */}
+                    <span className="ml-1">
                       {kind === null
                         ? data.changes.length
                         : data.changes.filter((c) => c.kind === kind).length}
                     </span>
-                  </button>
+                  </Button>
                 ))}
               </div>
             </div>

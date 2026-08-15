@@ -19,6 +19,7 @@
  */
 import { useEffect, useRef } from "react";
 import type { Overview } from "@/lib/api";
+import { Button } from "@/components/primitives";
 
 export function Intro({
   overview,
@@ -107,13 +108,9 @@ export function Intro({
           <p className="font-mono text-[11px] text-faint">
             Reopen any time from “guide” in the header
           </p>
-          <button
-            ref={dismiss}
-            onClick={onClose}
-            className="rounded border border-accent/40 bg-accent-soft px-2.5 py-1 font-mono text-xs text-accent"
-          >
+          <Button ref={dismiss} onClick={onClose} tone="primary">
             start
-          </button>
+          </Button>
         </footer>
       </div>
     </div>

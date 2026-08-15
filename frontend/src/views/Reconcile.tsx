@@ -25,7 +25,7 @@ import {
 } from "@/lib/api";
 import { NotConfigured, SnapshotGap } from "@/components/NotConfigured";
 import { Summary } from "@/components/Summary";
-import { Chip, Failure, Loading, Panel, Stat, VerdictChip } from "@/components/primitives";
+import { Button, Chip, Failure, Loading, Panel, Stat, VerdictChip } from "@/components/primitives";
 import { cx } from "@/lib/cx";
 
 const HEADING: Record<Verdict, string> = {
@@ -111,13 +111,13 @@ export function Reconcile() {
               {HEADING[verdict]}{" "}
               <span className="font-mono text-xs font-normal text-faint">({items.length})</span>
               {foldable && (
-                <button
+                <Button
                   onClick={() => setShowConsistent((shown) => !shown)}
                   aria-expanded={open}
-                  className="ml-2 rounded border border-hairline px-1.5 py-0.5 font-mono text-[11px] font-normal text-muted hover:text-ink"
+                  className="ml-2 font-normal"
                 >
                   {open ? "hide" : "show"}
-                </button>
+                </Button>
               )}
             </h2>
             {open &&

@@ -15,15 +15,9 @@ import {
   type Requirement,
   type RequirementsPayload,
 } from "@/lib/api";
-import {
-  Chip,
-  ConfidenceChip,
-  Empty,
-  Failure,
-  Loading,
-  Stat,
-} from "@/components/primitives";
+import { Button, Chip, ConfidenceChip, Empty, Failure, Loading, Stat } from "@/components/primitives";
 import { RichText } from "@/components/RichText";
+import { ChevronIcon } from "@/components/icons";
 import { cx } from "@/lib/cx";
 
 type Kind = "business" | "functional";
@@ -70,19 +64,14 @@ export function Requirements() {
         </div>
         <div className="ml-auto flex gap-1">
           {(["business", "functional"] as Kind[]).map((option) => (
-            <button
+            <Button
               key={option}
               onClick={() => setKind(option)}
               aria-pressed={kind === option}
-              className={cx(
-                "rounded border px-2.5 py-1 font-mono text-[11px]",
-                kind === option
-                  ? "border-accent/40 bg-accent-soft text-accent"
-                  : "border-hairline text-muted hover:text-ink",
-              )}
+              tone={kind === option ? "selected" : "quiet"}
             >
               {option === "business" ? "BRD" : "FRD"}
-            </button>
+            </Button>
           ))}
         </div>
       </header>
@@ -113,19 +102,14 @@ export function Requirements() {
               show
             </span>
             {([null, "high", "medium", "low"] as (Confidence | null)[]).map((level) => (
-              <button
+              <Button
                 key={level ?? "all"}
                 onClick={() => setOnly(level)}
                 aria-pressed={only === level}
-                className={cx(
-                  "rounded border px-2 py-0.5 font-mono text-[11px]",
-                  only === level
-                    ? "border-accent/40 bg-accent-soft text-accent"
-                    : "border-hairline text-muted hover:text-ink",
-                )}
+                tone={only === level ? "selected" : "quiet"}
               >
                 {level ?? "all"}
-              </button>
+              </Button>
             ))}
           </div>
 
@@ -177,9 +161,21 @@ function Row({ requirement }: { requirement: Requirement }) {
           <button
             onClick={() => setOpen(!open)}
             aria-expanded={open}
-            className="w-full px-3.5 py-1.5 text-left font-mono text-[11px] text-faint hover:text-ink"
+            className={cx(
+              "flex w-full items-center gap-1.5 px-3.5 py-1.5 text-left",
+              "font-mono text-[11px] text-faint transition-colors",
+              "duration-(--duration-feedback) ease-(--ease-standard) hover:text-ink",
+            )}
           >
-            {open ? "−" : "+"} bound to {requirement.evidence.length} object
+            <ChevronIcon
+              size={12}
+              className={cx(
+                "flex-none transition-transform",
+                "duration-(--duration-feedback) ease-(--ease-standard)",
+                open && "rotate-90",
+              )}
+            />
+            bound to {requirement.evidence.length} object
             {requirement.evidence.length === 1 ? "" : "s"}
           </button>
 
