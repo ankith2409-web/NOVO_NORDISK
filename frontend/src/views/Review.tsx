@@ -228,6 +228,21 @@ function StandingLine({ standing }: { standing: Standing }) {
     >
       {standing.verdict}
       {standing.author_claimed ? ` by ${standing.author_claimed}` : ""}
+      {/* The name is worth very different amounts depending on this, so the
+          two are never shown the same way. Verified means the server resolved
+          the reviewer's own token; unverified means they typed the name. */}
+      {standing.author_claimed &&
+        (standing.author_verified ? (
+          <span className="text-ok" title="Resolved from this reviewer's own access token">
+            {" "}
+            ✓ verified
+          </span>
+        ) : (
+          <span className="text-faint" title="Self-declared: this server does not identify reviewers">
+            {" "}
+            (unverified)
+          </span>
+        ))}
       {standing.at ? ` · ${standing.at.slice(0, 10)}` : ""}
       {stale && " · no longer covers this definition, which has changed since"}
       {standing.note ? ` · "${standing.note}"` : ""}

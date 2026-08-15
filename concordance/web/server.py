@@ -162,6 +162,7 @@ def make_handler(
     provider: LlmProvider,
     context: api.ApiContext | api.ModelRegistry | None = None,
     access_token: str = "",
+    users=None,
 ) -> tuple[type[BaseHTTPRequestHandler], SessionStore]:
     """Build the request handler class for one model and provider.
 
@@ -180,6 +181,13 @@ def make_handler(
     server is handing out a company's DAX logic and letting anyone who finds
     the port spend its API quota. A shared token is not real identity, and does
     not pretend to be; it is the smallest honest control for that situation.
+
+    ``users`` is a ``review.identity.Directory``, and it is what turns the
+    review log's author from a claim into a fact. Each person presents their
+    own token, the server resolves it to a name, and that name is what gets
+    written -- never the one in the request body, which a caller could set to
+    anybody's. Supplying it also implies access control: there is no sense in
+    identifying reviewers on a server that lets an unidentified one in.
     """
     registry = context if context is not None else api.ApiContext(graph=graph)
     if not isinstance(registry, api.ModelRegistry):
@@ -194,6 +202,10 @@ def make_handler(
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "ConcordanceChat/0.1"
+        #: Set by `_authorised` from the token this request presented, for the
+        #: lifetime of that request only. Empty when no user directory is
+        #: configured, which is what makes an author a claim rather than a fact.
+        person = ""
 
         def log_message(self, format: str, *args) -> None:  # noqa: A002
             pass  # quiet by default; failures still surface in HTTP responses
@@ -204,6 +216,19 @@ def make_handler(
                 return
             if parsed.path == "/":
                 self._serve_page()
+            elif parsed.path == "/api/whoami":
+                # Answered here rather than in `api`, because it is the only
+                # question whose answer depends on the request rather than on
+                # the model -- everything under `api` is deliberately a pure
+                # function of a context and some parameters.
+                self._json(
+                    HTTPStatus.OK,
+                    {
+                        "person": self.person,
+                        "identified": bool(self.person),
+                        "identifies_reviewers": users is not None,
+                    },
+                )
             elif parsed.path in api.ALL_ROUTES:
                 self._serve_api(parsed.path, parse_qs(parsed.query))
             else:
@@ -318,7 +343,10 @@ def make_handler(
                 return
             try:
                 context = registry.resolve(params)
-                result = api.decide(context, payload)
+                # The name comes from the token this request presented, never
+                # from its body. A caller who could name the author could sign
+                # off as a colleague, which would make the trail worthless.
+                result = api.decide(context, payload, author=self.person)
             except api.ApiError as error:
                 self._json(HTTPStatus(error.status), error.payload())
                 return
@@ -374,7 +402,8 @@ def make_handler(
             comparison does not leak the token's length or its matching prefix
             through how long it takes to fail.
             """
-            if not access_token:
+            self.person = ""
+            if not access_token and users is None:
                 return True
 
             supplied = ""
@@ -386,15 +415,32 @@ def make_handler(
             if not supplied:
                 supplied = self._cookie(_TOKEN_COOKIE) or ""
 
-            if supplied and secrets.compare_digest(supplied, access_token):
+            # A personal token is tried first and, when it resolves, is the
+            # answer: it both admits the request and names who made it. The
+            # shared token still works alongside, and grants access without a
+            # name -- which is exactly how it is then recorded.
+            if users is not None and supplied:
+                person = users.resolve(supplied)
+                if person:
+                    self.person = person
+                    return True
+
+            if access_token and supplied and secrets.compare_digest(supplied, access_token):
                 return True
 
             self._json(
                 HTTPStatus.UNAUTHORIZED,
                 {
                     "error": "This server requires an access token.",
-                    "how": "Open the link printed by `concordance serve`, which "
-                    "carries the token, or send it as an Authorization: Bearer header.",
+                    "how": (
+                        "Use your personal token from the user file this server "
+                        "was started with, as ?token= or an Authorization: Bearer "
+                        "header."
+                        if users is not None
+                        else "Open the link printed by `concordance serve`, which "
+                        "carries the token, or send it as an Authorization: Bearer "
+                        "header."
+                    ),
                 },
             )
             return False
@@ -453,9 +499,12 @@ def serve(
     port: int = 8000,
     context: api.ApiContext | api.ModelRegistry | None = None,
     access_token: str = "",
+    users=None,
 ) -> None:
     """Run the chat server until interrupted."""
-    handler, _ = make_handler(graph, provider, context, access_token=access_token)
+    handler, _ = make_handler(
+        graph, provider, context, access_token=access_token, users=users
+    )
     httpd = ThreadingHTTPServer((host, port), handler)
     base = f"http://{host}:{httpd.server_port}/"
     # The printed link carries the token, so the person who started the server
@@ -470,9 +519,18 @@ def serve(
             "  serving the chat-only page: the built interface is missing. "
             "Run `npm --prefix frontend run build:embedded` for all six views."
         )
+    if users is not None:
+        # Named, because the difference between "someone signed this off" and
+        # "Anna signed this off" is the whole reason the flag exists, and
+        # nothing else on screen would reveal which one is in force.
+        print(
+            f"  {len(users)} reviewer(s) identified by personal token: "
+            f"{', '.join(users.names)}"
+        )
+        print("  review decisions will record the authenticated name, not a claim")
     if access_token:
         print("  access token required — share the link above to grant access")
-    elif host not in ("127.0.0.1", "localhost", "::1"):
+    elif users is None and host not in ("127.0.0.1", "localhost", "::1"):
         # Bound beyond loopback with nothing in front of it. Said plainly rather
         # than left for someone to discover.
         print(

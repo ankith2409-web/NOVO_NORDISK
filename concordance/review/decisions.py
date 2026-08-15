@@ -27,10 +27,14 @@ tolerates a truncated final line -- which is what a crash mid-write leaves
 behind. Moving this to a real store later changes where ``DecisionLog`` reads
 and writes and nothing above it.
 
-On identity: this server has no accounts, and a shared access token is not a
-person. ``author`` is therefore whatever the caller states, recorded as a claim
-rather than as an authenticated fact, and the field says so. Inventing a
-username would put a name against a decision that nobody can stand behind.
+On identity: a decision carries ``author`` and ``author_verified``, and they
+have to be read together. Started with ``--users``, the server resolves the
+token on the request back to a name and records it as verified -- a caller
+cannot sign off as someone else, because the name never comes from the request
+body. Without ``--users`` there is nothing to resolve, so ``author`` is
+whatever the caller states and is recorded as the claim it is. Both are kept in
+one log deliberately; what would be dishonest is storing them in a way a reader
+cannot tell apart.
 """
 
 from __future__ import annotations
@@ -66,8 +70,14 @@ class Decision:
     #: when this was decided. The whole mechanism turns on this field.
     bound_fingerprints: tuple[str, ...]
     note: str = ""
-    #: Claimed, not authenticated -- see the module docstring.
+    #: Who decided. Whether that is a fact or a claim is ``author_verified``,
+    #: and the two must always be read together.
     author: str = "unattributed"
+    #: True when the server resolved the author from the token the request
+    #: presented, rather than from the request body. A log that mixed the two
+    #: without distinguishing them would be worse than one that authenticated
+    #: nobody: every entry would have to be treated as a claim anyway.
+    author_verified: bool = False
     at: str = ""
 
     def to_json(self) -> str:
@@ -77,7 +87,11 @@ class Decision:
                 "verdict": self.verdict.value,
                 "bound_fingerprints": list(self.bound_fingerprints),
                 "note": self.note,
+                # The key still says "claimed", and still means it. An older
+                # log read by a newer build has no verified entries, which is
+                # exactly right -- nothing in it was ever authenticated.
                 "author_claimed": self.author,
+                "author_verified": self.author_verified,
                 "at": self.at,
             },
             sort_keys=True,
@@ -98,6 +112,7 @@ class Decision:
                 bound_fingerprints=tuple(raw.get("bound_fingerprints") or ()),
                 note=str(raw.get("note", "")),
                 author=str(raw.get("author_claimed", "unattributed")),
+                author_verified=bool(raw.get("author_verified", False)),
                 at=str(raw.get("at", "")),
             )
         except (json.JSONDecodeError, KeyError, ValueError, TypeError):
@@ -162,6 +177,7 @@ class DecisionLog:
         bound_fingerprints: tuple[str, ...],
         note: str = "",
         author: str = "unattributed",
+        author_verified: bool = False,
     ) -> Decision:
         """Append one decision and return it, timestamped."""
         decision = Decision(
@@ -170,6 +186,7 @@ class DecisionLog:
             bound_fingerprints=tuple(bound_fingerprints),
             note=note.strip(),
             author=author.strip() or "unattributed",
+            author_verified=author_verified,
             at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         )
         self.path.parent.mkdir(parents=True, exist_ok=True)

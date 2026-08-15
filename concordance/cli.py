@@ -497,6 +497,26 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
         token = _secrets.token_urlsafe(24)
 
+    users = None
+    if args.users:
+        from concordance.review.identity import Directory, DirectoryError
+
+        try:
+            users = Directory.load(args.users)
+        except DirectoryError as error:
+            # Refused rather than degraded. Falling back to an unidentified
+            # server after being asked to identify reviewers would record
+            # claims in a log the operator believes is authenticated.
+            print(f"{error}", file=sys.stderr)
+            return 2
+        if not args.decisions:
+            print(
+                "--users identifies reviewers, but without --decisions there is "
+                "no log to record them in. Pass --decisions <path.jsonl> too.",
+                file=sys.stderr,
+            )
+            return 2
+
     serve(
         graph,
         provider,
@@ -504,6 +524,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         port=args.port,
         context=context,
         access_token=token or "",
+        users=users,
     )
     return 0
 
@@ -861,13 +882,23 @@ def main(argv: list[str] | None = None) -> int:
         "concordance-decisions.jsonl in the current directory.",
     )
     p.add_argument(
+        "--users",
+        metavar="PATH",
+        help='a JSON file of {"name": "token"}, one token per reviewer. With '
+        "it, the server resolves each request's token to a person and records "
+        "that name against their review decisions as an authenticated fact "
+        "rather than a claim. Implies access control: every request must "
+        "carry a token the file knows.",
+    )
+    p.add_argument(
         "--token",
         nargs="?",
         const=_MINT_TOKEN_SENTINEL,
         default="",
         help="require an access token on every request. Pass a value to choose "
         "one, or use the flag alone to have one generated. Off by default, "
-        "which is safe on loopback and not safe once --host is opened up.",
+        "which is safe on loopback and not safe once --host is opened up. "
+        "Grants access without identifying anyone; see --users for that.",
     )
     p.set_defaults(func=cmd_serve)
 

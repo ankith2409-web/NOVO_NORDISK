@@ -80,8 +80,19 @@ export interface Standing {
   verdict: string;
   note?: string;
   author_claimed?: string;
+  /** True when the server resolved the name from the reviewer's own token
+   *  rather than taking it from the request body. Always shown alongside the
+   *  name: an audit trail that mixes facts and claims without saying which is
+   *  which forces every entry to be treated as a claim. */
+  author_verified?: boolean;
   at?: string;
-  history: { verdict: string; note: string; author_claimed: string; at: string }[];
+  history: {
+    verdict: string;
+    note: string;
+    author_claimed: string;
+    author_verified?: boolean;
+    at: string;
+  }[];
 }
 
 export interface ReviewPayload {

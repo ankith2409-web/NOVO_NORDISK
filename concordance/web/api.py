@@ -346,12 +346,16 @@ def _standing_dict(log, requirement: Requirement) -> dict[str, Any]:
         "verdict": standing.verdict,
         "note": standing.latest.note if standing.latest else "",
         "author_claimed": standing.latest.author if standing.latest else "",
+        "author_verified": (
+            standing.latest.author_verified if standing.latest else False
+        ),
         "at": standing.latest.at if standing.latest else "",
         "history": [
             {
                 "verdict": d.verdict.value,
                 "note": d.note,
                 "author_claimed": d.author,
+                "author_verified": d.author_verified,
                 "at": d.at,
             }
             for d in standing.history
@@ -359,13 +363,19 @@ def _standing_dict(log, requirement: Requirement) -> dict[str, Any]:
     }
 
 
-def decide(context: ApiContext, payload: dict[str, Any]) -> dict[str, Any]:
+def decide(
+    context: ApiContext, payload: dict[str, Any], author: str = ""
+) -> dict[str, Any]:
     """Record one person's answer about one requirement.
 
     The fingerprints written down are the ones derived *now*, not any supplied
     by the caller. A client that could state what it was deciding about could
     accept a statement while recording that it had approved something else --
     which is the one thing this record exists to make impossible.
+
+    ``author`` is passed in by the handler when it resolved the request's token
+    to a person, and it wins over anything in the body for the same reason:
+    a caller able to name the author could sign off as a colleague.
     """
     from concordance.review.decisions import DecisionLog, Verdict
 
@@ -414,7 +424,8 @@ def decide(context: ApiContext, payload: dict[str, Any]) -> dict[str, Any]:
         verdict=verdict,
         bound_fingerprints=found.bound_fingerprints,
         note=note,
-        author=str(payload.get("author", ""))[:_MAX_AUTHOR],
+        author=author or str(payload.get("author", ""))[:_MAX_AUTHOR],
+        author_verified=bool(author),
     )
     return {"requirement_id": found.id, "standing": _standing_dict(log, found)}
 
@@ -622,9 +633,10 @@ ROUTES: dict[str, Callable[[ApiContext, Params], dict[str, Any]]] = {
     "/api/reconcile": reconcile,
 }
 
-#: Answered from the registry rather than from one model, so it is listed apart
-#: from the routes above -- every one of those takes a single resolved context.
-_REGISTRY_ROUTES = ("/api/models",)
+#: Answered outside `ROUTES` because neither is a pure function of a context:
+#: `/api/models` is answered from the registry, and `/api/whoami` from the
+#: request's own token. Listed so the 404 body still names every real route.
+_REGISTRY_ROUTES = ("/api/models", "/api/whoami")
 
 ALL_ROUTES = tuple(sorted(ROUTES)) + _REGISTRY_ROUTES
 
