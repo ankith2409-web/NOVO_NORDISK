@@ -7,7 +7,7 @@
  * is one click away on every requirement, never a separate report -- provenance
  * that costs a page load is provenance nobody checks.
  */
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { recallOneOf, remember } from "@/lib/remember";
 import {
   api,
@@ -29,6 +29,7 @@ import {
 import { RichText } from "@/components/RichText";
 import { ChevronIcon, DownloadIcon } from "@/components/icons";
 import { cx } from "@/lib/cx";
+import { useLoad } from "@/lib/useLoad";
 
 type Kind = "business" | "functional";
 
@@ -45,19 +46,11 @@ export function Requirements() {
     setKindState(next);
     remember("requirements-kind", next);
   }
-  const [data, setData] = useState<RequirementsPayload | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error, reload } = useLoad<RequirementsPayload>(
+    () => api.requirements(kind),
+    [kind],
+  );
   const [only, setOnly] = useState<Confidence | null>(null);
-
-  useEffect(() => {
-    setData(null);
-    setError(null);
-    void (async () => {
-      const result = await api.requirements(kind);
-      if (result.ok) setData(result.data);
-      else setError(result.message);
-    })();
-  }, [kind]);
 
   const shown = data?.requirements.filter((r) => !only || r.confidence === only) ?? [];
 
@@ -88,8 +81,15 @@ export function Requirements() {
         </div>
       </header>
 
-      {error && <Failure message={error} />}
-      {!data && !error && <Loading what="the requirements" />}
+      {error && (
+        <Failure
+          message={error.message}
+          status={error.status}
+          what="the requirements"
+          onRetry={reload}
+        />
+      )}
+      {!data && !error && <Loading what="the requirements" rows={4} />}
 
       {data && (
         <>
@@ -126,7 +126,16 @@ export function Requirements() {
           </div>
 
           {shown.length === 0 ? (
-            <Empty>No requirements at that confidence level.</Empty>
+            <Empty
+              hint={
+                only === "low"
+                  ? "Nothing here was inferred — every statement in this document is either declared by the model or follows from a structural rule."
+                  : `The document has ${data.counts.total} requirement${data.counts.total === 1 ? "" : "s"}, none at this confidence level.`
+              }
+              action={{ label: "Show all", onClick: () => setOnly(null) }}
+            >
+              No requirements at that confidence level.
+            </Empty>
           ) : (
             <ul className="flex flex-col gap-1.5">
               {shown.map((requirement) => (

@@ -9,6 +9,8 @@
  */
 import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
 import type { Confidence, Verdict } from "@/lib/api";
+import { AlertIcon, RetryIcon } from "@/components/icons";
+import { present } from "@/lib/failures";
 import { cx } from "@/lib/cx";
 
 /**
@@ -218,25 +220,171 @@ export function Stat({
 }
 
 /** Failures arrive as values carrying a message meant for a person. Show it. */
-export function Failure({ message, hint }: { message: string; hint?: string[] }) {
+/**
+ * A failed request, presented as something a person can act on.
+ *
+ * Three things this does that a red box with a server string does not.
+ *
+ * It announces itself: `role="alert"` means a screen reader says the failure
+ * when it appears, rather than leaving it to be discovered by someone
+ * re-reading a page that looks unchanged.
+ *
+ * It offers a way out. "Error without recovery path" is the failure mode here
+ * -- the reader is told the request failed and left with a page they must
+ * reload by hand. `onRetry` re-runs the exact request that failed.
+ *
+ * And it distinguishes broken from refused. A crashed server is `bad`; a
+ * mistyped measure name is `review`, because the tool is working correctly and
+ * red would be a lie.
+ */
+export function Failure({
+  message,
+  hint,
+  status = 500,
+  what,
+  onRetry,
+}: {
+  message: string;
+  hint?: string[];
+  status?: number;
+  /** What was being loaded, for the fallback title: "Could not load …". */
+  what?: string;
+  onRetry?: () => void;
+}) {
+  const shown = present({ status, message, didYouMean: hint, what });
+  const suggestions = shown.suggestions ?? [];
+
   return (
-    <div className="m-3 rounded border border-bad/40 bg-bad-soft px-3.5 py-3">
-      <p className="text-sm text-bad">{message}</p>
-      {hint && hint.length > 0 && (
-        <p className="mt-1.5 font-mono text-xs text-muted">
-          Did you mean: {hint.join(", ")}
-        </p>
+    <div
+      role="alert"
+      className={cx(
+        "m-3 max-w-2xl rounded border px-3.5 py-3",
+        "animate-(--animate-rise)",
+        shown.tone === "bad"
+          ? "border-bad/40 bg-bad-soft"
+          : "border-review/40 bg-review-soft",
       )}
+    >
+      <div className="flex items-start gap-2.5">
+        <AlertIcon
+          size={15}
+          className={cx(
+            "mt-px flex-none",
+            shown.tone === "bad" ? "text-bad" : "text-review",
+          )}
+        />
+        <div className="min-w-0 flex-1">
+          <p
+            className={cx(
+              "text-sm font-medium",
+              shown.tone === "bad" ? "text-bad" : "text-review",
+            )}
+          >
+            {shown.title}
+          </p>
+
+          {shown.detail && <p className="mt-1 text-xs text-muted">{shown.detail}</p>}
+
+          {suggestions.length > 0 && (
+            <p className="mt-2 text-xs text-muted">
+              Did you mean{" "}
+              {suggestions.map((name, index) => (
+                <span key={name}>
+                  {index > 0 && (index === suggestions.length - 1 ? " or " : ", ")}
+                  <code className="font-mono text-[11.5px] text-ink">{name}</code>
+                </span>
+              ))}
+              ?
+            </p>
+          )}
+
+          {/* Selectable, because the point of showing a command is that someone
+              runs it. A command they have to retype is one they mistype. */}
+          {shown.instruction && (
+            <code className="mt-2 block w-fit rounded border border-hairline bg-ground px-2 py-1 font-mono text-[11.5px] text-ink select-all">
+              {shown.instruction}
+            </code>
+          )}
+
+          {onRetry && shown.retryLabel && (
+            <Button
+              onClick={onRetry}
+              tone={shown.tone === "bad" ? "bad" : "review"}
+              className="mt-2.5"
+            >
+              <RetryIcon size={11} className="flex-none" />
+              {shown.retryLabel}
+            </Button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
-export function Loading({ what }: { what: string }) {
+/**
+ * Waiting, with the shape of what is coming.
+ *
+ * A line of text saying "Reading…" tells you nothing about how long or how
+ * much, and the page jumps when the real content replaces it. Blocks in
+ * roughly the proportion of the eventual rows hold the layout still and make
+ * the wait legible.
+ *
+ * `aria-busy` and a live label carry the same information without sight; the
+ * blocks themselves are `aria-hidden`, since a screen reader announcing eight
+ * empty boxes is worse than silence.
+ */
+export function Loading({ what, rows = 3 }: { what: string; rows?: number }) {
   return (
-    <p className="p-4 font-mono text-xs text-faint">Reading {what}…</p>
+    <div className="flex flex-col gap-2.5 p-4" aria-busy="true">
+      <p className="sr-only" role="status">
+        Reading {what}
+      </p>
+      <div aria-hidden="true" className="flex flex-col gap-2.5">
+        {Array.from({ length: rows }, (_, index) => (
+          <div
+            key={index}
+            className="animate-(--animate-shimmer) rounded border border-hairline bg-raised"
+            style={{
+              // Descending widths read as text rather than as a loading bar,
+              // and the offset delay makes the group feel like one object
+              // instead of several blinking independently.
+              height: "3.25rem",
+              opacity: 1 - index * 0.15,
+              animationDelay: `${index * 90}ms`,
+            }}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 
-export function Empty({ children }: { children: ReactNode }) {
-  return <p className="p-4 text-sm text-muted">{children}</p>;
+/**
+ * Nothing to show, and why.
+ *
+ * An empty view that says only "no results" leaves the reader unsure whether
+ * the tool failed, the filter is too narrow, or there is genuinely nothing
+ * there. `hint` carries the difference, and `action` gets them out.
+ */
+export function Empty({
+  children,
+  hint,
+  action,
+}: {
+  children: ReactNode;
+  hint?: ReactNode;
+  action?: { label: string; onClick: () => void };
+}) {
+  return (
+    <div className="flex flex-col items-start gap-2 px-4 py-6">
+      <p className="text-sm text-muted">{children}</p>
+      {hint && <p className="max-w-prose text-xs text-faint">{hint}</p>}
+      {action && (
+        <Button onClick={action.onClick} className="mt-0.5">
+          {action.label}
+        </Button>
+      )}
+    </div>
+  );
 }

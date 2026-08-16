@@ -65,6 +65,7 @@
 
   --animate-rise: rise var(--duration-enter) var(--ease-enter) both;
   --animate-thinking: thinking 1.4s ease-in-out infinite;
+  --animate-shimmer: shimmer 1.6s ease-in-out infinite;
 }
 
 /* Content arriving where there was none: a chat answer, a generated summary.
@@ -78,6 +79,22 @@
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+/* A placeholder holding the space its content will occupy. Opacity only, for
+ * the same reason as `thinking`: it composites on the GPU and never reflows a
+ * page that is, by definition, already waiting on work.
+ *
+ * The floor is 0.55 rather than 0 -- a skeleton that fades out completely reads
+ * as content disappearing, which is the opposite of what it is there to say. */
+@keyframes shimmer {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
   }
 }
 

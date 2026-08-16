@@ -23,6 +23,7 @@ import { Chip, Failure, Loading, Panel } from "@/components/primitives";
 import { EvidenceDrawer } from "@/components/EvidenceDrawer";
 import { Lineage } from "@/components/Lineage";
 import { cx } from "@/lib/cx";
+import { useLoad } from "@/lib/useLoad";
 
 type Node = GraphPayload["nodes"][number] & {
   name?: string;
@@ -92,19 +93,10 @@ function group(nodes: Node[]): TableGroup[] {
 }
 
 export function Model() {
-  const [graph, setGraph] = useState<GraphPayload | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data: graph, error, reload } = useLoad<GraphPayload>(() => api.graph(), []);
   const [filter, setFilter] = useState("");
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Node | null>(null);
-
-  useEffect(() => {
-    void (async () => {
-      const result = await api.graph();
-      if (result.ok) setGraph(result.data);
-      else setError(result.message);
-    })();
-  }, []);
 
   const groups = useMemo(() => (graph ? group(graph.nodes as Node[]) : []), [graph]);
 
@@ -126,8 +118,16 @@ export function Model() {
   // A filtered tree that still needs expanding hides its own results.
   const expanded = filter.trim() ? new Set(shown.map((t) => t.name)) : open;
 
-  if (error) return <Failure message={error} />;
-  if (!graph) return <Loading what="the semantic graph" />;
+  if (error)
+    return (
+      <Failure
+        message={error.message}
+        status={error.status}
+        what="the semantic graph"
+        onRetry={reload}
+      />
+    );
+  if (!graph) return <Loading what="the semantic graph" rows={5} />;
 
   return (
     <div className="flex h-full min-h-0">
@@ -237,8 +237,9 @@ function Detail({
 }) {
   const [measure, setMeasure] = useState<MeasureDetail | null>(null);
   const [impact, setImpact] = useState<string[] | null>(null);
-  const [impactProblem, setImpactProblem] = useState<string | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
+  type Trouble = { status: number; message: string; didYouMean?: string[] };
+  const [impactProblem, setImpactProblem] = useState<Trouble | null>(null);
+  const [problem, setProblem] = useState<Trouble | null>(null);
 
   useEffect(() => {
     setMeasure(null);
@@ -251,14 +252,20 @@ function Detail({
       // A swallowed failure would leave this panel loading for ever, which
       // reads as "still working" rather than "this did not answer".
       if (affected.ok) setImpact(affected.data.would_be_affected);
-      else setImpactProblem(affected.message);
+      else
+        setImpactProblem({ status: affected.status, message: affected.message });
     })();
 
     if (node.kind !== "measure") return;
     void (async () => {
       const result = await api.measure(node.name ?? "");
       if (result.ok) setMeasure(result.data);
-      else setProblem(result.message);
+      else
+        setProblem({
+          status: result.status,
+          message: result.message,
+          didYouMean: result.didYouMean,
+        });
     })();
   }, [node]);
 
@@ -274,7 +281,14 @@ function Detail({
         )}
       </header>
 
-      {problem && <Failure message={problem} />}
+      {problem && (
+        <Failure
+          message={problem.message}
+          status={problem.status}
+          hint={problem.didYouMean}
+          what="this measure"
+        />
+      )}
 
       {measure?.description && <p className="text-sm text-muted">{measure.description}</p>}
 
@@ -336,7 +350,11 @@ function Detail({
           title={impact ? `Breaks if changed (${impact.length})` : "Breaks if changed"}
         >
           {impactProblem ? (
-            <Failure message={impactProblem} />
+            <Failure
+              message={impactProblem.message}
+              status={impactProblem.status}
+              what="the impact list"
+            />
           ) : impact === null ? (
             <Loading what="impact" />
           ) : impact.length === 0 ? (

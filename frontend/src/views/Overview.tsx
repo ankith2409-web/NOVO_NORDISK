@@ -7,27 +7,28 @@
  * easy to find as the headline numbers. Most tools bury this; here it sits above
  * the fold whenever there is something to say.
  */
-import { useEffect, useState } from "react";
-import { api, type Overview as OverviewData, type ReviewPayload } from "@/lib/api";
+import { api, type Overview as OverviewData } from "@/lib/api";
 import { Chip, Empty, Failure, Loading, Panel, Stat } from "@/components/primitives";
 import { RichText } from "@/components/RichText";
+import { useLoad } from "@/lib/useLoad";
 
 export function Overview({ overview }: { overview: OverviewData | null }) {
-  const [review, setReview] = useState<ReviewPayload | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
   // The overview itself is fetched once by the shell and passed in; only the
   // review queue is this view's own.
-  useEffect(() => {
-    void (async () => {
-      const result = await api.review();
-      if (result.ok) setReview(result.data);
-      else setError(result.message);
-    })();
-  }, []);
+  const { data: review, error, reload } = useLoad(() => api.review(), []);
 
   const data = overview;
-  if (!data) return error ? <Failure message={error} /> : <Loading what="the model" />;
+  if (!data)
+    return error ? (
+      <Failure
+        message={error.message}
+        status={error.status}
+        what="the model"
+        onRetry={reload}
+      />
+    ) : (
+      <Loading what="the model" />
+    );
 
   const gaps = data.not_extracted;
   const unresolved = data.unresolved_references;

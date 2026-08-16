@@ -115,6 +115,21 @@ signature. Both are rendered by the same code the command line uses, so the file
 downloads and the file the CLI writes cannot disagree — a test asserts they are
 byte-identical rather than leaving it to convention.
 
+Failures are presented as the situation they actually are rather than as one red box.
+A stopped server, an expired session, a name the model does not contain and an exhausted
+model quota are four unrelated problems with four different fixes, so each states what
+happened, why, and what to do — with the exact command where one applies, close-name
+suggestions where the server computed them, and a control that retries the request that
+failed. A refusal the tool handled correctly is not coloured the same as something
+breaking, because an interface that cries wolf is one whose warnings get ignored. Every
+failure carries `role="alert"`, so it is announced rather than left to be noticed.
+
+Colour is measured rather than chosen: `frontend/contrast.mjs` reads the tokens out of
+the stylesheet and checks every foreground/background pair the interface actually paints,
+in both themes, against the 4.5:1 floor. It runs as a script because the palette was
+already hand-tuned once to exactly that floor, and a value maintained from memory is one
+that silently drifts below it.
+
 ### 3.10 Command-line tool
 Eleven commands covering extraction, inspection, document generation, drift comparison,
 reconciliation, evidence-bundle export, and serving the web application.
@@ -140,7 +155,7 @@ piece of work against a stable interface rather than a redesign.
 
 ## 5. Verification
 
-- **649 automated Python tests, 43 automated frontend tests**, all passing.
+- **650 automated Python tests, 60 automated frontend tests**, all passing.
 - Tests for the load-bearing claims were deliberately broken once and confirmed to fail,
   to prove they actually catch the problems they claim to — including the one asserting a
   reviewer cannot sign off under another reviewer's name.

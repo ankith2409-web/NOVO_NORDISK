@@ -21,6 +21,7 @@ import {
 import { Button } from "@/components/primitives";
 import { Copilot } from "@/components/Copilot";
 import { Intro } from "@/components/Intro";
+import { FAVICON_SVG, Wordmark } from "@/components/Logo";
 import { Overview } from "@/views/Overview";
 import { Model } from "@/views/Model";
 import { Requirements } from "@/views/Requirements";
@@ -90,6 +91,19 @@ export default function App() {
     remember("intro-seen", "yes");
   }
   const [theme, toggleTheme] = useTheme();
+
+  // Set here rather than in index.html so the mark has exactly one definition.
+  // A second copy pasted into the template is a second thing to update, and the
+  // one that gets forgotten is always the one in the tab.
+  useEffect(() => {
+    const link =
+      document.querySelector<HTMLLinkElement>("link[rel='icon']") ??
+      document.head.appendChild(Object.assign(document.createElement("link"), {
+        rel: "icon",
+      }));
+    link.type = "image/svg+xml";
+    link.href = FAVICON_SVG;
+  }, []);
 
   // Who the server will record decisions as. Asked once: it depends on the
   // credential this browser is holding, not on which model is open.
@@ -227,7 +241,7 @@ export default function App() {
       )}
 
       <header className="flex items-center gap-3 border-b border-hairline bg-ground px-3 py-2">
-        <span className="font-serif text-sm font-semibold">Concordance</span>
+        <Wordmark />
         <span className="h-4 w-px bg-hairline" />
         {loaded.length > 1 ? (
           <label className="flex items-center gap-1.5">

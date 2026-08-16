@@ -185,7 +185,11 @@ _PAGE = """<!doctype html>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Sign in · Concordance</title>
-<link rel="icon" href="data:," />
+<!-- The mark, inline. This page is served before any bundle loads and must
+     stay one self-contained response, so it carries its own copy rather than
+     linking a file the server has no route for. `%23` is a literal `#`: raw,
+     it ends the URI at the fragment and the tab falls back to blank. -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%230f6e72'%20stroke-width='2.4'%20stroke-linecap='round'%3E%3Cpath%20d='M3.5%208.5h7'/%3E%3Cpath%20d='M13.5%208.5h7'/%3E%3Cpath%20d='M3.5%2015.5h7'/%3E%3Cpath%20d='M13.5%2015.5h7'/%3E%3Cpath%20d='M12%204.5v15'/%3E%3C/svg%3E" />
 <style>
   :root {
     --ground: #fcfcfd; --surface: #f3f5f7; --ink: #14171f; --muted: #59616f;
@@ -213,7 +217,11 @@ _PAGE = """<!doctype html>
   h1 {
     margin: 0; font-size: 1.35rem; letter-spacing: -0.01em;
     font-family: "Iowan Old Style", Charter, Georgia, serif;
+    display: flex; align-items: center; gap: 0.5rem;
   }
+  /* Optically centred rather than baseline-aligned: the mark has no descender,
+     so sitting it on the text baseline leaves it visibly high. */
+  .mark { color: var(--accent); flex: none; transform: translateY(0.5px); }
   .model {
     margin: 0.35rem 0 1.25rem; color: var(--faint);
     font: 12px ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -253,7 +261,15 @@ _PAGE = """<!doctype html>
 </head>
 <body>
   <main>
-    <h1>Concordance</h1>
+    <h1>
+      <svg class="mark" width="19" height="19" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="1.9" stroke-linecap="round"
+           aria-hidden="true" focusable="false">
+        <path d="M3.5 8.5h7" /><path d="M13.5 8.5h7" />
+        <path d="M3.5 15.5h7" /><path d="M13.5 15.5h7" />
+        <path d="M12 4.5v15" />
+      </svg>Concordance
+    </h1>
     <p class="model">__MODEL__</p>
 __METHODS__
   </main>

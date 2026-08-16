@@ -10,7 +10,7 @@
  * A change is shown with the fingerprint on both sides and the text each was
  * taken over, because "the hash moved" is not a finding a reviewer can act on.
  */
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api, SNAPSHOT_MODE, type DriftChange, type DriftPayload } from "@/lib/api";
 import { Button, Chip, ConfidenceChip, Empty, Failure, Loading, Panel, Stat } from "@/components/primitives";
 import { NotConfigured, SnapshotGap } from "@/components/NotConfigured";
@@ -18,6 +18,7 @@ import { RichText } from "@/components/RichText";
 import { Summary } from "@/components/Summary";
 import { cx } from "@/lib/cx";
 import { diffLines, worthMarking, type DiffLine } from "@/lib/linediff";
+import { useLoad } from "@/lib/useLoad";
 
 /** Most costly to overlook first. */
 const SEVERITY: Record<DriftChange["kind"], number> = {
@@ -44,17 +45,8 @@ const TONE = {
 } as const;
 
 export function Drift({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
-  const [data, setData] = useState<DriftPayload | null>(null);
-  const [error, setError] = useState<{ status: number; message: string } | null>(null);
+  const { data, error, reload } = useLoad<DriftPayload>(() => api.drift(), []);
   const [only, setOnly] = useState<DriftChange["kind"] | null>(null);
-
-  useEffect(() => {
-    void (async () => {
-      const result = await api.drift();
-      if (result.ok) setData(result.data);
-      else setError({ status: result.status, message: result.message });
-    })();
-  }, []);
 
   // 501 is the server saying a flag was not passed, which is not a failure and
   // must not be dressed as one. Anything else genuinely went wrong.
@@ -72,8 +64,16 @@ export function Drift({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
         alsoOn={alsoOn}
       />
     );
-  if (error) return <Failure message={error.message} />;
-  if (!data) return <Loading what="both versions" />;
+  if (error)
+    return (
+      <Failure
+        message={error.message}
+        status={error.status}
+        what="the drift report"
+        onRetry={reload}
+      />
+    );
+  if (!data) return <Loading what="both versions" rows={4} />;
 
   // Ordered by what it costs a reader to miss it: a removal breaks whatever
   // referenced it, a change silently alters a number, an addition adds

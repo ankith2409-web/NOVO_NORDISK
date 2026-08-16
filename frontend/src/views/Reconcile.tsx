@@ -14,7 +14,7 @@
  * difference that may or may not change the number, and collapsing it into
  * either neighbour would misreport it.
  */
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   api,
   SNAPSHOT_MODE,
@@ -27,6 +27,7 @@ import { NotConfigured, SnapshotGap } from "@/components/NotConfigured";
 import { Summary } from "@/components/Summary";
 import { Button, Chip, Failure, Loading, Panel, Stat, VerdictChip } from "@/components/primitives";
 import { cx } from "@/lib/cx";
+import { useLoad } from "@/lib/useLoad";
 
 const HEADING: Record<Verdict, string> = {
   divergent: "Divergent — these will report different numbers",
@@ -37,17 +38,8 @@ const HEADING: Record<Verdict, string> = {
 const ORDER: Verdict[] = ["divergent", "review", "consistent"];
 
 export function Reconcile({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
-  const [data, setData] = useState<ReconcilePayload | null>(null);
-  const [error, setError] = useState<{ status: number; message: string } | null>(null);
+  const { data, error, reload } = useLoad<ReconcilePayload>(() => api.reconcile(), []);
   const [showConsistent, setShowConsistent] = useState(false);
-
-  useEffect(() => {
-    void (async () => {
-      const result = await api.reconcile();
-      if (result.ok) setData(result.data);
-      else setError({ status: result.status, message: result.message });
-    })();
-  }, []);
 
   if (error?.status === 501 && SNAPSHOT_MODE)
     return <SnapshotGap title='Cross-platform reconciliation' why='Reconciliation reads a live warehouse alongside the model, so it cannot be captured into a static page.' />;
@@ -63,8 +55,16 @@ export function Reconcile({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
         alsoOn={alsoOn}
       />
     );
-  if (error) return <Failure message={error.message} />;
-  if (!data) return <Loading what="both platforms" />;
+  if (error)
+    return (
+      <Failure
+        message={error.message}
+        status={error.status}
+        what="the reconciliation"
+        onRetry={reload}
+      />
+    );
+  if (!data) return <Loading what="both platforms" rows={4} />;
 
   const counts = data.counts;
 

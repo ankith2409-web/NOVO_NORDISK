@@ -22,32 +22,26 @@
  * quietly carrying an old approval onto logic nobody has seen. An ordinary
  * approved column does the opposite by design.
  */
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api, type Requirement, type ReviewPayload, type Standing } from "@/lib/api";
 import { Button, Chip, Empty, Failure, Loading, Stat } from "@/components/primitives";
 import { RichText } from "@/components/RichText";
 import { cx } from "@/lib/cx";
+import { useLoad } from "@/lib/useLoad";
 
 export function Review() {
-  const [data, setData] = useState<ReviewPayload | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error, reload } = useLoad<ReviewPayload>(() => api.review(), []);
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState("");
-  const [problem, setProblem] = useState("");
-
-  async function load() {
-    const result = await api.review();
-    if (result.ok) setData(result.data);
-    else setError(result.message);
-  }
-
-  useEffect(() => {
-    void load();
-  }, []);
+  // Kept apart from `error`. A queue that failed to load leaves nothing on
+  // screen; a decision that failed to record leaves the queue perfectly
+  // readable and only that one write undone, and collapsing the two would
+  // blank the page over a recoverable write.
+  const [problem, setProblem] = useState<{ status: number; message: string } | null>(null);
 
   async function record(id: string, verdict: string) {
     setBusy(id);
-    setProblem("");
+    setProblem(null);
     const note =
       verdict === "rejected" || verdict === "corrected"
         ? // Asked for, not optional, on the two verdicts that assert the
@@ -60,13 +54,21 @@ export function Review() {
       return;
     }
     const result = await api.decide(id, verdict, note);
-    if (!result.ok) setProblem(result.message);
-    else await load();
+    if (!result.ok) setProblem({ status: result.status, message: result.message });
+    else reload();
     setBusy("");
   }
 
-  if (error) return <Failure message={error} />;
-  if (!data) return <Loading what="the review queue" />;
+  if (error)
+    return (
+      <Failure
+        message={error.message}
+        status={error.status}
+        what="the review queue"
+        onRetry={reload}
+      />
+    );
+  if (!data) return <Loading what="the review queue" rows={3} />;
 
   function copyAll(pending: Requirement[], model: string) {
     const text = [
@@ -124,7 +126,13 @@ export function Review() {
         </div>
       )}
 
-      {problem && <Failure message={problem} />}
+      {problem && (
+        <Failure
+          message={problem.message}
+          status={problem.status}
+          what="that decision"
+        />
+      )}
 
       {data.count > 0 && !data.can_decide && (
         <p className="max-w-prose rounded border border-hairline bg-ground px-3.5 py-2.5 text-xs text-muted">
