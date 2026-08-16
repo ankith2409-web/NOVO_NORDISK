@@ -1,0 +1,18 @@
+# Trimmed to what the build context actually needs. Nothing here changes
+# which files land in the image -- the Dockerfile's COPY lines already name
+# those explicitly -- this only stops an 8MB .pbix sample or a checked-out
+# .git history from being sent to the Docker daemon on every build.
+.git
+.venv
+__pycache__
+*.pyc
+node_modules
+frontend/dist
+frontend/dist-embedded
+frontend/node_modules
+data/models/*.pbix
+data/samples
+tests
+docs
+*.md
+!README.md

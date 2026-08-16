@@ -40,6 +40,17 @@ concordance = "concordance.cli:main"
 [tool.setuptools.packages.find]
 include = ["concordance*"]
 
+# Setuptools ships only `.py` files by default. Without this, `pip install .`
+# (a real, non-editable install -- what a Docker image or a PyPI release both
+# do) silently drops `concordance/web/static/*.html`, and `concordance serve`
+# then crashes on its first request with a `FileNotFoundError` no test in this
+# repo would ever catch, because every test runs against the source tree
+# rather than an installed package. Found exactly that way: installing into a
+# clean venv to verify a deploy container, which is the whole reason to do it
+# rather than trust the Dockerfile by inspection.
+[tool.setuptools.package-data]
+concordance = ["web/static/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
