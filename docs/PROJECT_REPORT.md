@@ -94,9 +94,11 @@ Each decision is bound to the fingerprint of the logic it was made against, so i
 logic later changes, the decision automatically becomes stale — it is not silently carried
 forward onto logic nobody has actually reviewed.
 
-Reviewers can be given individual access tokens, in which case the server records the
-name it resolved from the reviewer's own token rather than a name supplied in the
-request — so a reviewer cannot sign a decision off under a colleague's name. Every entry
+Reviewers sign in either through Auth0 — which brings account creation and Google with it
+as Universal Login features — or with a personal access token, kept as the path for a
+machine that cannot reach the internet. Either way the server records the name it resolved
+from the credential presented rather than a name supplied in the request, so a reviewer
+cannot sign a decision off under a colleague's name. Every entry
 also records whether its author was verified this way or merely self-declared, because a
 trail that mixes the two without saying which is which forces every entry to be treated
 as unverified.
@@ -132,7 +134,7 @@ piece of work against a stable interface rather than a redesign.
 
 ## 5. Verification
 
-- **590 automated Python tests, 32 automated frontend tests**, all passing.
+- **618 automated Python tests, 39 automated frontend tests**, all passing.
 - Tests for the load-bearing claims were deliberately broken once and confirmed to fail,
   to prove they actually catch the problems they claim to — including the one asserting a
   reviewer cannot sign off under another reviewer's name.
@@ -175,6 +177,11 @@ KPIs are not currently represented in any sample model.
   a warning that appears on every model is one nobody reads.
 - In the `.pbix` format, a role's model-level permission is never surfaced by the reader
   and is left empty rather than filled in with a plausible default.
+- Sign-in supports Auth0 — including account creation and Google, both of which are
+  Universal Login features rather than screens built here — with per-reviewer tokens kept
+  as the offline path. The Auth0 route has not yet been exercised against a live tenant:
+  its verification logic is tested against a locally generated signing key, but the
+  network this was built on blocks Auth0 outright. See `docs/AUTH.md`.
 - Requirement wording is generated from rules rather than by a language model. Sentences
   now vary according to what each measure actually does, but the vocabulary is finite by
   construction — this buys reproducibility and traceability at some cost in fluency, and

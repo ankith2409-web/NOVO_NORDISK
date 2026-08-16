@@ -26,6 +26,13 @@ dev = ["pytest>=8.0"]
 # platform-specific driver at all, and most uses of this project never touch
 # a live warehouse.
 snowflake = ["snowflake-connector-python>=3.0"]
+# Only needed for --auth0-domain. The `crypto` extra pulls in `cryptography`,
+# which is what actually verifies an RS256 signature; PyJWT alone would decode
+# the token and check nothing. Declared here rather than relied on
+# transitively -- it currently arrives via snowflake-connector-python, and an
+# authentication check resting on a dependency of an optional warehouse driver
+# is one `pip uninstall` away from silently having nothing behind it.
+auth0 = ["pyjwt[crypto]>=2.8"]
 
 [project.scripts]
 concordance = "concordance.cli:main"

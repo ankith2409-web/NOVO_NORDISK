@@ -95,7 +95,7 @@ def test_a_request_without_the_token_is_refused(guarded: Running) -> None:
     response = guarded.get("/api/overview")
     assert response.status == 401
     body = json.loads(response.read())
-    assert "access token" in body["error"]
+    assert "sign in" in body["error"]
     # The refusal has to say how to comply, or it is just a wall.
     assert "Authorization" in body["how"]
 

@@ -29,7 +29,9 @@ from urllib.parse import parse_qs, urlparse
 from concordance.agent.chat import ModelChat
 from concordance.graph.csg import SemanticGraph
 from concordance.llm.base import LlmError, LlmProvider
+from concordance.review.auth0 import Auth0Error
 from concordance.web import api
+from concordance.web.signin import _wants_html, sign_in_page
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _SESSION_COOKIE = "concordance_session"
@@ -163,6 +165,7 @@ def make_handler(
     context: api.ApiContext | api.ModelRegistry | None = None,
     access_token: str = "",
     users=None,
+    auth0=None,
 ) -> tuple[type[BaseHTTPRequestHandler], SessionStore]:
     """Build the request handler class for one model and provider.
 
@@ -188,6 +191,13 @@ def make_handler(
     written -- never the one in the request body, which a caller could set to
     anybody's. Supplying it also implies access control: there is no sense in
     identifying reviewers on a server that lets an unidentified one in.
+
+    ``auth0`` is an ``Auth0Verifier`` and is the same idea reached for at a
+    larger scale: it answers offboarding, password policy and "is this person
+    still employed", which a JSON file cannot, and brings signup and Google
+    sign-in with it. It does not replace ``users`` -- the normal deployment of
+    this tool is a laptop inside a regulated network, and requiring an internet
+    round-trip to read a local model would lock that person out of it.
     """
     registry = context if context is not None else api.ApiContext(graph=graph)
     if not isinstance(registry, api.ModelRegistry):
@@ -199,6 +209,12 @@ def make_handler(
 
     sessions = SessionStore(_chat_for)
     page_bytes = _page_for(graph.model.name)
+    # Rendered once: it depends only on how the server was started.
+    sign_in_bytes = sign_in_page(
+        model=graph.model.name,
+        auth0=auth0,
+        accepts_token=users is not None or bool(access_token),
+    )
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "ConcordanceChat/0.1"
@@ -206,6 +222,9 @@ def make_handler(
         #: lifetime of that request only. Empty when no user directory is
         #: configured, which is what makes an author a claim rather than a fact.
         person = ""
+        #: The credential this request presented, once it has been accepted.
+        #: Empty until then -- nothing unverified is ever echoed into a cookie.
+        credential = ""
 
         def log_message(self, format: str, *args) -> None:  # noqa: A002
             pass  # quiet by default; failures still surface in HTTP responses
@@ -213,6 +232,11 @@ def make_handler(
         def do_GET(self) -> None:  # noqa: N802 -- fixed by BaseHTTPRequestHandler
             parsed = urlparse(self.path)
             if not self._authorised(parse_qs(parsed.query)):
+                return
+            if parsed.path == "/signed-out":
+                # Reached after Auth0 clears its own session. Shows the sign-in
+                # page rather than bouncing straight back into a login loop.
+                self._serve_sign_in(clear=True)
                 return
             if parsed.path == "/":
                 self._serve_page()
@@ -226,7 +250,8 @@ def make_handler(
                     {
                         "person": self.person,
                         "identified": bool(self.person),
-                        "identifies_reviewers": users is not None,
+                        "identifies_reviewers": users is not None or auth0 is not None,
+                        "auth0": auth0 is not None,
                     },
                 )
             elif parsed.path in api.ALL_ROUTES:
@@ -240,6 +265,8 @@ def make_handler(
                 return
             if parsed.path == "/api/ask":
                 self._handle_ask()
+            elif parsed.path == "/api/session":
+                self._handle_session()
             elif parsed.path == "/api/decide":
                 self._handle_decide(parse_qs(parsed.query))
             else:
@@ -263,16 +290,41 @@ def make_handler(
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(page_bytes)))
             self._set_session_cookie(session_id)
-            if access_token:
-                # Arriving with a valid ?token= is what got us here; remembering
-                # it means the rest of the interface works without the token
-                # trailing every URL the user then sees.
+            if self.credential:
+                # Remember whatever credential actually authorised this request,
+                # so the rest of the interface works without the token trailing
+                # every URL the user then sees.
+                #
+                # It used to store the server's *shared* token, and only when
+                # one was configured -- so a personal token from the sign-in
+                # form authorised exactly one request and was then forgotten,
+                # leaving every subsequent fetch() unauthenticated. That was
+                # invisible until the interface started reacting to a 401.
                 self.send_header(
                     "Set-Cookie",
-                    f"{_TOKEN_COOKIE}={access_token}; Path=/; HttpOnly; SameSite=Lax",
+                    f"{_TOKEN_COOKIE}={self.credential}; Path=/; HttpOnly; SameSite=Lax",
                 )
             self.end_headers()
             self.wfile.write(page_bytes)
+
+        def _serve_sign_in(self, clear: bool = False) -> None:
+            """The page shown to someone who has not signed in yet.
+
+            200, not 401: this *is* the page for that URL in that state, and a
+            browser showing an error status for a working sign-in form invites
+            the reader to think something is broken.
+            """
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(sign_in_bytes)))
+            self.send_header("Cache-Control", "no-store")
+            if clear:
+                self.send_header(
+                    "Set-Cookie",
+                    f"{_TOKEN_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+                )
+            self.end_headers()
+            self.wfile.write(sign_in_bytes)
 
         def _serve_api(self, path: str, params: dict[str, list[str]]) -> None:
             """Read-only endpoints: no session, since the graph never changes."""
@@ -329,6 +381,46 @@ def make_handler(
                 },
                 session_id=session_id,
             )
+
+        def _handle_session(self) -> None:
+            """Take a verified Auth0 token and put it in the session cookie.
+
+            The token is checked here, once, before anything is stored. A
+            cookie set from an unverified token would turn this endpoint into
+            a way to mint a session by asking for one.
+
+            HttpOnly, so the token is not readable by script once set -- which
+            is also why the browser holds Auth0's copy in memory rather than in
+            localStorage.
+            """
+            if auth0 is None:
+                self._json(
+                    HTTPStatus.NOT_IMPLEMENTED,
+                    {"error": "this server was not started with an Auth0 tenant"},
+                )
+                return
+
+            payload = self._read_json()
+            if payload is None:
+                return
+            token = str(payload.get("token", "")).strip()
+            try:
+                identity = auth0.verify(token)
+            except Auth0Error as error:
+                self._json(HTTPStatus.UNAUTHORIZED, {"error": str(error)})
+                return
+
+            body = json.dumps({"person": identity.label}).encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header(
+                "Set-Cookie",
+                f"{_TOKEN_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax",
+            )
+            self._cors_headers()
+            self.end_headers()
+            self.wfile.write(body)
 
         def _handle_decide(self, params: dict[str, list[str]]) -> None:
             """Record a review decision.
@@ -403,7 +495,9 @@ def make_handler(
             through how long it takes to fail.
             """
             self.person = ""
-            if not access_token and users is None:
+            self.verified = False
+            self.credential = ""
+            if not access_token and users is None and auth0 is None:
                 return True
 
             supplied = ""
@@ -415,7 +509,24 @@ def make_handler(
             if not supplied:
                 supplied = self._cookie(_TOKEN_COOKIE) or ""
 
-            # A personal token is tried first and, when it resolves, is the
+            # Auth0 first. A JWT is self-describing -- three dot-separated
+            # segments -- so trying it against the personal-token directory
+            # first would mean comparing a 900-byte string against every entry
+            # for nothing.
+            if auth0 is not None and supplied.count(".") == 2:
+                try:
+                    identity = auth0.verify(supplied)
+                except Auth0Error:
+                    # Not fatal on its own: a personal token may be configured
+                    # alongside. The refusal below covers it if not.
+                    pass
+                else:
+                    self.person = identity.label
+                    self.verified = True
+                    self.credential = supplied
+                    return True
+
+            # A personal token is tried next and, when it resolves, is the
             # answer: it both admits the request and names who made it. The
             # shared token still works alongside, and grants access without a
             # name -- which is exactly how it is then recorded.
@@ -423,19 +534,33 @@ def make_handler(
                 person = users.resolve(supplied)
                 if person:
                     self.person = person
+                    self.verified = True
+                    self.credential = supplied
                     return True
 
             if access_token and supplied and secrets.compare_digest(supplied, access_token):
+                self.credential = supplied
                 return True
+
+            # A browser asking for a page gets a page. Answering the document
+            # request with JSON put a wall of `{"error": ...}` on screen where a
+            # sign-in form belonged -- correct for the API, useless as a website,
+            # and the reason this exists.
+            if self.command == "GET" and _wants_html(self.headers.get("Accept", "")):
+                self._serve_sign_in()
+                return False
 
             self._json(
                 HTTPStatus.UNAUTHORIZED,
                 {
-                    "error": "This server requires an access token.",
+                    "error": "This server requires you to sign in.",
                     "how": (
-                        "Use your personal token from the user file this server "
-                        "was started with, as ?token= or an Authorization: Bearer "
-                        "header."
+                        "Sign in through Auth0 and send the access token as an "
+                        "Authorization: Bearer header."
+                        if auth0 is not None
+                        else "Use your personal token from the user file this "
+                        "server was started with, as ?token= or an "
+                        "Authorization: Bearer header."
                         if users is not None
                         else "Open the link printed by `concordance serve`, which "
                         "carries the token, or send it as an Authorization: Bearer "
@@ -500,10 +625,11 @@ def serve(
     context: api.ApiContext | api.ModelRegistry | None = None,
     access_token: str = "",
     users=None,
+    auth0=None,
 ) -> None:
     """Run the chat server until interrupted."""
     handler, _ = make_handler(
-        graph, provider, context, access_token=access_token, users=users
+        graph, provider, context, access_token=access_token, users=users, auth0=auth0
     )
     httpd = ThreadingHTTPServer((host, port), handler)
     base = f"http://{host}:{httpd.server_port}/"
@@ -519,6 +645,9 @@ def serve(
             "  serving the chat-only page: the built interface is missing. "
             "Run `npm --prefix frontend run build:embedded` for all six views."
         )
+    if auth0 is not None:
+        print(f"  sign-in via Auth0 — tenant {auth0.domain}, audience {auth0.audience}")
+        print("  review decisions will record the verified Auth0 identity")
     if users is not None:
         # Named, because the difference between "someone signed this off" and
         # "Anna signed this off" is the whole reason the flag exists, and

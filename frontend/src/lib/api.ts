@@ -236,6 +236,15 @@ export interface GraphPayload {
   stats: { nodes: number; edges: number; unresolved_references: number };
 }
 
+export interface WhoAmI {
+  person: string;
+  identified: boolean;
+  /** True when this server was started with any way of identifying people. */
+  identifies_reviewers: boolean;
+  /** True when identity comes from Auth0 rather than a personal token. */
+  auth0: boolean;
+}
+
 export interface ApiFailure {
   ok: false;
   status: number;
@@ -302,6 +311,9 @@ async function fromSnapshot<T>(
  */
 let activeModel = "";
 
+/** Guards the one-shot reload on 401. See the handler in `get`. */
+let reloadingForAuth = false;
+
 function withModel(params?: Record<string, string>): Record<string, string> | undefined {
   // Never in snapshot mode: the snapshot is one model captured by URL, and an
   // extra parameter would simply miss every key in it.
@@ -334,6 +346,28 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<Re
   }
 
   if (!response.ok) {
+    // A session that ended mid-use is not an error to render inside a view --
+    // "the server answered 401" in the middle of the Drift report tells the
+    // reader nothing they can act on. Reloading lands on the sign-in page the
+    // server now serves for a document request, which is the only thing that
+    // can actually resolve it.
+    if (response.status === 401) {
+      // Once per page life, and never twice. A reload that lands on a page
+      // which 401s again would spin forever -- which is exactly what happened
+      // the first time this shipped, because the server was not persisting the
+      // credential it had just accepted. The bug is fixed; this guard stays,
+      // because "retry forever" is the wrong shape for a failure regardless of
+      // what causes it.
+      if (!reloadingForAuth) {
+        reloadingForAuth = true;
+        window.location.reload();
+      }
+      return {
+        ok: false,
+        status: 401,
+        message: "Your session has ended. Sign in again to continue.",
+      };
+    }
     const payload = (body ?? {}) as { error?: string; did_you_mean?: string[] };
     return {
       ok: false,
@@ -415,6 +449,7 @@ export const api = {
     return get<ModelsPayload>("/models");
   },
 
+  whoami: () => get<WhoAmI>("/whoami"),
   overview: () => get<Overview>("/overview"),
   graph: () => get<GraphPayload>("/graph"),
   tables: () => get<{ tables: TableSummary[] }>("/tables"),

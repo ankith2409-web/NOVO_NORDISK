@@ -16,6 +16,7 @@ import {
   SNAPSHOT_MODE,
   type LoadedModel,
   type Overview as OverviewData,
+  type WhoAmI,
 } from "@/lib/api";
 import { Button } from "@/components/primitives";
 import { Copilot } from "@/components/Copilot";
@@ -89,6 +90,17 @@ export default function App() {
     remember("intro-seen", "yes");
   }
   const [theme, toggleTheme] = useTheme();
+
+  // Who the server will record decisions as. Asked once: it depends on the
+  // credential this browser is holding, not on which model is open.
+  const [who, setWho] = useState<WhoAmI | null>(null);
+  useEffect(() => {
+    if (SNAPSHOT_MODE) return;
+    void (async () => {
+      const result = await api.whoami();
+      if (result.ok) setWho(result.data);
+    })();
+  }, []);
 
   // Measured rather than assumed, so a narrow window does not briefly render
   // the docked layout before an effect corrects it.
@@ -225,6 +237,27 @@ export default function App() {
           >
             copilot
           </Button>
+          {/* Shown before a decision is recorded rather than after. Finding
+              out you signed something off as the wrong identity is a thing to
+              learn beforehand. */}
+          {who?.identified && (
+            <span
+              className="hidden max-w-[12rem] truncate font-mono text-[11px] text-muted sm:inline"
+              title={`Review decisions are recorded as ${who.person}`}
+            >
+              {who.person}
+            </span>
+          )}
+          {who?.identified && who.auth0 && (
+            <Button
+              onClick={() => {
+                window.location.href = "/signed-out";
+              }}
+              aria-label={`Sign out ${who.person}`}
+            >
+              sign out
+            </Button>
+          )}
           <Button onClick={() => setIntro(true)}>guide</Button>
           <Button
             onClick={toggleTheme}

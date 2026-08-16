@@ -33,7 +33,7 @@ untouched.
 | **Lineage graph** | Traces a number from the source file/warehouse it was loaded from, through the columns and measures, to the number a report shows | `concordance/graph/csg.py`, `frontend/src/components/Lineage.tsx` |
 | **Grounded chatbot** | Answers questions about the model by calling read-only tools against the graph — never from memory — so an answer is always checkable against the model | `concordance/agent/`, `concordance/llm/` |
 | **Review / decision log** | Lets a person accept, reject, or correct a low-confidence requirement. The decision is bound to the fingerprint(s) it was made against, so it automatically goes **stale** — not silently carried over — when the underlying logic changes | `concordance/review/decisions.py` |
-| **Access control** | Optional shared-token auth for when the server is exposed beyond localhost, or per-reviewer tokens (`--users`) so a decision records the identity the server resolved rather than one the caller supplied | `concordance/web/server.py`, `concordance/review/identity.py` |
+| **Access control** | Optional shared-token auth, per-reviewer tokens (`--users`), or Auth0 (`--auth0-*`) with signup and Google. A decision records the identity the server resolved from the credential, never one the caller supplied | `concordance/web/server.py`, `concordance/review/identity.py`, `concordance/review/auth0.py` |
 | **Multi-model serving** | One server process can host several models at once, each with its own independent chat session, drift baseline, and warehouse | `concordance/web/api.py` (`ModelRegistry`) |
 | **Web interface** | A six-view React app: Overview, Model (browser + lineage), Requirements, Drift, Reconcile, Review — plus a docked chat panel | `frontend/src/` |
 | **CLI** | `extract`, `inspect`, `explain`, `verify`, `ask`, `reconcile`, `drift`, `auditpack`, `snapshot`, `document`, `serve` | `concordance/cli.py` |
@@ -274,7 +274,7 @@ Node required).
 
 ## 14. Testing
 
-**590 Python tests, 32 frontend tests.** Both suites are written against real behavior,
+**618 Python tests, 39 frontend tests.** Both suites are written against real behavior,
 not mocks of it wherever a real dependency is available — DuckDB stands in for a warehouse
 credential-free, and the fixture models in `data/models/` are real (if small) Power BI
 files, not synthetic data.
@@ -316,7 +316,10 @@ standard:
 - **Reconciliation compares structure, not values.** Whether two expressions in two
   languages compute the same number is undecidable in general, which is why there is a
   third verdict rather than a forced pass/fail.
-- **Identity is per-token, not per-account.** With `--users`, a decision records the name
-  resolved from the reviewer's own token and cannot be attributed to anyone else; without
-  it, the author is recorded as the claim it is. There is no password store, no session
-  login and no role hierarchy — a personal bearer token is the whole mechanism.
+- **Identity has two routes and no roles.** `--users` resolves a decision's author from
+  the reviewer's own bearer token; `--auth0-*` verifies an Auth0 access token (RS256 only,
+  signature checked against the tenant's JWKS, issuer/audience/expiry all required) and
+  brings signup and Google with it. Either way the name comes from the credential and
+  never from the request body. What neither provides is authorisation: anyone who can sign
+  in can do anything, and Auth0 RBAC is not consulted. The Auth0 path is unproven against
+  a live tenant — see `docs/AUTH.md`.

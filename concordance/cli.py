@@ -497,6 +497,57 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
         token = _secrets.token_urlsafe(24)
 
+    auth0 = None
+    if args.auth0_domain or args.auth0_audience or args.auth0_client_id:
+        from concordance.review.auth0 import Auth0Error, Auth0Verifier
+
+        missing = [
+            name
+            for name, value in (
+                ("--auth0-domain", args.auth0_domain),
+                ("--auth0-audience", args.auth0_audience),
+                ("--auth0-client-id", args.auth0_client_id),
+            )
+            if not value
+        ]
+        if missing:
+            # All three or none. Two of the three produces a sign-in page that
+            # cannot complete a sign-in, which is worse than refusing to start.
+            print(
+                f"Auth0 needs {', '.join(missing)} as well as what was given.",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            auth0 = Auth0Verifier(
+                domain=args.auth0_domain,
+                audience=args.auth0_audience,
+                client_id=args.auth0_client_id,
+            )
+        except Auth0Error as error:
+            print(f"{error}", file=sys.stderr)
+            return 2
+        try:
+            import jwt  # noqa: F401
+            import cryptography  # noqa: F401
+        except ImportError:
+            # Caught at startup rather than on the first sign-in attempt. A
+            # server that accepts an --auth0-domain and then cannot verify
+            # anything is a server that looks protected and is not.
+            print(
+                "Auth0 verification needs PyJWT with its crypto extra. "
+                'Install it with: pip install "concordance[auth0]"',
+                file=sys.stderr,
+            )
+            return 2
+        if not args.decisions:
+            print(
+                "--auth0-domain identifies reviewers, but without --decisions "
+                "there is no log to record them in. Pass --decisions <path.jsonl>.",
+                file=sys.stderr,
+            )
+            return 2
+
     users = None
     if args.users:
         from concordance.review.identity import Directory, DirectoryError
@@ -525,6 +576,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         context=context,
         access_token=token or "",
         users=users,
+        auth0=auth0,
     )
     return 0
 
@@ -889,6 +941,28 @@ def main(argv: list[str] | None = None) -> int:
         "that name against their review decisions as an authenticated fact "
         "rather than a claim. Implies access control: every request must "
         "carry a token the file knows.",
+    )
+    p.add_argument(
+        "--auth0-domain",
+        metavar="TENANT",
+        help="an Auth0 tenant, e.g. acme.eu.auth0.com. Enables sign-in, account "
+        "creation and Google through Auth0's Universal Login, and verifies every "
+        "request's access token against the tenant's published signing keys. "
+        "Requires --auth0-audience and --auth0-client-id.",
+    )
+    p.add_argument(
+        "--auth0-audience",
+        metavar="API",
+        help="the Auth0 API identifier this server accepts tokens for. Without "
+        "one Auth0 issues an opaque token rather than a JWT, and nothing can "
+        "verify it.",
+    )
+    p.add_argument(
+        "--auth0-client-id",
+        metavar="ID",
+        help="the Auth0 single-page application client id. Public by design -- "
+        "it is handed to every browser. Never pass a client secret: a browser "
+        "app cannot hold one.",
     )
     p.add_argument(
         "--token",

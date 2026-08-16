@@ -187,6 +187,9 @@ def test_whoami_names_the_person_behind_the_token(server) -> None:
         "person": "Anna",
         "identified": True,
         "identifies_reviewers": True,
+        # This server identifies by personal token, not by Auth0. The flag
+        # tells the sign-in page which control to draw.
+        "auth0": False,
     }
 
 
