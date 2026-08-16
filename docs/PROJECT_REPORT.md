@@ -134,7 +134,7 @@ piece of work against a stable interface rather than a redesign.
 
 ## 5. Verification
 
-- **618 automated Python tests, 39 automated frontend tests**, all passing.
+- **633 automated Python tests, 39 automated frontend tests**, all passing.
 - Tests for the load-bearing claims were deliberately broken once and confirmed to fail,
   to prove they actually catch the problems they claim to — including the one asserting a
   reviewer cannot sign off under another reviewer's name.

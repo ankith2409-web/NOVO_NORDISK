@@ -158,11 +158,17 @@ def test_the_preferred_provider_comes_first(monkeypatch) -> None:
     monkeypatch.setenv("GEMINI_API_KEY", "g")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "a")
     monkeypatch.setenv("GROQ_API_KEY", "q")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "r")
 
     providers, skipped = fallback.available_providers(preferred="groq")
 
     assert providers[0].name.startswith("groq")
-    assert {p.name.split(":")[0] for p in providers} == {"gemini", "anthropic", "groq"}
+    assert {p.name.split(":")[0] for p in providers} == {
+        "gemini",
+        "anthropic",
+        "groq",
+        "openrouter",
+    }
     assert skipped == []
 
 

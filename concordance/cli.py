@@ -298,11 +298,11 @@ def _build_provider(args: argparse.Namespace):
 
     Kept as one function so ``ask`` and ``serve`` cannot drift into supporting
     different providers by accident. Gemini stays the default: it is the one
-    proven to work end to end in this project's own environment. The Anthropic
-    and Groq paths have been written against their documented APIs but could
-    not be exercised against a live key from here -- this sandbox's egress
-    policy blocks both hosts outright, and the fix is to verify locally, not to
-    route around a policy denial.
+    proven to work end to end in this project's own environment. The
+    Anthropic, Groq and OpenRouter paths have been written against their
+    documented APIs but could not be exercised against a live key from here --
+    this sandbox's egress policy blocks all three hosts outright, and the fix
+    is to verify locally, not to route around a policy denial.
 
     By default every provider with a key present joins a fallback chain behind
     the preferred one, because a free-tier quota running out mid-demo is a
@@ -354,7 +354,7 @@ def _build_provider(args: argparse.Namespace):
 def _add_provider_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--provider",
-        choices=("gemini", "anthropic", "groq"),
+        choices=("gemini", "anthropic", "groq", "openrouter"),
         default="gemini",
         help="which language model backs the chat (default gemini)",
     )
@@ -363,7 +363,7 @@ def _add_provider_arguments(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="override the provider's API host, e.g. a Claude-compatible gateway "
         "for --provider anthropic (ignored for --provider gemini; also read from "
-        "ANTHROPIC_BASE_URL or GROQ_BASE_URL)",
+        "ANTHROPIC_BASE_URL, GROQ_BASE_URL or OPENROUTER_BASE_URL)",
     )
     parser.add_argument(
         "--no-fallback",

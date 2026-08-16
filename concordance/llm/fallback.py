@@ -37,8 +37,8 @@ class FallbackProvider:
         if not providers:
             raise LlmError(
                 "No language model provider is configured. Set GEMINI_API_KEY, "
-                "ANTHROPIC_API_KEY or GROQ_API_KEY in the environment or in a "
-                ".env file at the project root."
+                "ANTHROPIC_API_KEY, GROQ_API_KEY or OPENROUTER_API_KEY in the "
+                "environment or in a .env file at the project root."
             )
         self.providers = providers
         #: Which provider answered last. The interface shows this, because an
@@ -100,6 +100,8 @@ def available_providers(
     from concordance.llm.gemini import GeminiProvider
     from concordance.llm.groq import DEFAULT_MODEL as GROQ_MODEL
     from concordance.llm.groq import GroqProvider
+    from concordance.llm.openrouter import DEFAULT_MODEL as OPENROUTER_MODEL
+    from concordance.llm.openrouter import OpenRouterProvider
 
     # Only the explicitly preferred provider takes a caller-supplied model name:
     # a model identifier is provider-specific, and handing Gemini's to Anthropic
@@ -110,6 +112,9 @@ def available_providers(
             model=mine or ANTHROPIC_MODEL, base_url=base_url
         ),
         "groq": lambda mine: GroqProvider(model=mine or GROQ_MODEL, base_url=base_url),
+        "openrouter": lambda mine: OpenRouterProvider(
+            model=mine or OPENROUTER_MODEL, base_url=base_url
+        ),
     }
 
     order = [preferred] + [name for name in builders if name != preferred]
