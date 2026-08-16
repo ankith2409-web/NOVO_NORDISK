@@ -36,7 +36,7 @@ const HEADING: Record<Verdict, string> = {
 
 const ORDER: Verdict[] = ["divergent", "review", "consistent"];
 
-export function Reconcile() {
+export function Reconcile({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
   const [data, setData] = useState<ReconcilePayload | null>(null);
   const [error, setError] = useState<{ status: number; message: string } | null>(null);
   const [showConsistent, setShowConsistent] = useState(false);
@@ -60,6 +60,7 @@ export function Reconcile() {
         flag="--warehouse"
         example="path/to/warehouse.duckdb"
         yields="Each metric matched to its warehouse counterpart, with the tables, columns and aggregations each side reads shown next to one another and the differing ones marked."
+        alsoOn={alsoOn}
       />
     );
   if (error) return <Failure message={error.message} />;

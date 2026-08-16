@@ -165,3 +165,32 @@ describe("credentials", () => {
     });
   });
 });
+
+describe("the document download URL", () => {
+  it("carries the kind and the format the caller asked for", () => {
+    api.use("");
+    const url = api.documentUrl("functional", "docx");
+    expect(url).toContain("kind=functional");
+    expect(url).toContain("format=docx");
+  });
+
+  it("names the active model, so a switcher does not export the wrong one", () => {
+    // The failure this prevents is the worst kind available here: a file that
+    // downloads cleanly, opens cleanly, and describes a different model than
+    // the one on screen.
+    api.use("QualityControl");
+    expect(api.documentUrl("business", "md")).toContain("model=QualityControl");
+  });
+
+  it("omits the model when the server default is in use", () => {
+    api.use("");
+    expect(api.documentUrl("business", "md")).not.toContain("model=");
+  });
+
+  it("escapes a model name rather than breaking the query string", () => {
+    api.use("Sales & Returns");
+    const url = api.documentUrl("business", "md");
+    expect(url).toContain("model=Sales+%26+Returns");
+    api.use("");
+  });
+});

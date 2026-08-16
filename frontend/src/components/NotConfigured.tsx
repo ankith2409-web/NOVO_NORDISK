@@ -27,6 +27,7 @@ export function NotConfigured({
   flag,
   example,
   yields,
+  alsoOn = [],
 }: {
   /** The feature's own name, matching the rail. */
   title: string;
@@ -40,8 +41,20 @@ export function NotConfigured({
   example: string;
   /** What appears here once it is configured. Concrete, not "results". */
   yields: string;
+  /**
+   * Other loaded models that *do* have this capability.
+   *
+   * These flags attach to a model, not to the server, so on a multi-model
+   * server the old wording -- "not configured on this server", restart it with
+   * `--compare-to` -- could be simply false: the server had that flag, pointed
+   * at a different model. Someone acting on that advice restarts a working
+   * server to add a flag it already has. When there are names to give, the
+   * page says which model to switch to instead.
+   */
+  alsoOn?: string[];
 }) {
   const [copied, setCopied] = useState(false);
+  const elsewhere = alsoOn.length > 0;
 
   async function copy() {
     try {
@@ -58,7 +71,9 @@ export function NotConfigured({
     <div className="flex flex-col gap-4 p-4">
       <header>
         <h1 className="font-serif text-2xl leading-tight font-semibold">{title}</h1>
-        <p className="mt-1 font-mono text-xs text-faint">not configured on this server</p>
+        <p className="mt-1 font-mono text-xs text-faint">
+          {elsewhere ? "not configured for this model" : "not configured on this server"}
+        </p>
       </header>
 
       <div className="max-w-2xl rounded border border-hairline bg-ground">
@@ -67,10 +82,25 @@ export function NotConfigured({
         </p>
 
         <div className="flex flex-col gap-3 px-3.5 py-3">
-          <p className="text-sm text-muted">
-            It needs {needs}, which this server was not given. Restart it with this
-            flag added to the command you used:
-          </p>
+          {elsewhere ? (
+            <p className="text-sm text-muted">
+              It needs {needs}, which was not given for this model. It is
+              configured for{" "}
+              {alsoOn.map((name, index) => (
+                <span key={name}>
+                  {index > 0 && (index === alsoOn.length - 1 ? " and " : ", ")}
+                  <code className="font-mono text-[13px] text-ink">{name}</code>
+                </span>
+              ))}
+              , so switching model in the header shows it. To have it here too, add
+              the flag for this model as well:
+            </p>
+          ) : (
+            <p className="text-sm text-muted">
+              It needs {needs}, which this server was not given. Restart it with this
+              flag added to the command you used:
+            </p>
+          )}
 
           <div className="flex items-center gap-2 rounded border border-hairline bg-raised px-2.5 py-2">
             <code className="min-w-0 flex-1 truncate font-mono text-xs text-ink">

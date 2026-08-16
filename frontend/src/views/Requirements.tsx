@@ -11,13 +11,23 @@ import { useEffect, useState } from "react";
 import { recallOneOf, remember } from "@/lib/remember";
 import {
   api,
+  SNAPSHOT_MODE,
   type Confidence,
   type Requirement,
   type RequirementsPayload,
 } from "@/lib/api";
-import { Button, Chip, ConfidenceChip, Empty, Failure, Loading, Stat } from "@/components/primitives";
+import {
+  Button,
+  Chip,
+  ConfidenceChip,
+  Empty,
+  Failure,
+  Loading,
+  Stat,
+  controlClasses,
+} from "@/components/primitives";
 import { RichText } from "@/components/RichText";
-import { ChevronIcon } from "@/components/icons";
+import { ChevronIcon, DownloadIcon } from "@/components/icons";
 import { cx } from "@/lib/cx";
 
 type Kind = "business" | "functional";
@@ -62,7 +72,7 @@ export function Requirements() {
             Derived from the model by code, not written by a language model.
           </p>
         </div>
-        <div className="ml-auto flex gap-1">
+        <div className="ml-auto flex items-center gap-1">
           {(["business", "functional"] as Kind[]).map((option) => (
             <Button
               key={option}
@@ -73,6 +83,8 @@ export function Requirements() {
               {option === "business" ? "BRD" : "FRD"}
             </Button>
           ))}
+          <span className="mx-1 h-4 w-px bg-hairline" />
+          <Download kind={kind} />
         </div>
       </header>
 
@@ -125,6 +137,51 @@ export function Requirements() {
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Getting the document out of the tool.
+ *
+ * The whole product derives a BRD and an FRD; until this existed they could
+ * only be read on screen or regenerated from a terminal, which meant the one
+ * artefact the work exists to produce was the one thing the interface could
+ * not hand you.
+ *
+ * Real anchors with `download`, not fetch-then-blob: the browser already knows
+ * how to name a file, show progress and put it in the right folder, and the
+ * server already says what it is called. Word sits alongside Markdown because
+ * a requirements document in a regulated setting is circulated for signature,
+ * and that is a .docx.
+ */
+function Download({ kind }: { kind: Kind }) {
+  // A snapshot is a static capture with no server behind it, so there is
+  // nothing to render the document. Saying that beats a link that 404s.
+  if (SNAPSHOT_MODE) return null;
+
+  return (
+    <span className="flex items-center gap-1">
+      <span className="font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
+        save
+      </span>
+      {(
+        [
+          { format: "md", label: ".md" },
+          { format: "docx", label: ".docx" },
+        ] as const
+      ).map(({ format, label }) => (
+        <a
+          key={format}
+          href={api.documentUrl(kind, format)}
+          download
+          className={controlClasses("quiet")}
+          title={`Download the ${kind === "business" ? "BRD" : "FRD"} as ${label}`}
+        >
+          <DownloadIcon size={11} className="flex-none" />
+          {label}
+        </a>
+      ))}
+    </span>
   );
 }
 

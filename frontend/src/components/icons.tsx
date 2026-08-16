@@ -94,3 +94,14 @@ export function ChevronIcon(props: IconProps) {
     </Glyph>
   );
 }
+
+/** Arrow into a tray: the download convention, drawn to match the set. */
+export function DownloadIcon(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <path d="M12 3v12" />
+      <path d="m7 11 5 5 5-5" />
+      <path d="M4 20h16" />
+    </Glyph>
+  );
+}

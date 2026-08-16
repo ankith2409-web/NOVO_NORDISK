@@ -43,7 +43,7 @@ const TONE = {
   renamed: "accent",
 } as const;
 
-export function Drift() {
+export function Drift({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
   const [data, setData] = useState<DriftPayload | null>(null);
   const [error, setError] = useState<{ status: number; message: string } | null>(null);
   const [only, setOnly] = useState<DriftChange["kind"] | null>(null);
@@ -69,6 +69,7 @@ export function Drift() {
         flag="--compare-to"
         example="<earlier .pbix or TMDL folder>"
         yields="Every added, removed, changed and renamed object, with the fingerprint on both sides — and separately, the requirements that need re-validating versus the ones where only a name they cite has moved."
+        alsoOn={alsoOn}
       />
     );
   if (error) return <Failure message={error.message} />;

@@ -34,6 +34,35 @@ const BUTTON_TONE = {
   bad: "border-bad/40 text-bad hover:bg-bad-soft",
 } as const;
 
+/**
+ * The button's look, without the button.
+ *
+ * Exported because a download has to be a real `<a download href>` -- that is
+ * what lets the browser name the file and stream it to disk -- and an anchor
+ * that looked hand-styled next to these controls would read as a different
+ * kind of thing. One definition, two elements.
+ */
+export function controlClasses(
+  tone: keyof typeof BUTTON_TONE = "quiet",
+  size: "sm" | "icon" = "sm",
+  className?: string,
+): string {
+  return cx(
+    "inline-flex items-center justify-center gap-1.5 rounded border",
+    "font-mono text-[11px] leading-none whitespace-nowrap",
+    // Colour and background only. Never size, never position: a control
+    // that moves under the cursor is a control that gets mis-clicked.
+    "transition-[color,background-color,border-color,filter]",
+    "duration-(--duration-feedback) ease-(--ease-standard)",
+    "disabled:cursor-not-allowed disabled:opacity-50",
+    size === "icon"
+      ? "size-8 p-0 pointer-coarse:size-11"
+      : "min-h-8 px-2 py-1 pointer-coarse:min-h-11 pointer-coarse:px-3",
+    BUTTON_TONE[tone],
+    className,
+  );
+}
+
 export function Button({
   tone = "quiet",
   size = "sm",
@@ -50,23 +79,7 @@ export function Button({
   ref?: Ref<HTMLButtonElement>;
 }) {
   return (
-    <button
-      className={cx(
-        "inline-flex items-center justify-center gap-1.5 rounded border",
-        "font-mono text-[11px] leading-none whitespace-nowrap",
-        // Colour and background only. Never size, never position: a control
-        // that moves under the cursor is a control that gets mis-clicked.
-        "transition-[color,background-color,border-color,filter]",
-        "duration-(--duration-feedback) ease-(--ease-standard)",
-        "disabled:cursor-not-allowed disabled:opacity-50",
-        size === "icon"
-          ? "size-8 p-0 pointer-coarse:size-11"
-          : "min-h-8 px-2 py-1 pointer-coarse:min-h-11 pointer-coarse:px-3",
-        BUTTON_TONE[tone],
-        className,
-      )}
-      {...rest}
-    >
+    <button className={controlClasses(tone, size, className)} {...rest}>
       {children}
     </button>
   );

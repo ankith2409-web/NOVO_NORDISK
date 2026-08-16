@@ -423,6 +423,22 @@ export const api = {
   },
   active: () => activeModel,
 
+  /**
+   * Where to download the generated document from.
+   *
+   * A URL rather than a fetch: the browser's own download machinery handles
+   * the filename, the progress and the save dialog, and fetching the bytes
+   * into memory only to hand them back to a synthetic anchor would throw all
+   * of that away for a file that can run to megabytes.
+   *
+   * Not available from a snapshot, which has no server to render one.
+   */
+  documentUrl: (kind: "business" | "functional", format: "md" | "docx"): string => {
+    const params = new URLSearchParams({ kind, format });
+    if (activeModel) params.set("model", activeModel);
+    return `/api/document?${params}`;
+  },
+
   models: async (): Promise<Result<ModelsPayload>> => {
     if (SNAPSHOT_MODE) {
       // A snapshot is one captured model, so the switcher has nothing to offer

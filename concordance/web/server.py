@@ -27,6 +27,7 @@ from typing import Callable
 from urllib.parse import parse_qs, urlparse
 
 from concordance.agent.chat import ModelChat
+from concordance.generate import document
 from concordance.graph.csg import SemanticGraph
 from concordance.llm.base import LlmError, LlmProvider
 from concordance.review.auth0 import Auth0Error
@@ -47,6 +48,40 @@ _MAX_BODY_BYTES = 10_000
 #: whatever ``Origin`` arrives would let any site the user happens to be
 #: visiting read their model and run up their bill.
 _LOOPBACK_ORIGIN = re.compile(r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$")
+
+
+#: Read-only routes this module serves that are not in ``api.ROUTES``.
+#:
+#: ``api.ROUTES`` maps a path to a function returning JSON, and the document
+#: download answers with the document itself -- so it cannot live there without
+#: making every other route's contract a lie. It still has to appear wherever
+#: routes are counted or listed, though: a route the 404 handler does not
+#: mention is a route nobody discovers.
+_EXTRA_GET_ROUTES = ("/api/document",)
+
+
+def served_routes() -> tuple[str, ...]:
+    """Every read-only GET route, for the banner and the 404 body alike."""
+    return tuple(sorted(api.ALL_ROUTES + _EXTRA_GET_ROUTES))
+
+
+#: Characters allowed to survive into a download filename. Everything else is
+#: dropped rather than escaped: a filename reaches the browser inside a quoted
+#: header value, and the only way a quote or a newline in a model name can never
+#: close that quote or start a second header is for it not to arrive at all.
+_FILENAME_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _download_name(model_name: str, kind: str, fmt: str = "md") -> str:
+    """A safe, descriptive filename for a generated document.
+
+    Descriptive because someone downloading a BRD for three models wants three
+    distinguishable files in their downloads folder, not ``document (2).md``.
+    """
+    stem = _FILENAME_SAFE.sub("-", model_name).strip("-") or "model"
+    suffix = "BRD" if kind == "business" else "FRD"
+    extension = "docx" if fmt == "docx" else "md"
+    return f"{stem}-{suffix}.{extension}"
 
 
 def allowed_origin(origin: str | None) -> str | None:
@@ -254,6 +289,8 @@ def make_handler(
                         "auth0": auth0 is not None,
                     },
                 )
+            elif parsed.path == "/api/document":
+                self._serve_document(parse_qs(parsed.query))
             elif parsed.path in api.ALL_ROUTES:
                 self._serve_api(parsed.path, parse_qs(parsed.query))
             else:
@@ -330,6 +367,72 @@ def make_handler(
             """Read-only endpoints: no session, since the graph never changes."""
             status, payload = api.handle(registry, path, params)
             self._json(status, payload)
+
+        def _serve_document(self, params: dict[str, list[str]]) -> None:
+            """The BRD or FRD as a downloadable Markdown file.
+
+            Kept out of ``api.ROUTES`` on purpose: everything there answers with
+            JSON, and this answers with the document itself. Wrapping Markdown
+            in a JSON string only to have the browser unwrap it would make the
+            file a thing the interface has to reassemble rather than something
+            the user can save, and `Content-Disposition` is what makes it save
+            rather than render.
+
+            The rendering is `generate.document`, the same code path `concordance
+            generate` uses -- a second renderer would be a second thing to keep
+            true, and the whole point of this project is that the document is
+            derived once and traceable.
+            """
+            requested = (params.get("kind") or ["business"])[0].strip().lower()
+            kinds = {"business": document.Kind.BUSINESS, "functional": document.Kind.FUNCTIONAL}
+            if requested not in kinds:
+                self._json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": "kind must be 'business' or 'functional'"},
+                )
+                return
+
+            fmt = (params.get("format") or ["md"])[0].strip().lower()
+            if fmt not in ("md", "docx"):
+                self._json(
+                    HTTPStatus.BAD_REQUEST, {"error": "format must be 'md' or 'docx'"}
+                )
+                return
+
+            try:
+                context = registry.resolve(params)
+            except api.ApiError as error:
+                self._json(error.status, error.payload())
+                return
+
+            built = document.build(context.graph, kinds[requested])
+            if fmt == "docx":
+                from concordance.generate import word
+
+                body = word.to_bytes(built)
+                content_type = (
+                    "application/vnd.openxmlformats-officedocument"
+                    ".wordprocessingml.document"
+                )
+            else:
+                body = document.to_markdown(built).encode("utf-8")
+                content_type = "text/markdown; charset=utf-8"
+            filename = _download_name(context.graph.model.name, requested, fmt)
+
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            # `filename*` carries the real name for anything modern; the plain
+            # `filename` is the ASCII fallback. Both are built from a whitelist
+            # rather than escaped, so a model name can never close the quote and
+            # inject another header directive.
+            self.send_header(
+                "Content-Disposition",
+                f'attachment; filename="{filename}"',
+            )
+            self._cors_headers()
+            self.end_headers()
+            self.wfile.write(body)
 
         def _handle_ask(self) -> None:
             payload = self._read_json()
@@ -596,7 +699,7 @@ def make_handler(
         def _not_found(self) -> None:
             self._json(
                 HTTPStatus.NOT_FOUND,
-                {"error": f"no such route: {self.path}", "routes": list(api.ALL_ROUTES)},
+                {"error": f"no such route: {self.path}", "routes": list(served_routes())},
             )
 
     return Handler, sessions
@@ -698,7 +801,7 @@ def serve(
             print(f"  review decisions -> {', '.join(logs)}")
     # `base`, not `url`: the latter may carry ?token=, which would splice the
     # query string into the middle of the path and print a nonsense address.
-    print(f"  api: {len(api.ALL_ROUTES)} read-only endpoints under {base}api/")
+    print(f"  api: {len(served_routes())} read-only endpoints under {base}api/")
     print("Press Ctrl-C to stop.")
     try:
         httpd.serve_forever()

@@ -16,6 +16,7 @@ apart in what they claim.
 
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 
 from docx import Document as WordDocument
@@ -35,11 +36,15 @@ _CONFIDENCE_COLOUR = {
 _MONO = "Consolas"
 
 
-def write(document: Document, path: str | Path) -> Path:
-    """Render a BRD or FRD to a .docx file."""
-    destination = Path(path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
+def render(document: Document) -> WordDocument:
+    """Build the Word document in memory, without deciding where it goes.
 
+    Split out from ``write`` so the web server can serve the same bytes over a
+    socket that the CLI writes to a path. Rendering twice -- once for each
+    destination -- would be two things to keep true, and a circulated document
+    that differs from the one on disk is precisely the drift this project
+    exists to catch.
+    """
     word = WordDocument()
     _configure_styles(word)
 
@@ -47,8 +52,21 @@ def write(document: Document, path: str | Path) -> Path:
     _review_queue(word, document)
     _requirements(word, document)
     _traceability_matrix(word, document)
+    return word
 
-    word.save(str(destination))
+
+def to_bytes(document: Document) -> bytes:
+    """The same .docx, as bytes, for callers with no filesystem to write to."""
+    buffer = BytesIO()
+    render(document).save(buffer)
+    return buffer.getvalue()
+
+
+def write(document: Document, path: str | Path) -> Path:
+    """Render a BRD or FRD to a .docx file."""
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    render(document).save(str(destination))
     return destination
 
 

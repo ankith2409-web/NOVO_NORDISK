@@ -213,8 +213,14 @@ the Python server hands out.
 
 Six views: **Overview** (counts and what could not be read), **Model** (tree,
 definition, fingerprint chain, impact), **Requirements** (BRD/FRD with evidence
-per row), **Drift**, **Reconcile**, and **Review**. Drift and Reconcile appear
-only when the server was started with something to compare against.
+per row, and a download in Markdown or Word), **Drift**, **Reconcile**, and
+**Review**. Drift and Reconcile appear only when the server was started with
+something to compare against.
+
+The download is served by `GET /api/document?kind=business|functional&format=md|docx`,
+rendered by the same code as `concordance document` — the interface and the command
+line cannot produce different text for the same model, and a test asserts the bytes
+match rather than trusting that they do.
 
 ### Sharing it without a server
 

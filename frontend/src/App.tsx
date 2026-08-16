@@ -182,8 +182,37 @@ export default function App() {
   // someone who has never passed those flags never discovers the capability, and
   // the product appears to do four things instead of six. The view itself
   // explains what to pass.
+  //
+  // Read from `loaded` rather than from `overview`. Both carry the same
+  // capability flags, but `overview` is cleared to null on every model switch
+  // and refetched, and the old test treated "not known yet" as "configured" --
+  // so switching to a model without a warehouse lit Reconcile up as available
+  // for as long as the fetch took, then silently dropped it to `off`. The
+  // registry answers once, covers every model at the same time, and is never
+  // nulled, so the rail can be right from the first paint.
+  const activeCapabilities = loaded.find((entry) => entry.name === active)?.capabilities;
+
   function configured(entry: (typeof VIEWS)[number]): boolean {
-    return !entry.needs || !overview || overview.capabilities[entry.needs];
+    if (!entry.needs) return true;
+    // Still genuinely unknown -- before /api/models answers, nothing is known
+    // about any model. Claiming "off" here would be as wrong as claiming "on".
+    if (!activeCapabilities) return true;
+    return activeCapabilities[entry.needs];
+  }
+
+  /**
+   * The other loaded models that *do* have a capability the active one lacks.
+   *
+   * Drift and reconciliation attach to the model they were configured against,
+   * not to the server, so on a multi-model server "this server was not given
+   * that flag" can be flatly untrue -- it was given, just bound elsewhere.
+   * Handing the view the names lets it say which, instead of sending someone
+   * to restart a server that already has what they want.
+   */
+  function othersWith(capability: "drift" | "reconcile"): string[] {
+    return loaded
+      .filter((entry) => entry.name !== active && entry.capabilities[capability])
+      .map((entry) => entry.name);
   }
 
   return (
@@ -309,8 +338,10 @@ export default function App() {
           {resolved && view === "overview" && <Overview overview={overview} />}
           {resolved && view === "model" && <Model />}
           {resolved && view === "requirements" && <Requirements />}
-          {resolved && view === "drift" && <Drift />}
-          {resolved && view === "reconcile" && <Reconcile />}
+          {resolved && view === "drift" && <Drift alsoOn={othersWith("drift")} />}
+          {resolved && view === "reconcile" && (
+            <Reconcile alsoOn={othersWith("reconcile")} />
+          )}
           {resolved && view === "review" && <Review />}
         </main>
 

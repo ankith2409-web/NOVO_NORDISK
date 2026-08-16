@@ -109,6 +109,12 @@ Reconcile, Review) plus a docked chat panel, built in React and served directly 
 Python backend as a single self-contained page — no separate build step required to run
 it.
 
+The generated BRD and FRD can be downloaded from the Requirements view as Markdown or as
+Word, the latter because a requirements document in a regulated setting is circulated for
+signature. Both are rendered by the same code the command line uses, so the file someone
+downloads and the file the CLI writes cannot disagree — a test asserts they are
+byte-identical rather than leaving it to convention.
+
 ### 3.10 Command-line tool
 Eleven commands covering extraction, inspection, document generation, drift comparison,
 reconciliation, evidence-bundle export, and serving the web application.
@@ -134,7 +140,7 @@ piece of work against a stable interface rather than a redesign.
 
 ## 5. Verification
 
-- **633 automated Python tests, 39 automated frontend tests**, all passing.
+- **649 automated Python tests, 43 automated frontend tests**, all passing.
 - Tests for the load-bearing claims were deliberately broken once and confirmed to fail,
   to prove they actually catch the problems they claim to — including the one asserting a
   reviewer cannot sign off under another reviewer's name.
