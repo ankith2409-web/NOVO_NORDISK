@@ -253,3 +253,45 @@ def test_is_registered_as_a_fallback_chain_choice() -> None:
             os.environ["OPENROUTER_API_KEY"] = old
 
     assert any(p.name.startswith("openrouter:") for p in providers)
+
+
+# -- OPENROUTER_MODEL override -----------------------------------------------
+#
+# Added after a deployed server hit a real 404: OpenRouter had removed the
+# free variant of DEFAULT_MODEL from its catalogue. Fixing that in production
+# has to be an environment-variable edit, not a code change and a redeploy --
+# these tests are what make that promise real rather than aspirational.
+
+def test_an_explicit_model_wins_over_the_environment(monkeypatch) -> None:
+    """--model (an explicit, caller-supplied model) must never be silently
+    overridden by an environment variable meant for the unset case."""
+    monkeypatch.setenv("OPENROUTER_MODEL", "some/other-model:free")
+    provider = OpenRouterProvider(api_key="test-key", model="explicit/model")
+    assert provider.model == "explicit/model"
+
+
+def test_openrouter_model_env_var_overrides_the_default(monkeypatch) -> None:
+    monkeypatch.setenv("OPENROUTER_MODEL", "deepseek/deepseek-chat:free")
+    provider = OpenRouterProvider(api_key="test-key")
+    assert provider.model == "deepseek/deepseek-chat:free"
+    assert provider.name == "openrouter:deepseek/deepseek-chat:free"
+
+
+def test_with_neither_set_the_hardcoded_default_still_applies(monkeypatch) -> None:
+    monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
+    provider = OpenRouterProvider(api_key="test-key")
+    assert provider.model == DEFAULT_MODEL
+
+
+def test_the_fallback_chain_honours_openrouter_model_too(monkeypatch) -> None:
+    """The same override has to work through available_providers(), which is
+    the path concordance serve actually takes -- not just direct construction."""
+    from concordance.llm.fallback import available_providers
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
+    monkeypatch.setenv("OPENROUTER_MODEL", "qwen/qwen-2.5-72b-instruct:free")
+    providers, _skipped = available_providers(preferred="openrouter")
+
+    matching = [p for p in providers if p.name.startswith("openrouter:")]
+    assert matching, "openrouter should have built with only its own key set"
+    assert matching[0].name == "openrouter:qwen/qwen-2.5-72b-instruct:free"

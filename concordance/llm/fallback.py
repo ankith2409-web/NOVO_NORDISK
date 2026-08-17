@@ -100,7 +100,6 @@ def available_providers(
     from concordance.llm.gemini import GeminiProvider
     from concordance.llm.groq import DEFAULT_MODEL as GROQ_MODEL
     from concordance.llm.groq import GroqProvider
-    from concordance.llm.openrouter import DEFAULT_MODEL as OPENROUTER_MODEL
     from concordance.llm.openrouter import OpenRouterProvider
 
     # Only the explicitly preferred provider takes a caller-supplied model name:
@@ -112,9 +111,14 @@ def available_providers(
             model=mine or ANTHROPIC_MODEL, base_url=base_url
         ),
         "groq": lambda mine: GroqProvider(model=mine or GROQ_MODEL, base_url=base_url),
-        "openrouter": lambda mine: OpenRouterProvider(
-            model=mine or OPENROUTER_MODEL, base_url=base_url
-        ),
+        # No `or OPENROUTER_MODEL` here on purpose, unlike the other three --
+        # OpenRouter's free catalogue is the one of the four that has already
+        # changed under this project without notice (a live 404 from a
+        # deployed server, not a test here, is what caught it). Passing
+        # `mine` through unresolved lets OpenRouterProvider's own
+        # constructor check OPENROUTER_MODEL in the environment first, so a
+        # catalogue change is an env var edit rather than a code change.
+        "openrouter": lambda mine: OpenRouterProvider(model=mine, base_url=base_url),
     }
 
     order = [preferred] + [name for name in builders if name != preferred]

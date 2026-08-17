@@ -44,6 +44,14 @@ _DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 #: reason Groq's default is: a documentation assistant depends on tool use to
 #: be grounded at all, so silently landing on a model that cannot call tools
 #: would make every answer look ungrounded without any error to explain why.
+#:
+#: OpenRouter's free catalogue changes without notice -- this exact slug has
+#: already gone from free to paid-only once, discovered live on a deployed
+#: server rather than in any test here, because nothing in this repo calls
+#: the real API. Fixable without a redeploy: set OPENROUTER_MODEL in the
+#: environment to any slug from https://openrouter.ai/models?max_price=0,
+#: which every construction path below reads before falling back to this
+#: constant.
 DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
 
 #: Matches the other OpenAI-compatible providers' bound on a single reply --
@@ -58,15 +66,19 @@ class OpenRouterProvider:
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = DEFAULT_MODEL,
+        # None, not DEFAULT_MODEL, so "the caller didn't ask for a specific
+        # model" stays distinguishable from "asked for exactly this one" --
+        # the former can still be overridden by OPENROUTER_MODEL, the latter
+        # (an explicit --model) never should be.
+        model: str | None = None,
         base_url: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         timeout: int = 60,
     ) -> None:
-        self.model = model
+        self.model = model or os.environ.get("OPENROUTER_MODEL") or DEFAULT_MODEL
         self.max_tokens = max_tokens
         self.timeout = timeout
-        self.name = f"openrouter:{model}"
+        self.name = f"openrouter:{self.model}"
         self._api_key = api_key or _key_from_environment()
         self._base_url = (
             base_url or os.environ.get("OPENROUTER_BASE_URL") or _DEFAULT_BASE_URL
