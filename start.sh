@@ -12,8 +12,8 @@ set -eu
 
 # `--compare-to` and `--warehouse` both attach only to whichever model is
 # listed first (concordance/cli.py's own comment: "a comparison model and a
-# warehouse describe *one* model"). The only real warehouse this repo ships
-# is built for QualityControl's schema; the only real second version is
+# warehouse describe *one* model"). The only real warehouse this repo can
+# build is built for QualityControl's schema; the only real second version is
 # ClinicalTrialSafety_v2. Wiring both onto one process would mean either an
 # empty reconciliation (QualityControl's warehouse against a model it was
 # never built against) or no reconciliation at all -- so this demo runs
@@ -21,7 +21,9 @@ set -eu
 # shipping a Reconcile tab that quietly returns nothing.
 #
 # To flip the choice -- reconcile live instead of drift -- swap the model
-# order, drop --compare-to, and add:
+# order, drop --compare-to, add `RUN python scripts/build_warehouse.py` to
+# the Dockerfile (data/warehouse/ is gitignored, so the file has to be built
+# in the image rather than copied from the repo), and add:
 #   --warehouse data/warehouse/quality_control.duckdb
 exec concordance serve \
     data/models/ClinicalTrialSafety.SemanticModel \

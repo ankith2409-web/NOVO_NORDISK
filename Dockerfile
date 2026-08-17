@@ -9,11 +9,11 @@
 # persistent process (Render, Fly.io, a VM) is the honest fit.
 #
 # What this image serves is the sample data already in the repository --
-# ClinicalTrialSafety (with its v2 for a live drift comparison) and
-# QualityControl (with its DuckDB warehouse for live reconciliation) -- the
-# same models used throughout this project's own screenshots. Pointing it at
-# a real model instead means replacing the two COPY lines below and the CMD's
-# arguments; nothing else in the image changes.
+# ClinicalTrialSafety, with its v2 for a live drift comparison, plus
+# QualityControl as a second browsable model -- the same models used
+# throughout this project's own screenshots. Pointing it at a real model
+# instead means replacing the COPY lines below and start.sh's arguments;
+# nothing else in the image changes.
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -30,13 +30,22 @@ COPY concordance ./concordance
 # project's pyproject.toml; nothing extra to request here.
 RUN pip install --no-cache-dir .
 
-# The two models this image demonstrates live, plus the warehouse the second
-# one reconciles against. Copied explicitly rather than the whole `data/`
-# tree, which also holds the .pbix samples this image has no use for.
+# The two models this image serves live. Copied explicitly rather than the
+# whole `data/` tree, which also holds the .pbix samples this image has no
+# use for.
+#
+# No warehouse file here on purpose, even though QualityControl has one in
+# local development: `data/warehouse/` is gitignored (it's a build artefact
+# -- see scripts/build_warehouse.py -- not something meant to be committed),
+# so a COPY naming it fails on any real build, exactly the way this one did
+# the first time. start.sh doesn't pass --warehouse either, for the separate
+# reason explained there, so there was nothing this image needed the file
+# for. To wire reconciliation into a deploy later: add
+# `RUN python scripts/build_warehouse.py` below (it's self-contained, no
+# external inputs) and pass --warehouse in start.sh.
 COPY data/models/ClinicalTrialSafety.SemanticModel ./data/models/ClinicalTrialSafety.SemanticModel
 COPY data/models/ClinicalTrialSafety_v2.SemanticModel ./data/models/ClinicalTrialSafety_v2.SemanticModel
 COPY data/models/QualityControl.SemanticModel ./data/models/QualityControl.SemanticModel
-COPY data/warehouse/quality_control.duckdb ./data/warehouse/quality_control.duckdb
 
 # Decisions persist to this file for the life of the container. On a platform
 # without a mounted persistent volume (Render's free tier included) this
