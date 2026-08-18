@@ -40,19 +40,26 @@ from concordance.llm.base import (
 
 _DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 
-#: A free-tier model with tool-calling support. Named explicitly for the same
-#: reason Groq's default is: a documentation assistant depends on tool use to
-#: be grounded at all, so silently landing on a model that cannot call tools
+#: A model with tool-calling support. Named explicitly for the same reason
+#: Groq's default is: a documentation assistant depends on tool use to be
+#: grounded at all, so silently landing on a model that cannot call tools
 #: would make every answer look ungrounded without any error to explain why.
 #:
-#: OpenRouter's free catalogue changes without notice -- this exact slug has
-#: already gone from free to paid-only once, discovered live on a deployed
-#: server rather than in any test here, because nothing in this repo calls
-#: the real API. Fixable without a redeploy: set OPENROUTER_MODEL in the
-#: environment to any slug from https://openrouter.ai/models?max_price=0,
-#: which every construction path below reads before falling back to this
-#: constant.
-DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
+#: NOT a free-tier slug, and that is the deliberate part. This was
+#: `meta-llama/llama-3.3-70b-instruct:free` until OpenRouter withdrew the free
+#: variant, at which point every deployment answering through OpenRouter began
+#: returning HTTP 404 -- discovered on a running server, because nothing in
+#: this repo calls the real API and no test here could have caught a catalogue
+#: change upstream. Replacing it with a different `:free` slug would only move
+#: that failure to whenever OpenRouter withdraws the next one, so the default
+#: is now one that is paid and therefore stable.
+#:
+#: It bills per token against the configured key. To use a free model instead,
+#: set OPENROUTER_MODEL to any slug from
+#: https://openrouter.ai/models?max_price=0 -- every construction path below
+#: reads that variable before falling back here, so it needs no code change
+#: and no redeploy.
+DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct"
 
 #: Matches the other OpenAI-compatible providers' bound on a single reply --
 #: generous enough for a paragraph of documentation prose, not so large that
@@ -151,6 +158,19 @@ class OpenRouterProvider:
                 return json.loads(response.read())
         except urllib.error.HTTPError as error:
             detail = _describe(error)
+            # A 404 here is almost never a wrong URL -- the endpoint is fixed.
+            # It means OpenRouter does not serve `self.model` to this key:
+            # withdrawn, renamed, or paid-only on a key without balance. Its
+            # own message says which, but not that this project can be pointed
+            # at another model without touching the code, which is the part
+            # someone staring at the error actually needs.
+            if error.code == 404:
+                detail += (
+                    f" (requested model: {self.model}). Set OPENROUTER_MODEL in the"
+                    " environment to a different slug -- free ones are listed at"
+                    " https://openrouter.ai/models?max_price=0 -- and restart."
+                    " No code change or redeploy is needed."
+                )
             raise LlmError(
                 f"OpenRouter returned HTTP {error.code}: {_redact(detail, self._api_key)}",
                 status=error.code,

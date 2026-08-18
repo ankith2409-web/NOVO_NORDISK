@@ -295,3 +295,77 @@ def test_the_fallback_chain_honours_openrouter_model_too(monkeypatch) -> None:
     matching = [p for p in providers if p.name.startswith("openrouter:")]
     assert matching, "openrouter should have built with only its own key set"
     assert matching[0].name == "openrouter:qwen/qwen-2.5-72b-instruct:free"
+
+
+def test_a_404_explains_how_to_point_at_another_model() -> None:
+    """OpenRouter's own 404 text names a replacement slug but not the fact that
+    this project reads OPENROUTER_MODEL, so someone reading it concludes they
+    need a code change and a redeploy. They do not. Verified against the real
+    failure: a deployed server answered every question with this 404 after
+    OpenRouter withdrew the free variant of the previous default.
+    """
+    import io
+    import urllib.error
+
+    provider = OpenRouterProvider(api_key="sk-or-v1-test", model="withdrawn/model:free")
+    body = json.dumps(
+        {"error": {"message": "This model is unavailable for free."}}
+    ).encode()
+
+    def fake_urlopen(req, timeout=None):  # noqa: ANN001
+        raise urllib.error.HTTPError(
+            url="https://openrouter.ai/api/v1/chat/completions",
+            code=404, msg="Not Found", hdrs=None, fp=io.BytesIO(body),  # type: ignore[arg-type]
+        )
+
+    original = urllib.request.urlopen
+    urllib.request.urlopen = fake_urlopen  # type: ignore[assignment]
+    try:
+        with pytest.raises(LlmError) as caught:
+            provider.complete([Message(role="user", text="hi")])
+    finally:
+        urllib.request.urlopen = original  # type: ignore[assignment]
+
+    message = str(caught.value)
+    assert "OPENROUTER_MODEL" in message
+    assert "withdrawn/model:free" in message, "must name the model actually requested"
+
+
+def test_other_http_errors_do_not_get_the_model_advice() -> None:
+    """A 401 is a key problem. Telling someone to change model would send them
+    to fix the wrong thing."""
+    import io
+    import urllib.error
+
+    provider = OpenRouterProvider(api_key="sk-or-v1-test")
+    body = json.dumps({"error": {"message": "No auth credentials found"}}).encode()
+
+    def fake_urlopen(req, timeout=None):  # noqa: ANN001
+        raise urllib.error.HTTPError(
+            url="https://openrouter.ai/api/v1/chat/completions",
+            code=401, msg="Unauthorized", hdrs=None, fp=io.BytesIO(body),  # type: ignore[arg-type]
+        )
+
+    original = urllib.request.urlopen
+    urllib.request.urlopen = fake_urlopen  # type: ignore[assignment]
+    try:
+        with pytest.raises(LlmError) as caught:
+            provider.complete([Message(role="user", text="hi")])
+    finally:
+        urllib.request.urlopen = original  # type: ignore[assignment]
+
+    assert "OPENROUTER_MODEL" not in str(caught.value)
+
+
+def test_the_default_model_is_not_a_withdrawn_free_slug() -> None:
+    """Regression guard on the actual production failure.
+
+    A `:free` default is a standing bet that OpenRouter keeps serving that exact
+    slug for free, and that bet has already lost once here. The default is a
+    paid, stable slug on purpose; anyone wanting a free one sets
+    OPENROUTER_MODEL, which costs nothing to change and cannot break on deploy.
+    """
+    assert not DEFAULT_MODEL.endswith(":free"), (
+        "a :free default silently breaks every deployment when OpenRouter "
+        "withdraws it -- set OPENROUTER_MODEL instead"
+    )
