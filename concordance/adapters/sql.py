@@ -437,3 +437,203 @@ def from_snowflake(
         ).extract()
     finally:
         connection.close()
+
+
+# -- Databricks and AWS -------------------------------------------------------
+#
+# Each of the three below is the same five steps: import a driver lazily,
+# authenticate, wrap the connection so one `execute` is enough, hand it to the
+# same `SqlAdapter` every other platform uses, and close in a `finally`. That
+# they are this short is the point -- `SqlAdapter` never imports a driver and
+# never learns a vendor's name, so a platform is a connection function rather
+# than a parallel implementation.
+#
+# Identifier case is the one genuinely per-platform detail, and getting it
+# wrong is invisible rather than loud: a schema typed in the wrong case matches
+# nothing in `information_schema`, which looks exactly like an empty schema
+# rather than a mismatch. Snowflake folds unquoted identifiers to upper case
+# (see `from_snowflake`); Databricks, Redshift and Athena all fold to lower.
+# Each function normalises accordingly, which is only wrong for a name that was
+# deliberately created quoted and mixed-case -- rare, and recoverable by the
+# caller since Python strings are case-sensitive and nothing here re-folds a
+# value that already matches.
+#
+# What none of these can claim: a verified live handshake. This project's
+# sandbox blocks outbound connections to the relevant hosts at the network
+# policy layer, the same way it blocks *.snowflakecomputing.com, so every one
+# of these is tested against a fake DB-API cursor that proves the query text,
+# the case folding, the credential pass-through and the connection lifecycle --
+# everything inside this process -- and nothing about whether a real account
+# accepts the credentials. That last step needs a machine outside this sandbox
+# and is stated plainly here, in the README, and in the tests rather than left
+# for someone to discover.
+
+
+def from_databricks(
+    server_hostname: str,
+    http_path: str,
+    access_token: str,
+    catalog: str = "main",
+    schema: str = "default",
+    name: str = "",
+) -> SemanticModel:
+    """Read a Databricks SQL warehouse through Unity Catalog.
+
+    Requires ``databricks-sql-connector``, imported here rather than at module
+    level so nothing that only ever touches DuckDB installs a driver for a
+    platform it does not use.
+
+    ``catalog`` and ``schema`` are passed to the driver rather than only used
+    for filtering, and that is load-bearing: Unity Catalog exposes a *separate*
+    ``information_schema`` inside every catalog, so the adapter's unqualified
+    ``FROM information_schema.tables`` resolves against whichever catalog the
+    session is currently in. Without setting it on the connection, the query
+    would silently read a different catalog's metadata -- or fail outright on a
+    workspace whose default catalog the token cannot see.
+
+    The legacy Hive metastore (catalog ``hive_metastore``) implements only part
+    of ``information_schema`` and generally does not return view definitions;
+    those views arrive with empty SQL and are reported as a coverage gap rather
+    than silently documented as metrics that compute nothing.
+    """
+    from databricks import sql as databricks_sql
+
+    connection = databricks_sql.connect(
+        server_hostname=server_hostname,
+        http_path=http_path,
+        access_token=access_token,
+        catalog=catalog,
+        schema=schema,
+    )
+    try:
+        return SqlAdapter(
+            _CursorConnection(connection),
+            database=catalog.lower(),
+            schema=schema.lower(),
+            dialect="databricks",
+            name=name,
+        ).extract()
+    finally:
+        connection.close()
+
+
+def from_redshift(
+    host: str,
+    database: str,
+    user: str = "",
+    password: str = "",
+    schema: str = "public",
+    port: int = 5439,
+    region: str = "",
+    name: str = "",
+) -> SemanticModel:
+    """Read an Amazon Redshift cluster or Serverless workgroup.
+
+    Requires ``redshift-connector``, AWS's own driver, imported lazily.
+
+    Two authentication paths, chosen by what is supplied rather than by a flag:
+    a user and password go straight through, while omitting both switches the
+    driver to IAM, where it resolves credentials from the ordinary boto3 chain
+    (environment, instance role, ``~/.aws/credentials``). IAM is the path a
+    deployment inside AWS would actually use, and forcing a password there
+    would mean inventing one to store.
+
+    Redshift is Postgres-derived: it folds unquoted identifiers to lower case
+    and implements the standard ``information_schema``, so the adapter's
+    queries need no Redshift-specific spelling.
+
+    One real limit worth knowing before trusting a result: a *late-binding*
+    view (``WITH NO SCHEMA BINDING``) appears in ``information_schema.views``
+    with an empty ``view_definition``. That is not a permissions problem and
+    not this adapter guessing -- Redshift genuinely does not expose the SQL
+    there. Those views are reported as a coverage gap, so they are visibly
+    unread rather than counted as metrics with no logic.
+    """
+    import redshift_connector
+
+    options: dict[str, Any] = {
+        "host": host,
+        "database": database,
+        "port": port,
+    }
+    if user and password:
+        options["user"] = user
+        options["password"] = password
+    else:
+        # `iam=True` without explicit keys is what tells the driver to use the
+        # standard AWS credential chain rather than to look for a password it
+        # was never given.
+        options["iam"] = True
+        if user:
+            options["db_user"] = user
+        if region:
+            options["region"] = region
+
+    connection = redshift_connector.connect(**options)
+    try:
+        return SqlAdapter(
+            _CursorConnection(connection),
+            database=database.lower(),
+            schema=schema.lower(),
+            dialect="redshift",
+            name=name,
+        ).extract()
+    finally:
+        connection.close()
+
+
+def from_athena(
+    s3_staging_dir: str,
+    region: str,
+    schema: str = "default",
+    catalog: str = "awsdatacatalog",
+    work_group: str = "",
+    name: str = "",
+) -> SemanticModel:
+    """Read Amazon Athena over its Glue Data Catalog.
+
+    Requires ``pyathena``, imported lazily.
+
+    No credentials are taken as arguments on purpose. PyAthena authenticates
+    through boto3's standard chain -- environment variables, an instance or
+    task role, ``~/.aws/credentials`` -- which is both how AWS expects a client
+    to behave and the only path that works for a role-based deployment with no
+    long-lived keys to pass. ``s3_staging_dir`` is not optional in the same
+    way a password would be: Athena writes every result set to S3 before the
+    client reads it, so a query cannot run without somewhere to put it.
+
+    Athena's vocabulary differs from the rest: a Glue *database* is what the
+    information schema calls a ``table_schema``, and ``table_catalog`` is the
+    Glue catalog itself, ``awsdatacatalog`` unless a federated catalog is
+    registered. The parameters are named for the information schema's terms so
+    the mapping is explicit rather than something to infer.
+
+    Unverified against a live account, and one specific thing to check first:
+    Athena stores a view created through it as an encoded Presto plan in Glue,
+    and exposes readable SQL in ``information_schema.views.view_definition``
+    only on engine v2 and later. On an older workgroup those definitions may
+    come back empty, in which case they are reported as a coverage gap rather
+    than treated as metrics with no logic -- visibly unread, not silently
+    wrong.
+    """
+    from pyathena import connect as athena_connect
+
+    options: dict[str, Any] = {
+        "s3_staging_dir": s3_staging_dir,
+        "region_name": region,
+        "schema_name": schema,
+    }
+    if work_group:
+        options["work_group"] = work_group
+
+    connection = athena_connect(**options)
+    try:
+        return SqlAdapter(
+            _CursorConnection(connection),
+            database=catalog.lower(),
+            schema=schema.lower(),
+            dialect="athena",
+            name=name,
+        ).extract()
+    finally:
+        connection.close()

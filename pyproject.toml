@@ -26,6 +26,19 @@ dev = ["pytest>=8.0"]
 # platform-specific driver at all, and most uses of this project never touch
 # a live warehouse.
 snowflake = ["snowflake-connector-python>=3.0"]
+# The same reasoning for the other three platforms: each is one driver, needed
+# only by the matching --platform, and none of them is imported until that
+# platform is actually selected. `warehouses` installs all four for anyone who
+# would rather not choose.
+databricks = ["databricks-sql-connector>=3.0"]
+redshift = ["redshift-connector>=2.0"]
+athena = ["pyathena>=3.0"]
+warehouses = [
+    "snowflake-connector-python>=3.0",
+    "databricks-sql-connector>=3.0",
+    "redshift-connector>=2.0",
+    "pyathena>=3.0",
+]
 # Only needed for --auth0-domain. The `crypto` extra pulls in `cryptography`,
 # which is what actually verifies an RS256 signature; PyJWT alone would decode
 # the token and check nothing. Declared here rather than relied on

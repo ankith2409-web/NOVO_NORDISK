@@ -138,24 +138,41 @@ reconciliation, evidence-bundle export, and serving the web application.
 
 | Platform | Status |
 |---|---|
-| Power BI (`.pbix` and TMDL) | Fully implemented and tested |
-| DuckDB (warehouse reconciliation) | Fully implemented and tested — the supported warehouse |
+| Power BI (`.pbix` and TMDL) | Fully implemented, tested end to end |
+| DuckDB (warehouse reconciliation) | Fully implemented, tested end to end — the default warehouse |
+| Snowflake | Connector implemented; unit-tested, **not yet run against a live account** |
+| Databricks (Unity Catalog) | Connector implemented; unit-tested, **not yet run against a live account** |
+| AWS Redshift | Connector implemented; unit-tested, **not yet run against a live account** |
+| AWS Athena (Glue) | Connector implemented; unit-tested, **not yet run against a live account** |
 
-DuckDB is a deliberate choice rather than a placeholder. It implements the same standard
-information schema that the large cloud warehouses expose, so the extraction path being
-exercised is the real one — only the connection string differs. It also needs no account,
-no credentials and no network, which means anyone can clone this repository and run the
-full reconciliation demo in one command. A cloud warehouse would have made the project's
-central feature unrunnable for anyone without a paid account.
+The distinction in that table is the important part, so it is spelled out rather than left
+to the word "implemented".
 
-Cloud warehouse connectors (Snowflake, Databricks, AWS) are **out of scope for this
-project**. The comparison logic itself is platform-agnostic — it is built on a general SQL
-parser and compares structure, not vendor syntax — so adding one later is a contained
-piece of work against a stable interface rather than a redesign.
+**What is implemented and proven.** The comparison logic — reading an information schema,
+parsing view SQL into an AST, comparing what each definition structurally reads — is
+platform-agnostic and exercised end to end against DuckDB, which implements the same
+standard information schema the cloud warehouses do. Each cloud platform adds a connection
+function of roughly thirty lines: authenticate, hand the resulting cursor to the same
+adapter, close. Those functions are unit-tested against fake database cursors, which
+proves the parameters sent to each driver, the identifier case folding (Snowflake folds
+unquoted names to upper case; Databricks, Redshift and Athena all fold to lower — get it
+wrong and the query silently matches nothing), the SQL dialect selected, and that the
+connection is closed on both the success and the failure path.
+
+**What is not proven.** No live handshake against a real Snowflake, Databricks, Redshift or
+Athena account. The network this project was built on blocks all four at the policy layer,
+so authenticating for real has to happen elsewhere. Everything inside this process is
+tested; whether a real account accepts the credentials is not, and the first real
+connection should be treated as the acceptance test.
+
+DuckDB remains the default for a deliberate reason: it needs no account, no credentials and
+no network, so anyone can clone this repository and run the full reconciliation demo in one
+command. A cloud warehouse as the default would have made the project's central feature
+unrunnable for anyone without a paid account.
 
 ## 5. Verification
 
-- **650 automated Python tests, 60 automated frontend tests**, all passing.
+- **681 automated Python tests, 60 automated frontend tests**, all passing.
 - Tests for the load-bearing claims were deliberately broken once and confirmed to fail,
   to prove they actually catch the problems they claim to — including the one asserting a
   reviewer cannot sign off under another reviewer's name.
@@ -211,7 +228,10 @@ KPIs are not currently represented in any sample model.
   aggregations — not the numbers they produce. Deciding whether two arbitrary expressions
   in two languages compute the same value is undecidable in general, which is why a third
   verdict ("needs review") exists instead of a forced pass/fail.
-- Cloud warehouse connectors are out of scope, as set out in section 4.
+- Cloud warehouse connectors (Snowflake, Databricks, Redshift, Athena) are
+  implemented but have never been run against a live account — the build network
+  blocks all four. Their logic is unit-tested against fake database cursors; the
+  first real connection is the acceptance test. See section 4.
 
 ## 8. Summary
 

@@ -274,7 +274,7 @@ Node required).
 
 ## 14. Testing
 
-**650 Python tests, 60 frontend tests.** Both suites are written against real behavior,
+**681 Python tests, 60 frontend tests.** Both suites are written against real behavior,
 not mocks of it wherever a real dependency is available — DuckDB stands in for a warehouse
 credential-free, and the fixture models in `data/models/` are real (if small) Power BI
 files, not synthetic data.
@@ -290,13 +290,16 @@ Stated here in the same terms the software states them to a user, because a tool
 subject is "does this document overstate what it knows" has to hold itself to the same
 standard:
 
-- **Cloud warehouse connectors are out of scope.** DuckDB is the supported warehouse, and
-  that is a choice rather than a shortfall: it exposes the same standard information
-  schema the cloud warehouses do, so the extraction path exercised is the real one, and it
-  needs no account or network, so the reconciliation demo runs for anyone who clones the
-  repository. The `SqlAdapter` underneath is dialect-agnostic (via `sqlglot`), so adding
-  Snowflake, Databricks or Redshift later is a new `from_x()` connector function against a
-  stable interface, not new comparison logic.
+- **Cloud warehouse connectors are implemented but not live-verified.** Snowflake,
+  Databricks, Redshift and Athena each have a `from_x()` connector, and each is exactly
+  what the design predicted it would be: authenticate, hand a DB-API cursor to the same
+  `SqlAdapter` DuckDB uses, close. None has been run against a real account — the network
+  this was built on blocks all four at the policy layer — so what is proven is the
+  parameters sent to each driver, the per-platform identifier case folding, the `sqlglot`
+  dialect selected and the connection lifecycle, all against fake cursors. Whether a real
+  account accepts the credentials is untested, and the first live connection is the
+  acceptance test. DuckDB stays the default because it needs no account or network, so the
+  reconciliation demo runs for anyone who clones the repository.
 - **Object name translations** are the one construct still reported rather than read, and
   the reason is the same rule applied consistently: every other construct here is read
   against SQL PBIXRay publishes in its own source, whereas a translation names its target

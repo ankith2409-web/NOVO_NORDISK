@@ -452,14 +452,45 @@ that merely *resemble* each other are listed for a person to confirm, never comp
 No character measure can tell that `Batches Released` and `batches_rejected` — which score
 0.80 similar — mean opposite things.
 
+### Connecting to a cloud warehouse
+
+Four platforms beyond the local DuckDB default, each reading its connection details from
+the environment rather than from flags — a warehouse password does not belong in a shell
+history:
+
+```bash
+concordance reconcile --help-platforms      # every variable each platform reads
+
+pip install 'concordance[databricks]'       # or [snowflake], [redshift], [athena]
+concordance reconcile <model> --platform databricks --schema qc
+```
+
+| Platform | Driver | Authentication |
+|---|---|---|
+| `snowflake` | `snowflake-connector-python` | account + user + password |
+| `databricks` | `databricks-sql-connector` | workspace host + HTTP path + token |
+| `redshift` | `redshift-connector` | user + password, or IAM when neither is set |
+| `athena` | `pyathena` | the standard AWS credential chain only |
+
+Redshift and Athena both read `AWS_REGION`, the same variable the AWS CLI uses, so a shell
+already configured for AWS needs nothing added. Athena deliberately accepts no access keys:
+PyAthena resolves credentials through boto3's chain (environment, instance or task role,
+`~/.aws/credentials`), and taking a key here would invite storing one where a role belongs.
+
 ### What is genuinely tested, and what is not
 
 The SQL path runs end to end against DuckDB, whose `information_schema` follows the same
-standard Snowflake and Databricks implement, so the queries, the parsing and the
-comparison are really exercised. **Authenticating to a live Snowflake or Databricks account
-is not tested**, because this project has no credentials for either; those connectors swap
-the DB-API connection and reuse everything above it. The distinction is stated here rather
-than left for someone to discover.
+standard the four cloud platforms implement, so the queries, the parsing and the comparison
+are really exercised — and every platform shares that code rather than reimplementing it.
+
+**No live connection to any of the four has been made.** Each connector is unit-tested
+against a fake DB-API cursor, which proves the parameters sent to the driver, the
+per-platform identifier case folding (Snowflake folds unquoted names to upper case;
+Databricks, Redshift and Athena all fold to lower — get it wrong and the query matches
+nothing and returns a confidently empty model), the `sqlglot` dialect selected, and that
+the connection closes on both the success and the failure path. What that cannot prove is
+whether a real account accepts the credentials: the network this was built on blocks all
+four at the policy layer. Treat the first real connection as the acceptance test.
 
 ## Switching providers: Claude, Groq, OpenRouter, or Gemini
 

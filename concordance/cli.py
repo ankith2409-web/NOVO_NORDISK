@@ -688,26 +688,96 @@ def cmd_auditpack(args: argparse.Namespace) -> int:
     return 0
 
 
-#: Which environment variable each Snowflake connection parameter comes from.
-#: Kept out of argparse, matching how the LLM providers take their API keys --
-#: a warehouse password is exactly the kind of value a shell history or a
-#: process list should not carry.
-_SNOWFLAKE_ENV = {
-    "account": "SNOWFLAKE_ACCOUNT",
-    "user": "SNOWFLAKE_USER",
-    "password": "SNOWFLAKE_PASSWORD",
-    "warehouse": "SNOWFLAKE_WAREHOUSE",
-    "database": "SNOWFLAKE_DATABASE",
-    "role": "SNOWFLAKE_ROLE",
+#: Which environment variable each connection parameter comes from, per
+#: platform. Kept out of argparse, matching how the LLM providers take their
+#: API keys -- a warehouse password is exactly the kind of value a shell
+#: history or a process list should not carry.
+#:
+#: One table rather than a function per platform: every one of these is the
+#: same three steps (read the environment, refuse politely if something
+#: mandatory is missing, call the connector), and four near-identical functions
+#: would be four places for that logic to drift apart.
+_PLATFORM_ENV: dict[str, dict[str, str]] = {
+    "snowflake": {
+        "account": "SNOWFLAKE_ACCOUNT",
+        "user": "SNOWFLAKE_USER",
+        "password": "SNOWFLAKE_PASSWORD",
+        "warehouse": "SNOWFLAKE_WAREHOUSE",
+        "database": "SNOWFLAKE_DATABASE",
+        "role": "SNOWFLAKE_ROLE",
+    },
+    "databricks": {
+        "server_hostname": "DATABRICKS_SERVER_HOSTNAME",
+        "http_path": "DATABRICKS_HTTP_PATH",
+        "access_token": "DATABRICKS_TOKEN",
+        "catalog": "DATABRICKS_CATALOG",
+    },
+    "redshift": {
+        "host": "REDSHIFT_HOST",
+        "database": "REDSHIFT_DATABASE",
+        "user": "REDSHIFT_USER",
+        "password": "REDSHIFT_PASSWORD",
+        "port": "REDSHIFT_PORT",
+        # Shared with Athena on purpose: AWS_REGION is the variable the AWS
+        # SDKs themselves read, so a shell already configured for the AWS CLI
+        # needs nothing added for either service.
+        "region": "AWS_REGION",
+    },
+    "athena": {
+        "s3_staging_dir": "ATHENA_S3_STAGING_DIR",
+        "region": "AWS_REGION",
+        "work_group": "ATHENA_WORKGROUP",
+    },
+}
+
+#: What each platform cannot start without. Everything else in the table above
+#: is genuinely optional and is omitted rather than passed empty, so the
+#: connector's own default applies.
+#:
+#: Redshift lists neither user nor password: supplying both takes the password
+#: path, supplying neither takes IAM through the standard AWS credential chain,
+#: and demanding a password here would make the IAM path unreachable. Athena
+#: lists no credentials at all for the same reason.
+_PLATFORM_REQUIRED: dict[str, tuple[str, ...]] = {
+    "snowflake": ("account", "user", "password", "warehouse", "database"),
+    "databricks": ("server_hostname", "http_path", "access_token"),
+    "redshift": ("host", "database"),
+    "athena": ("s3_staging_dir", "region"),
+}
+
+#: The schema each platform calls its default one. Snowflake upper-cases
+#: unquoted identifiers and the others lower-case them, which is why these
+#: differ in case rather than all reading "public".
+_PLATFORM_DEFAULT_SCHEMA = {
+    "duckdb": "main",
+    "snowflake": "PUBLIC",
+    "databricks": "default",
+    "redshift": "public",
+    "athena": "default",
+}
+
+#: The connector function in ``adapters.sql`` each platform is served by.
+_PLATFORM_CONNECTOR = {
+    "snowflake": "from_snowflake",
+    "databricks": "from_databricks",
+    "redshift": "from_redshift",
+    "athena": "from_athena",
 }
 
 
-def _snowflake_model(schema: str):
-    """Build the warehouse-side model from Snowflake, or explain what is missing.
+def _warehouse_model(platform: str, schema: str):
+    """Build the warehouse-side model from a live platform, or say what is missing.
 
-    ``database`` is the one value with no sensible default -- unlike a password
-    or role, guessing it would silently read the wrong warehouse -- so it is
-    required explicitly rather than left to fail deep inside the connector.
+    Anything mandatory that is absent is reported by the *variable name* the
+    operator has to set, all of them at once, before a connection is attempted
+    -- discovering a missing password one round-trip at a time is a worse
+    experience than being told the whole list up front.
+
+    Optional values are dropped rather than passed as empty strings, so each
+    connector's own default applies. That distinction is load-bearing for
+    Redshift: an empty password is not "no password" to the driver, and passing
+    one would take the password path with a blank secret instead of the IAM
+    path the caller intended.
 
     A failed connection is folded into ``SourceError`` like every other input
     problem this CLI reports, rather than left to surface as the driver's own
@@ -721,37 +791,113 @@ def _snowflake_model(schema: str):
     from concordance.adapters import sql as sqladapter
     from concordance.adapters.base import SourceError
 
-    values = {key: os.environ.get(var, "") for key, var in _SNOWFLAKE_ENV.items()}
-    missing = [var for key, var in _SNOWFLAKE_ENV.items() if key != "role" and not values[key]]
+    variables = _PLATFORM_ENV[platform]
+    values = {key: os.environ.get(var, "").strip() for key, var in variables.items()}
+
+    missing = [variables[key] for key in _PLATFORM_REQUIRED[platform] if not values[key]]
     if missing:
         print(
-            "Missing environment variable(s) for --platform snowflake: "
+            f"Missing environment variable(s) for --platform {platform}: "
             + ", ".join(missing),
             file=sys.stderr,
         )
         return None
 
+    supplied = {key: value for key, value in values.items() if value}
+
+    # The one non-string parameter in any of these tables. Rejected here rather
+    # than handed to the driver as text, which would fail somewhere far less
+    # obvious than the variable that actually holds the wrong value.
+    if "port" in supplied:
+        try:
+            supplied["port"] = int(supplied["port"])
+        except ValueError:
+            print(
+                f"{variables['port']} must be a number: {supplied['port']!r}",
+                file=sys.stderr,
+            )
+            return None
+
+    connect = getattr(sqladapter, _PLATFORM_CONNECTOR[platform])
     try:
-        return sqladapter.from_snowflake(schema=schema, **values)
+        return connect(schema=schema, **supplied)
+    except ImportError as error:
+        # A missing driver is a setup problem with an exact fix, and saying
+        # which extra to install beats the bare "No module named ..." the
+        # lazy import would otherwise raise from inside the connector.
+        print(
+            f"--platform {platform} needs a driver that is not installed: {error}\n"
+            f"  pip install 'concordance[{platform}]'",
+            file=sys.stderr,
+        )
+        return None
     except Exception as error:
+        # Named by the values that identify the target, never the secret ones.
+        target = (
+            values.get("account")
+            or values.get("server_hostname")
+            or values.get("host")
+            or values.get("s3_staging_dir")
+            or platform
+        )
         raise SourceError(
-            f"snowflake://{values['account']}/{values['database']}",
+            f"{platform}://{target}",
             f"{type(error).__name__}: {error}",
-            "Check the account identifier, credentials and network access. If "
+            "Check the connection details, credentials and network access. If "
             "this is running somewhere with restricted outbound access, a "
             "connection timeout here usually means that policy, not a wrong "
             "password -- try the same command from an unrestricted network.",
         ) from error
 
 
+def _print_platforms() -> int:
+    """List what each platform needs, so nobody has to read this file to find out.
+
+    Marked required/optional rather than listed flat: which variables are
+    genuinely mandatory is the part that is otherwise only discoverable by
+    running the command and reading what it complains about.
+    """
+    print("\nEnvironment variables per --platform:\n")
+    for platform in ("snowflake", "databricks", "redshift", "athena"):
+        required = _PLATFORM_REQUIRED[platform]
+        print(f"  {platform}  (pip install 'concordance[{platform}]')")
+        for key, variable in _PLATFORM_ENV[platform].items():
+            mark = "required" if key in required else "optional"
+            print(f"      {variable:<28} {mark}")
+        print(f"      {'--schema':<28} defaults to {_PLATFORM_DEFAULT_SCHEMA[platform]}")
+        print()
+
+    print("  redshift authenticates by password when REDSHIFT_USER and")
+    print("  REDSHIFT_PASSWORD are both set, and by IAM through the standard AWS")
+    print("  credential chain when they are not. athena always uses that chain.\n")
+    return 0
+
+
 def cmd_reconcile(args: argparse.Namespace) -> int:
     """Compare one KPI's Power BI definition against the warehouse's."""
     from concordance.reconcile import metrics
 
+    if getattr(args, "help_platforms", False):
+        return _print_platforms()
+
+    # `source` is only optional so `--help-platforms` can run without one;
+    # every other invocation still requires it. Refused here rather than left
+    # to fail inside `_load`, where a None path surfaces as a TypeError from
+    # pathlib with no indication of what the caller forgot.
+    if not args.source:
+        print(
+            "the following arguments are required: source\n"
+            "  concordance reconcile <model> [--platform ...]",
+            file=sys.stderr,
+        )
+        return 2
+
     graph = _load(args.source)
 
-    if args.platform == "snowflake":
-        model = _snowflake_model(args.schema or "PUBLIC")
+    if args.platform != "duckdb":
+        model = _warehouse_model(
+            args.platform, args.schema or _PLATFORM_DEFAULT_SCHEMA[args.platform]
+        )
         if model is None:
             return 2
     else:
@@ -845,26 +991,36 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser(
         "reconcile", help="compare a model's KPIs against the same KPIs in a warehouse"
     )
-    p.add_argument("source", help="path to a .pbix file or TMDL model folder")
+    # Optional only so `--help-platforms` can run without one. A missing source
+    # is still refused below, with the same message argparse would have given.
+    p.add_argument(
+        "source", nargs="?", help="path to a .pbix file or TMDL model folder"
+    )
     p.add_argument(
         "--platform",
-        choices=("duckdb", "snowflake"),
+        choices=("duckdb", "snowflake", "databricks", "redshift", "athena"),
         default="duckdb",
-        help="which warehouse to read from. snowflake takes its account, user, "
-        "password, warehouse, database and role from SNOWFLAKE_* environment "
-        "variables rather than flags, the same way the chat's API keys are read "
-        "-- a warehouse password does not belong in a shell history",
+        help="which warehouse to read from. Everything except duckdb takes its "
+        "connection details from environment variables rather than flags, the "
+        "same way the chat's API keys are read -- a warehouse password does not "
+        "belong in a shell history. See --help-platforms for the exact variables",
+    )
+    p.add_argument(
+        "--help-platforms",
+        action="store_true",
+        help="list the environment variables each --platform reads, and exit",
     )
     p.add_argument(
         "--warehouse",
         default="data/warehouse/quality_control.duckdb",
         help="path to a DuckDB warehouse (default data/warehouse/quality_control.duckdb); "
-        "ignored for --platform snowflake",
+        "ignored for every other --platform",
     )
     p.add_argument(
         "--schema",
         default=None,
-        help="warehouse schema to read (default: main for duckdb, PUBLIC for snowflake)",
+        help="warehouse schema to read (defaults per platform: main for duckdb, "
+        "PUBLIC for snowflake, default for databricks and athena, public for redshift)",
     )
     p.add_argument("--model-platform", default="power_bi", help="label for the model side")
     p.add_argument(
