@@ -18,6 +18,7 @@ import json
 import re
 import secrets
 import threading
+import time
 from collections import OrderedDict
 from http import HTTPStatus
 from http.cookies import SimpleCookie
@@ -134,6 +135,69 @@ def serves_full_interface() -> bool:
 MAX_SESSIONS = 200
 
 
+#: Requests a single client may make to the language model per window, and how
+#: long that window is. Deliberately generous for a person -- a reviewer asking
+#: back-to-back questions will not notice it -- and deliberately finite, because
+#: this endpoint is the only one that costs money per call.
+#:
+#: It exists because of a specific, reachable situation rather than a
+#: theoretical one: `concordance serve` binds to 0.0.0.0 in the container
+#: deployment, `--token` is optional, and the default OpenRouter model bills per
+#: token. That combination means anyone who finds the URL can spend the
+#: operator's balance in a loop, and nothing else in this server would stop them.
+_ASK_LIMIT = 20
+_ASK_WINDOW_SECONDS = 60.0
+
+
+class RateLimiter:
+    """A fixed-window limiter, keyed by client.
+
+    A token bucket would smooth bursts more gracefully; a fixed window is used
+    instead because it needs one timestamp and one counter per client and can be
+    read at a glance. The failure mode of a fixed window -- up to double the
+    limit across a boundary -- costs a handful of extra questions, which is not
+    the risk this is defending against.
+
+    Kept out of the HTTP handler for the same reason ``SessionStore`` is: the
+    interesting behaviour is testable without opening a socket.
+    """
+
+    def __init__(self, limit: int = _ASK_LIMIT, window: float = _ASK_WINDOW_SECONDS) -> None:
+        self.limit = limit
+        self.window = window
+        self._seen: dict[str, tuple[float, int]] = {}
+        self._lock = threading.Lock()
+
+    def check(self, client: str, now: float | None = None) -> tuple[bool, int]:
+        """Record one request and say whether it is allowed, plus seconds to wait.
+
+        Returns ``(allowed, retry_after)``. ``retry_after`` is only meaningful
+        when refused, and is what the 429's ``Retry-After`` header carries so a
+        caller is told when to come back rather than left to guess.
+        """
+        moment = time.monotonic() if now is None else now
+        with self._lock:
+            started, count = self._seen.get(client, (moment, 0))
+
+            if moment - started >= self.window:
+                started, count = moment, 0
+
+            # Bounded so a stream of distinct clients -- a scanner rotating
+            # source addresses -- cannot grow this dictionary without limit.
+            # Evicting the oldest window is right: those entries are the ones
+            # closest to expiring anyway.
+            if len(self._seen) > 4096 and client not in self._seen:
+                oldest = min(self._seen, key=lambda key: self._seen[key][0])
+                del self._seen[oldest]
+
+            count += 1
+            self._seen[client] = (started, count)
+
+            if count > self.limit:
+                return False, max(1, int(self.window - (moment - started)) + 1)
+            return True, 0
+
+
 class SessionStore:
     """One ``ModelChat`` per browser session, with a bounded number of them.
 
@@ -243,6 +307,7 @@ def make_handler(
         return ModelChat(chosen.graph if chosen else graph, provider)
 
     sessions = SessionStore(_chat_for)
+    ask_limiter = RateLimiter()
     page_bytes = _page_for(graph.model.name)
     # Rendered once: it depends only on how the server was started.
     sign_in_bytes = sign_in_page(
@@ -252,6 +317,70 @@ def make_handler(
     )
 
     class Handler(BaseHTTPRequestHandler):
+
+        def end_headers(self) -> None:
+            """Attach the headers every response should carry, then finish.
+
+            Done by overriding rather than at each `send_response` site: there
+            are a dozen of those and a header that protects only eleven of them
+            protects nothing. Overriding here means a route added later gets
+            them without its author having to know they exist.
+
+            `frame-ancestors 'none'` is the one that matters most. This server
+            records review decisions through a POST, so without it a page on
+            another origin could frame the interface and trick a signed-in
+            reviewer into clicking "accepted" on a statement they never read --
+            and a decision log whose entries might not reflect a real click is
+            worth nothing. `X-Frame-Options` says the same thing for browsers
+            predating `frame-ancestors`.
+
+            `nosniff` matters for the document download specifically: it serves
+            Markdown built from model content, and a browser that sniffed that
+            as HTML would execute whatever a crafted measure name contained.
+            """
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Content-Security-Policy", "frame-ancestors 'none'; base-uri 'self'")
+            # Keeps the model name in a URL from reaching an external host --
+            # the Auth0 SDK's CDN is the only outbound request the page makes,
+            # and it has no business knowing which model is open.
+            self.send_header("Referrer-Policy", "same-origin")
+            super().end_headers()
+
+        def _client_key(self) -> str:
+            """Who to count this request against.
+
+            The presented credential when there is one -- that identifies a
+            person, and two reviewers behind one office NAT should not exhaust
+            each other's allowance. Falling back to the address otherwise.
+
+            `X-Forwarded-For` is read only for its first entry and only because
+            this runs behind a proxy that sets it; every client address would
+            otherwise be the proxy's, collapsing the entire internet into a
+            single bucket. It is spoofable by anyone talking to the server
+            directly, which is why it is a rate-limit key and never an
+            authentication input.
+            """
+            if self.credential:
+                return f"credential:{self.credential}"
+            forwarded = self.headers.get("X-Forwarded-For", "")
+            if forwarded:
+                return f"ip:{forwarded.split(',')[0].strip()}"
+            return f"ip:{self.client_address[0]}"
+
+        def _secure_cookie(self) -> str:
+            """`; Secure` when the request arrived over HTTPS, else nothing.
+
+            Conditional rather than always-on because both deployments are
+            real: a container behind Render terminates TLS and forwards
+            `X-Forwarded-Proto: https`, while `concordance serve` on a laptop is
+            plain HTTP on loopback. Marking a cookie Secure unconditionally
+            would stop it being stored at all in the second case, which reads as
+            "sign-in silently does nothing" rather than as a security setting.
+            """
+            forwarded = self.headers.get("X-Forwarded-Proto", "").split(",")[0].strip()
+            return "; Secure" if forwarded.lower() == "https" else ""
+
         server_version = "ConcordanceChat/0.1"
         #: Set by `_authorised` from the token this request presented, for the
         #: lifetime of that request only. Empty when no user directory is
@@ -339,7 +468,7 @@ def make_handler(
                 # invisible until the interface started reacting to a 401.
                 self.send_header(
                     "Set-Cookie",
-                    f"{_TOKEN_COOKIE}={self.credential}; Path=/; HttpOnly; SameSite=Lax",
+                    f"{_TOKEN_COOKIE}={self.credential}; Path=/; HttpOnly; SameSite=Lax{self._secure_cookie()}",
                 )
             self.end_headers()
             self.wfile.write(page_bytes)
@@ -358,7 +487,7 @@ def make_handler(
             if clear:
                 self.send_header(
                     "Set-Cookie",
-                    f"{_TOKEN_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+                    f"{_TOKEN_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{self._secure_cookie()}",
                 )
             self.end_headers()
             self.wfile.write(sign_in_bytes)
@@ -435,6 +564,29 @@ def make_handler(
             self.wfile.write(body)
 
         def _handle_ask(self) -> None:
+            # Checked before the body is read, let alone before a provider is
+            # called: the whole point is to not spend money on this request.
+            allowed, retry_after = ask_limiter.check(self._client_key())
+            if not allowed:
+                self.send_response(HTTPStatus.TOO_MANY_REQUESTS)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Retry-After", str(retry_after))
+                body = json.dumps(
+                    {
+                        "error": (
+                            f"Too many questions in a short period. Try again in "
+                            f"{retry_after}s. This limit exists because each "
+                            f"question costs the operator of this server real "
+                            f"API credit."
+                        )
+                    }
+                ).encode("utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self._cors_headers()
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
             payload = self._read_json()
             if payload is None:
                 return
@@ -519,7 +671,7 @@ def make_handler(
             self.send_header("Content-Length", str(len(body)))
             self.send_header(
                 "Set-Cookie",
-                f"{_TOKEN_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax",
+                f"{_TOKEN_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax{self._secure_cookie()}",
             )
             self._cors_headers()
             self.end_headers()
@@ -584,7 +736,7 @@ def make_handler(
 
         def _set_session_cookie(self, session_id: str) -> None:
             self.send_header(
-                "Set-Cookie", f"{_SESSION_COOKIE}={session_id}; Path=/; HttpOnly; SameSite=Lax"
+                "Set-Cookie", f"{_SESSION_COOKIE}={session_id}; Path=/; HttpOnly; SameSite=Lax{self._secure_cookie()}"
             )
 
         def _authorised(self, params: dict[str, list[str]]) -> bool:

@@ -25,6 +25,7 @@
 import { useState } from "react";
 import { api, type Requirement, type ReviewPayload, type Standing } from "@/lib/api";
 import { Button, Chip, Empty, Failure, Loading, Stat } from "@/components/primitives";
+import { DecisionDialog, type Verdict } from "@/components/DecisionDialog";
 import { RichText } from "@/components/RichText";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
@@ -38,25 +39,35 @@ export function Review() {
   // readable and only that one write undone, and collapsing the two would
   // blank the page over a recoverable write.
   const [problem, setProblem] = useState<{ status: number; message: string } | null>(null);
+  // The two verdicts that assert the statement is wrong ask for a note first,
+  // and that asking is a screen rather than `window.prompt`: the note is a
+  // sentence, and it is written while looking at the sentence it replaces.
+  const [asking, setAsking] = useState<{ requirement: Requirement; verdict: Verdict } | null>(
+    null,
+  );
 
-  async function record(id: string, verdict: string) {
+  async function send(id: string, verdict: string, note: string) {
     setBusy(id);
     setProblem(null);
-    const note =
-      verdict === "rejected" || verdict === "corrected"
-        ? // Asked for, not optional, on the two verdicts that assert the
-          // statement is wrong. "Rejected, no reason given" leaves the next
-          // person exactly where they started.
-          (window.prompt(`What should it say instead? (${verdict})`) ?? "").trim()
-        : "";
-    if (verdict !== "accepted" && !note) {
-      setBusy("");
-      return;
-    }
     const result = await api.decide(id, verdict, note);
     if (!result.ok) setProblem({ status: result.status, message: result.message });
-    else reload();
+    else {
+      // Only closed on success. A failed write leaves the dialog open with the
+      // note still in it, so a reviewer never loses what they typed to a
+      // network error they can simply retry.
+      setAsking(null);
+      reload();
+    }
     setBusy("");
+  }
+
+  function record(requirement: Requirement, verdict: string) {
+    if (verdict === "accepted") {
+      void send(requirement.id, verdict, "");
+      return;
+    }
+    setProblem(null);
+    setAsking({ requirement, verdict: verdict as Verdict });
   }
 
   if (error)
@@ -126,7 +137,7 @@ export function Review() {
         </div>
       )}
 
-      {problem && (
+      {problem && !asking && (
         <Failure
           message={problem.message}
           status={problem.status}
@@ -178,7 +189,7 @@ export function Review() {
                     <Button
                       key={verdict}
                       disabled={busy === requirement.id}
-                      onClick={() => void record(requirement.id, verdict)}
+                      onClick={() => record(requirement, verdict)}
                       tone={verdict === "accepted" ? "ok" : "quiet"}
                     >
                       {verdict}
@@ -213,6 +224,17 @@ export function Review() {
             </li>
           ))}
         </ul>
+      )}
+
+      {asking && (
+        <DecisionDialog
+          requirement={asking.requirement}
+          verdict={asking.verdict}
+          busy={busy === asking.requirement.id}
+          problem={problem}
+          onCancel={() => setAsking(null)}
+          onConfirm={(note) => void send(asking.requirement.id, asking.verdict, note)}
+        />
       )}
     </div>
   );
