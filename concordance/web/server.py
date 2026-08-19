@@ -628,6 +628,10 @@ def make_handler(
                 {
                     "answer": exchange.answer,
                     "grounded": exchange.grounded,
+                    # A greeting makes no claim about the model, so the
+                    # interface must not badge it "no tool used" -- that
+                    # warning is for an assertion nothing verified.
+                    "conversational": exchange.conversational,
                     "tool_calls": [
                         {"name": name, "arguments": arguments}
                         for name, arguments in exchange.tool_calls

@@ -284,6 +284,49 @@ The closest matching measure is Patients Enrolled.
 `--show-tools` prints which tools produced an answer, and flags any answer that reached
 the user without consulting the model at all.
 
+### What it can be asked
+
+Fifteen read-only tools over the graph. Some of these answer questions nothing else in
+the product does:
+
+| Tool | Answers |
+|---|---|
+| `overview` · `list_tables` · `list_measures` | what the model contains |
+| `describe_measure` · `describe_table` | one object in full, with its DAX and fingerprint |
+| `list_relationships` · `list_hierarchies` | joins and drill paths |
+| `what_uses` | what breaks if this changes |
+| `search` | find an object when the wording is not the name |
+| `find_in_dax` | search *inside* expressions — every measure, calculated column, security filter, calculation item and KPI whose formula contains something. `OOS Rate` has no "DIVIDE" in its name, so a name search can never answer "which measures divide by something" |
+| `describe_security` | every role, the tables it filters, the exact filter DAX, and any column hidden from it |
+| `list_kpis` · `list_calculation_groups` | the expressions behind a KPI, and the items that rewrite other measures at query time |
+| `trace_source` | where a table loads from and each applied step, flagging the ones that can change the row count — a table filtered on the way in is not its source file |
+| `find_structural_risks` | inactive joins, bidirectional filters, two measures sharing one definition, measures nothing else uses, undocumented measures, unresolved references |
+
+`find_structural_risks` is computed from the graph by fixed rules, never judged by the
+language model, so it returns the same thing on every run and every finding names the
+objects it is about. It reports observations rather than defects: an inactive join is
+correct design when a measure activates it, so the finding says which measures invoke
+`USERELATIONSHIP` rather than flagging it and leaving the reader to check.
+
+Two measures sharing one definition is proven, not guessed — identical canonical DAX
+means an identical fingerprint, the same argument the rest of the project rests on.
+
+### Not every message is a question
+
+"hi" used to be answered with a recitation of table counts, because the system prompt
+said nothing about messages that are not questions and `overview` advertised itself as
+the thing to call for a general one.
+
+Greetings, thanks and "what can you do" are now answered before any provider is reached:
+no tokens, no latency, and identical behaviour on every provider — which matters, because
+the fallback chain includes small free-tier models whose instruction-following is
+unreliable, and a rule that lives only in a prompt holds only on the models that follow it.
+
+Matching is against the whole message, never a substring. "hi" is a greeting; "hi, what
+measures are there?" is a question and reaches the model untouched. The suggestions offered
+back name objects read out of the open model, so the first thing anyone sees is not an
+invented measure name.
+
 ### Two things the loop guards against
 
 **Invented tools.** Given a question its declared tools did not fit, Gemini called a
@@ -591,7 +634,7 @@ concordance/
     compare.py         diffing, and which requirements it puts in question
   cli.py
 scripts/               report generator, snapshot capture
-tests/                 600 tests, run against the real models
+tests/                 637 tests, run against the real models
 frontend/              React interface over the JSON API (Vite, Tailwind)
 data/models/           three Microsoft .pbix samples + an authored TMDL model and its v2
 ```

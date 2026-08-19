@@ -446,6 +446,9 @@ export const api = {
     Result<{
       answer: string;
       grounded: boolean;
+      /** A greeting or "what can you do", answered without a language model.
+       *  It asserts nothing about the model, so it is not an ungrounded claim. */
+      conversational?: boolean;
       tool_calls: { name: string; arguments: Record<string, unknown> }[];
       rejected_calls: string[];
     }>

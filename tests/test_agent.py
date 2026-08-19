@@ -174,8 +174,10 @@ def test_the_loop_terminates_when_the_model_keeps_calling_tools(
 def test_the_system_prompt_names_the_model_under_discussion(
     graph: SemanticGraph,
 ) -> None:
+    # A real question, not a greeting: greetings are answered without a
+    # provider at all, so there would be no call to inspect.
     provider = FakeProvider(script=[says("ok")])
-    ModelChat(graph, provider).ask("hello")
+    ModelChat(graph, provider).ask("what measures are there?")
 
     system = provider.calls[0]["system"]
     assert "ClinicalTrialSafety" in system
@@ -184,7 +186,7 @@ def test_the_system_prompt_names_the_model_under_discussion(
 
 def test_tools_are_offered_on_the_first_turn(graph: SemanticGraph) -> None:
     provider = FakeProvider(script=[says("ok")])
-    ModelChat(graph, provider).ask("hello")
+    ModelChat(graph, provider).ask("what measures are there?")
 
     offered = provider.calls[0]["tools"]
     assert "describe_measure" in offered
@@ -193,5 +195,5 @@ def test_tools_are_offered_on_the_first_turn(graph: SemanticGraph) -> None:
 
 def test_temperature_is_zero_so_answers_are_reproducible(graph: SemanticGraph) -> None:
     provider = FakeProvider(script=[says("ok")])
-    ModelChat(graph, provider).ask("hello")
+    ModelChat(graph, provider).ask("what measures are there?")
     assert provider.calls[0]["temperature"] == 0.0

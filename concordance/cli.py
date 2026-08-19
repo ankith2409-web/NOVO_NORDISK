@@ -399,7 +399,9 @@ def cmd_ask(args: argparse.Namespace) -> int:
                 print(f"  · {name}({', '.join(f'{k}={v!r}' for k, v in arguments.items())})")
             for rejected in exchange.rejected_calls:
                 print(f"  · {rejected} — rejected, no such tool")
-            if not exchange.grounded:
+            if exchange.conversational:
+                print("  · answered here, without a language model")
+            elif not exchange.grounded:
                 print("  · answered without consulting the model")
             print()
 

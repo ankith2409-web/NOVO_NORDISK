@@ -29,6 +29,9 @@ interface Turn {
   question: string;
   answer: string;
   grounded: boolean;
+  /** Answered without a language model -- a greeting, or "what can you do".
+   *  Carries no claim about the model, so it gets no "no tool used" badge. */
+  conversational?: boolean;
   tools: string[];
   rejected: string[];
   failed?: boolean;
@@ -36,11 +39,18 @@ interface Turn {
 
 /** Deliberately model-agnostic. The examples here used to name measures from
  *  one particular sample model, so on any other model the interface opened by
- *  suggesting three questions about things that did not exist. */
+ *  suggesting three questions about things that did not exist.
+ *
+ *  Chosen to reach four different tools rather than four phrasings of the same
+ *  one. An opener is the only advertisement these capabilities get: nobody
+ *  guesses that a documentation assistant can read row-level security or trace
+ *  a table back to the file it loads from, so a set of openers that all ask
+ *  about measures leaves most of the surface undiscovered. */
 const OPENERS = [
   "What does this model report on?",
-  "Which joins are inactive, and why does that matter?",
-  "What would break if I changed a measure?",
+  "Anything structurally risky a reviewer should look at?",
+  "Where does the data come from, and what changes it on the way in?",
+  "Who can see what — are there security roles?",
 ];
 
 export function Copilot({
@@ -93,6 +103,7 @@ export function Copilot({
             question: text,
             answer: result.data.answer,
             grounded: result.data.grounded,
+            conversational: result.data.conversational,
             tools: result.data.tool_calls.map((call) => call.name),
             rejected: result.data.rejected_calls,
           }
@@ -311,7 +322,9 @@ function Exchange({
         </p>
       )}
 
-      {(turn.tools.length > 0 || turn.rejected.length > 0 || !turn.grounded) &&
+      {(turn.tools.length > 0 ||
+        turn.rejected.length > 0 ||
+        (!turn.grounded && !turn.conversational)) &&
         !turn.failed && (
           <div className="flex flex-wrap items-center gap-1">
             {/* Counted, not repeated. Answering "which measures compute a
@@ -326,7 +339,7 @@ function Exchange({
                 {count > 1 && <span className="opacity-70">×{count}</span>}
               </Chip>
             ))}
-            {!turn.grounded && turn.tools.length === 0 && (
+            {!turn.grounded && !turn.conversational && turn.tools.length === 0 && (
               <Chip tone="review" title="Answered without reading the model">
                 no tool used
               </Chip>
