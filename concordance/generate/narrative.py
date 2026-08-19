@@ -1,8 +1,8 @@
-"""AI-written summaries over already-computed drift and reconciliation results.
+"""AI-written summaries over already-computed drift results.
 
 Everything else in this project that produces requirement text is deliberately
 rule-based (see `patterns.py`), because a requirement has to be traceable back
-to a fingerprint on every run. A drift or reconciliation report is a different
+to a fingerprint on every run. A drift report is a different
 kind of document: it is read once, by a person deciding whether to worry, and
 its value is in how quickly that person understands what changed and why it
 matters. That is a summarisation problem, not a specification problem, and an
@@ -11,11 +11,11 @@ record of truth.
 
 So the contract here is narrow. A summary is generated *from* a report that
 has already been computed deterministically; it never decides what counts as
-drift or a reconciliation mismatch, and it is never the only place a finding
-appears -- the evidence-bearing detail underneath it is what a reviewer should
-actually check. Every summary function returns a `Narrative` that names the
-provider it came from and carries the disclaimer, so nothing can present an
-LLM's prose as if it were computed fact.
+drift, and it is never the only place a finding appears -- the
+evidence-bearing detail underneath it is what a reviewer should actually
+check. Every summary function returns a `Narrative` that names the provider
+it came from and carries the disclaimer, so nothing can present an LLM's
+prose as if it were computed fact.
 """
 
 from __future__ import annotations
@@ -55,16 +55,6 @@ _DRIFT_SYSTEM = (
     "headings, no bullet points, no markdown."
 )
 
-_RECONCILE_SYSTEM = (
-    "You summarise a reconciliation report comparing a Power BI model against "
-    "a SQL warehouse. You are given the exact, already-computed list of "
-    "comparisons -- do not invent, guess at, or add any metric or verdict that "
-    "is not present in the data you were given. Write two to four short "
-    "sentences a business reader can skim in a meeting: how much agrees, what "
-    "diverges and why that matters, and anything that needs a human's "
-    "attention first. Plain prose, no headings, no bullet points, no markdown."
-)
-
 
 def _facts(payload: dict[str, Any], *, items_key: str, item_limit: int) -> str:
     """A compact JSON view of the report, trimmed so the prompt stays small.
@@ -91,14 +81,4 @@ def summarize_drift(drift_result: dict[str, Any], provider: LlmProvider) -> Narr
     return Narrative(text=completion.text.strip(), provider=provider.name)
 
 
-def summarize_reconcile(reconcile_result: dict[str, Any], provider: LlmProvider) -> Narrative:
-    """Narrate a `/api/reconcile` payload. Raises `LlmError` on provider failure."""
-    facts = _facts(reconcile_result, items_key="comparisons", item_limit=_MAX_ITEMS)
-    completion = provider.complete(
-        [Message(role="user", text=f"Reconciliation report as JSON:\n{facts}")],
-        system=_RECONCILE_SYSTEM,
-    )
-    return Narrative(text=completion.text.strip(), provider=provider.name)
-
-
-__all__ = ["Narrative", "DISCLAIMER", "summarize_drift", "summarize_reconcile", "LlmError"]
+__all__ = ["Narrative", "DISCLAIMER", "summarize_drift", "LlmError"]

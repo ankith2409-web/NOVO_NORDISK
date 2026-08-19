@@ -8,7 +8,7 @@
  * purpose. A word costs a few pixels and survives all three.
  */
 import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
-import type { Confidence, Verdict } from "@/lib/api";
+import type { Confidence } from "@/lib/api";
 import { AlertIcon, RetryIcon } from "@/components/icons";
 import { present } from "@/lib/failures";
 import { cx } from "@/lib/cx";
@@ -118,17 +118,6 @@ export function Chip({
       {children}
     </span>
   );
-}
-
-const VERDICT_TONE: Record<Verdict, Tone> = {
-  consistent: "ok",
-  review: "review",
-  divergent: "bad",
-};
-
-/** Deliberately spelled out: "divergent" is the claim, the colour only echoes it. */
-export function VerdictChip({ verdict }: { verdict: Verdict }) {
-  return <Chip tone={VERDICT_TONE[verdict]}>{verdict}</Chip>;
 }
 
 const CONFIDENCE_TONE: Record<Confidence, Tone> = {

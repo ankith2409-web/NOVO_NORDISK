@@ -26,19 +26,17 @@ import { Overview } from "@/views/Overview";
 import { Model } from "@/views/Model";
 import { Requirements } from "@/views/Requirements";
 import { Drift } from "@/views/Drift";
-import { Reconcile } from "@/views/Reconcile";
 import { Review } from "@/views/Review";
 import { cx } from "@/lib/cx";
 import { recall, recallOneOf, remember } from "@/lib/remember";
 
-type ViewId = "overview" | "model" | "requirements" | "drift" | "reconcile" | "review";
+type ViewId = "overview" | "model" | "requirements" | "drift" | "review";
 
-const VIEWS: { id: ViewId; label: string; needs?: "drift" | "reconcile" }[] = [
+const VIEWS: { id: ViewId; label: string; needs?: "drift" }[] = [
   { id: "overview", label: "Overview" },
   { id: "model", label: "Model" },
   { id: "requirements", label: "Requirements" },
   { id: "drift", label: "Drift", needs: "drift" },
-  { id: "reconcile", label: "Reconcile", needs: "reconcile" },
   { id: "review", label: "Review" },
 ];
 
@@ -200,10 +198,10 @@ export default function App() {
   // Read from `loaded` rather than from `overview`. Both carry the same
   // capability flags, but `overview` is cleared to null on every model switch
   // and refetched, and the old test treated "not known yet" as "configured" --
-  // so switching to a model without a warehouse lit Reconcile up as available
-  // for as long as the fetch took, then silently dropped it to `off`. The
-  // registry answers once, covers every model at the same time, and is never
-  // nulled, so the rail can be right from the first paint.
+  // so switching to a model without a comparison baseline lit Drift up as
+  // available for as long as the fetch took, then silently dropped it to
+  // `off`. The registry answers once, covers every model at the same time,
+  // and is never nulled, so the rail can be right from the first paint.
   const activeCapabilities = loaded.find((entry) => entry.name === active)?.capabilities;
 
   function configured(entry: (typeof VIEWS)[number]): boolean {
@@ -217,13 +215,13 @@ export default function App() {
   /**
    * The other loaded models that *do* have a capability the active one lacks.
    *
-   * Drift and reconciliation attach to the model they were configured against,
-   * not to the server, so on a multi-model server "this server was not given
-   * that flag" can be flatly untrue -- it was given, just bound elsewhere.
-   * Handing the view the names lets it say which, instead of sending someone
-   * to restart a server that already has what they want.
+   * Drift attaches to the model it was configured against, not to the
+   * server, so on a multi-model server "this server was not given that flag"
+   * can be flatly untrue -- it was given, just bound elsewhere. Handing the
+   * view the names lets it say which, instead of sending someone to restart
+   * a server that already has what they want.
    */
-  function othersWith(capability: "drift" | "reconcile"): string[] {
+  function othersWith(capability: "drift"): string[] {
     return loaded
       .filter((entry) => entry.name !== active && entry.capabilities[capability])
       .map((entry) => entry.name);
@@ -353,9 +351,6 @@ export default function App() {
           {resolved && view === "model" && <Model />}
           {resolved && view === "requirements" && <Requirements />}
           {resolved && view === "drift" && <Drift alsoOn={othersWith("drift")} />}
-          {resolved && view === "reconcile" && (
-            <Reconcile alsoOn={othersWith("reconcile")} />
-          )}
           {resolved && view === "review" && <Review />}
         </main>
 

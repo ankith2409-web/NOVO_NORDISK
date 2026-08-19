@@ -26,14 +26,13 @@ Concordance extracts a Power BI semantic model — `.pbix` or TMDL — into one 
 graph, and derives the BRD and FRD from that graph rather than from prose. Every
 statement carries the objects it came from and the SHA-256 fingerprint of each.
 
-Four capabilities sit on that one mechanism:
+Three capabilities sit on that one mechanism:
 
 | | |
 |---|---|
 | **Derived documents** | Business and functional requirements, each bound to the objects it was derived from. |
 | **Fingerprinted logic** | DAX is lexed and canonicalised before hashing. Reformatting is silent; a changed filter is not. |
 | **Drift detection** | Compares two model versions and names the requirements a change puts in question — separately from the ones it provably does not. |
-| **Cross-platform reconciliation** | Compares what a DAX measure and a warehouse view each structurally read, and reports where they differ. |
 
 A grounded chatbot answers questions by calling read-only tools against the graph rather
 than from model memory, and a React interface presents all of it, including a lineage
@@ -80,25 +79,6 @@ and **8 requirements identified as now in question**. Listing changed objects is
 diff does; naming the requirements whose evidence sits on those objects is what turns a
 diff into *"this document may no longer describe this model"*.
 
-**Reconciliation, `QualityControl` against its warehouse:** 6 metrics defined on both
-sides — 4 consistent, 1 needing review, 1 divergent. The divergent one is `OOS Rate`,
-where Power BI reads `testresult` and the warehouse reads `batch, testresult`: the two
-divide by different denominators and will report different numbers.
-
-No fingerprint could have found that. DAX and SQL never hash alike even when they compute
-the same thing, so what is compared is what each definition *structurally reads* — tables,
-columns, aggregations. That yields three verdicts rather than pass/fail: deciding whether
-two arbitrary expressions in two languages compute the same number is undecidable in
-general, and "needs review" is the honest answer for a difference that may or may not
-matter.
-
-**Metric pairing** was strengthened during development after measurement showed name
-similarity alone scores `Batches Released` against `batches_rejected` at 0.80 — higher
-than many true pairs. Pairing now weighs what each definition reads, which both demotes
-false matches and finds real ones a name score cannot reach: on the real warehouse it
-surfaces `Instrument Failure Rank` against `instrument_utilisation`, scoring 0.667 on
-name, below any workable threshold.
-
 ## 5. What it refuses to claim
 
 This is the part that is hardest to demo and matters most in a regulated industry.
@@ -131,7 +111,6 @@ This is the part that is hardest to demo and matters most in a regulated industr
   does not show that. The check applies to the load-bearing claims as well as the frontend:
   the test asserting a reviewer cannot sign off under another name was verified to fail
   when the server is allowed to take the author from the request body.
-- **sqlglot** parses warehouse SQL into a real AST for the same reason DAX is lexed.
 - **Dependency-light by choice**: the web layer is stdlib `http.server`; the lineage
   diagram is hand-laid-out SVG rather than a graph library.
 - **The LLM is deliberately absent from derivation.** Requirements are produced
@@ -141,25 +120,18 @@ This is the part that is hardest to demo and matters most in a regulated industr
   confidently-wrong behaviour the project exists to remove.
 
 Several defects were found by running the software against real data rather than by unit
-tests — a Python list repr leaking into user-facing output, four bugs in warehouse
-extraction, a source-pairing rule that produced six suggestions where one was useful, a
-table declared outside the expected folder being dropped in silence, and a generated
-requirement that called a ratio a count because it read an aggregation out of the
-denominator. Each is recorded in the commit history with the measurement that exposed it.
+tests — a Python list repr leaking into user-facing output, a table declared outside the
+expected folder being dropped in silence, and a generated requirement that called a ratio
+a count because it read an aggregation out of the denominator. Each is recorded in the
+commit history with the measurement that exposed it.
 
 ## 7. Honest status
 
-**Proven end to end:** both Power BI formats, drift, reconciliation, lineage to source,
+**Proven end to end:** both Power BI formats, drift, lineage to source,
 the grounded chatbot, the decision log, multi-model serving, access control, row-level
 security and calculation-group extraction, Power Query step interpretation, and
 per-reviewer identity — a reviewer presenting their own token cannot record a decision
 under a colleague's name, verified against a running server.
-
-**Out of scope by decision:** cloud warehouse connectors. DuckDB exposes the same standard
-information schema, so the extraction path exercised is the real one, and it needs no
-account — which is what lets anyone clone the repository and run the reconciliation demo.
-The comparison logic is dialect-agnostic, so adding one later is a connector function
-against a stable interface.
 
 **Not built:** perspectives, translations and column variations are counted and named but
 not read. Requirement prose is rule-generated rather than model-written, so its vocabulary

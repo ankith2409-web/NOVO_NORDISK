@@ -1,5 +1,5 @@
 /**
- * The AI-generated narrative on top of a drift or reconcile report.
+ * The AI-generated narrative on top of a drift report.
  *
  * Deliberately opt-in and separate from the evidence it sits above: generating
  * it costs a real request to a language model, so it is fetched only when

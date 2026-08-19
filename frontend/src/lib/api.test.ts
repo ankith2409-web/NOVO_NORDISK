@@ -65,7 +65,6 @@ describe("which model a request is about", () => {
       ["measures", () => api.measures()],
       ["review", () => api.review()],
       ["drift", () => api.drift()],
-      ["reconcile", () => api.reconcile()],
       ["requirements", () => api.requirements("business")],
       ["measure", () => api.measure("OOS Rate")],
       ["impact", () => api.impact("OOS Rate")],

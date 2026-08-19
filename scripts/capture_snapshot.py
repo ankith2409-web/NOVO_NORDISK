@@ -11,7 +11,7 @@ model. Nothing here is synthesised, and the interface says on screen that it is
 a snapshot, because a shared build that looked live would invite someone to
 trust a number that is only as fresh as this capture.
 
-    concordance serve data/models/QualityControl.SemanticModel --warehouse ...
+    concordance serve data/models/QualityControl.SemanticModel
     python scripts/capture_snapshot.py
     cd frontend && npm run build:snapshot
 
@@ -44,7 +44,6 @@ COLLECTION_ROUTES = (
     "/requirements?kind=functional",
     "/review",
     "/drift",
-    "/reconcile",
 )
 
 #: Per-object routes are captured by name instead, one request per measure.

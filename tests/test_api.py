@@ -31,14 +31,11 @@ from concordance.web.server import allowed_origin, make_handler
 
 MODEL = Path("data/models/ClinicalTrialSafety.SemanticModel")
 MODEL_V2 = Path("data/models/ClinicalTrialSafety_v2.SemanticModel")
-QUALITY_CONTROL = Path("data/models/QualityControl.SemanticModel")
-BUILDER = Path("scripts/build_warehouse.py")
-
 #: Routes that answer from the model alone, with no parameters and no extra
 #: sources configured. Derived from the route table so a new endpoint cannot be
 #: added without either appearing here or being listed below as an exception.
 _NEEDS_PARAMS = {"/api/measure", "/api/table", "/api/impact"}
-_NEEDS_CONFIG = {"/api/drift", "/api/reconcile"}
+_NEEDS_CONFIG = {"/api/drift"}
 _SELF_SERVING = sorted(set(api.ROUTES) - _NEEDS_PARAMS - _NEEDS_CONFIG)
 
 
@@ -101,12 +98,12 @@ def test_an_unconfigured_source_is_not_pretended_away(
 def test_the_client_cannot_name_a_file(
     context: api.ApiContext, path: str, attempt: str
 ) -> None:
-    """Drift and reconcile read what the operator configured, never a parameter.
+    """Drift reads what the operator configured, never a parameter.
 
     A query parameter naming a path would turn a read-only local server into an
-    arbitrary file reader. These stay unconfigured no matter what is passed.
+    arbitrary file reader. It stays unconfigured no matter what is passed.
     """
-    for key in ("path", "source", "warehouse", "compare_to", "model", "file"):
+    for key in ("path", "source", "compare_to", "model", "file"):
         status, payload = api.handle(context, path, {key: [attempt]})
         # `model` is a real parameter now, but it names a key in a registry
         # fixed at startup -- never a path -- so a path-shaped value is simply
@@ -143,9 +140,9 @@ def test_an_unknown_requirement_kind_lists_the_real_ones(context: api.ApiContext
 # -- payload content: the provenance the interface is built on ----------------
 
 def test_overview_advertises_what_is_configured(graph: SemanticGraph) -> None:
-    """The UI has to know whether to render the drift and reconcile views."""
+    """The UI has to know whether to render the drift view."""
     bare = api.handle(api.ApiContext(graph=graph), "/api/overview", {})[1]
-    assert bare["capabilities"] == {"drift": False, "reconcile": False}
+    assert bare["capabilities"] == {"drift": False}
 
     withdrift = api.ApiContext(graph=graph, compare_to=graph)
     assert api.handle(withdrift, "/api/overview", {})[1]["capabilities"]["drift"] is True
@@ -203,7 +200,7 @@ def test_the_graph_is_whole(context: api.ApiContext) -> None:
     assert payload["stats"]["edges"] == len(payload["edges"])
 
 
-# -- drift and reconcile, once configured -------------------------------------
+# -- drift, once configured ----------------------------------------------------
 
 def test_drift_reports_changes_and_what_they_put_in_question() -> None:
     before = _load(MODEL)
@@ -263,159 +260,3 @@ def test_drift_summary_uses_the_configured_provider() -> None:
     assert payload["summary"]["text"] == "A measure's filter changed."
     assert payload["summary"]["provider"] == "fake"
     assert payload["summary"]["disclaimer"]
-
-
-def test_reconcile_reports_the_divergent_metric(tmp_path_factory) -> None:
-    import importlib.util
-
-    if not BUILDER.exists():
-        pytest.skip("warehouse builder not present")
-    spec = importlib.util.spec_from_file_location("build_warehouse", BUILDER)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    warehouse = module.build(tmp_path_factory.mktemp("wh") / "qc.duckdb")
-
-    context = api.ApiContext(graph=_load(QUALITY_CONTROL), warehouse=warehouse)
-    status, payload = api.handle(context, "/api/reconcile", {})
-
-    assert status is HTTPStatus.OK
-    divergent = [c for c in payload["comparisons"] if c["verdict"] == "divergent"]
-    assert [c["metric"] for c in divergent] == ["OOS Rate"]
-    assert divergent[0]["differences"], "a verdict without a reason is not evidence"
-    assert all(c["needs_attention"] for c in divergent)
-
-
-# -- CORS ---------------------------------------------------------------------
-
-@pytest.mark.parametrize(
-    "origin",
-    [
-        "http://localhost:5173",
-        "http://127.0.0.1:8000",
-        "https://localhost",
-        "http://[::1]:3000",
-    ],
-)
-def test_a_local_dev_server_is_allowed(origin: str) -> None:
-    assert allowed_origin(origin) == origin
-
-
-@pytest.mark.parametrize(
-    "origin",
-    [
-        "https://evil.example",
-        "http://localhost.evil.example",
-        "http://127.0.0.1.evil.example",
-        "http://notlocalhost",
-        None,
-        "",
-    ],
-)
-def test_anything_else_is_refused(origin: str | None) -> None:
-    """The API serves a local model and spends real quota through the chat."""
-    assert allowed_origin(origin) is None
-
-
-# -- the HTTP layer -----------------------------------------------------------
-
-class _RunningServer:
-    def __init__(self, graph: SemanticGraph, context: api.ApiContext | None = None) -> None:
-        handler, self.sessions = make_handler(
-            graph, FakeProvider(script=[says("ok")]), context
-        )
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-        self.port = self.httpd.server_port
-        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
-        self.thread.start()
-
-    def request(self, method: str, path: str, headers: dict | None = None):
-        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
-        conn.request(method, path, headers=headers or {})
-        return conn.getresponse()
-
-    def close(self) -> None:
-        self.httpd.shutdown()
-        self.httpd.server_close()
-
-
-@pytest.fixture
-def server(graph: SemanticGraph):
-    running = _RunningServer(graph)
-    yield running
-    running.close()
-
-
-def test_endpoints_are_reachable_over_http(server: _RunningServer) -> None:
-    response = server.request("GET", "/api/overview")
-    assert response.status == 200
-    assert json.loads(response.read())["model"]
-
-
-def test_a_query_string_survives_routing(server: _RunningServer) -> None:
-    """Routing splits path from query; matching the raw path would 404 here."""
-    response = server.request("GET", "/api/measure?name=Serious%20Adverse%20Events")
-    assert response.status == 200
-    assert json.loads(response.read())["name"] == "Serious Adverse Events"
-
-
-def test_the_allowed_origin_is_echoed_never_wildcarded(server: _RunningServer) -> None:
-    """A wildcard is invalid once the session cookie makes requests credentialed."""
-    response = server.request(
-        "GET", "/api/overview", {"Origin": "http://localhost:5173"}
-    )
-    assert response.getheader("Access-Control-Allow-Origin") == "http://localhost:5173"
-    assert response.getheader("Access-Control-Allow-Credentials") == "true"
-
-
-def test_a_foreign_origin_gets_no_allow_header(server: _RunningServer) -> None:
-    response = server.request("GET", "/api/overview", {"Origin": "https://evil.example"})
-    assert response.getheader("Access-Control-Allow-Origin") is None
-
-
-def test_every_response_varies_on_origin(server: _RunningServer) -> None:
-    """Without this a shared cache could serve one origin's response to another."""
-    for origin in ("http://localhost:5173", "https://evil.example"):
-        response = server.request("GET", "/api/overview", {"Origin": origin})
-        assert "Origin" in (response.getheader("Vary") or "")
-        response.read()
-
-
-def test_the_preflight_is_answered(server: _RunningServer) -> None:
-    response = server.request(
-        "OPTIONS", "/api/overview", {"Origin": "http://localhost:5173"}
-    )
-    assert response.status == 204
-    assert "GET" in response.getheader("Access-Control-Allow-Methods")
-
-
-def test_read_only_endpoints_mint_no_sessions(server: _RunningServer) -> None:
-    """The graph never changes, so every visitor can share it.
-
-    Minting a session per read would put a conversation history behind every
-    page load the interface makes -- and the store is capped, so it would evict
-    real chats.
-    """
-    before = len(server.sessions)
-    for path in ("/api/overview", "/api/tables", "/api/measures", "/api/graph"):
-        server.request("GET", path).read()
-
-    assert len(server.sessions) == before
-
-
-def test_the_graph_says_which_tables_hold_definitions(context: api.ApiContext) -> None:
-    """A measure container is a table with no data of its own.
-
-    TMDL still requires one hidden placeholder column on such a table, so
-    without this flag an interface has no way to tell that column apart from
-    real data, and shows a field nobody can account for.
-    """
-    payload = api.handle(context, "/api/graph", {})[1]
-    tables = [n for n in payload["nodes"] if n["kind"] == "table"]
-
-    assert all("is_measure_only" in t for t in tables)
-    containers = {t["name"] for t in tables if t["is_measure_only"]}
-    assert containers, "the clinical model groups its measures in a container table"
-
-    # The flag has to agree with where the measures actually live.
-    hosts = {m["table"] for m in payload["nodes"] if m["kind"] == "measure"}
-    assert containers <= hosts

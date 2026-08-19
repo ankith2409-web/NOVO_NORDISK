@@ -33,16 +33,6 @@ RUN pip install --no-cache-dir .
 # The two models this image serves live. Copied explicitly rather than the
 # whole `data/` tree, which also holds the .pbix samples this image has no
 # use for.
-#
-# No warehouse file here on purpose, even though QualityControl has one in
-# local development: `data/warehouse/` is gitignored (it's a build artefact
-# -- see scripts/build_warehouse.py -- not something meant to be committed),
-# so a COPY naming it fails on any real build, exactly the way this one did
-# the first time. start.sh doesn't pass --warehouse either, for the separate
-# reason explained there, so there was nothing this image needed the file
-# for. To wire reconciliation into a deploy later: add
-# `RUN python scripts/build_warehouse.py` below (it's self-contained, no
-# external inputs) and pass --warehouse in start.sh.
 COPY data/models/ClinicalTrialSafety.SemanticModel ./data/models/ClinicalTrialSafety.SemanticModel
 COPY data/models/ClinicalTrialSafety_v2.SemanticModel ./data/models/ClinicalTrialSafety_v2.SemanticModel
 COPY data/models/QualityControl.SemanticModel ./data/models/QualityControl.SemanticModel

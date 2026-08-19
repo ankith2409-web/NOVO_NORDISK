@@ -56,8 +56,8 @@ export function Intro({
       "The BRD and FRD, derived from the model rather than typed. Each statement carries the objects it came from.",
     ],
     [
-      "Drift · Reconcile",
-      "What moved between two versions of a model, and whether the warehouse computes the same numbers Power BI does.",
+      "Drift",
+      "What moved between two versions of a model, and which requirements it puts back in question.",
     ],
     [
       "Review",

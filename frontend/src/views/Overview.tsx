@@ -117,8 +117,7 @@ export function Overview({ overview }: { overview: OverviewData | null }) {
       )}
 
       <p className="font-mono text-[11px] text-faint">
-        drift {data.capabilities.drift ? "configured" : "not configured"} · reconcile{" "}
-        {data.capabilities.reconcile ? "configured" : "not configured"}
+        drift {data.capabilities.drift ? "configured" : "not configured"}
       </p>
     </div>
   );

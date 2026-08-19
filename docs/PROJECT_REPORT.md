@@ -70,25 +70,18 @@ security filter (which rows a given reader's figures are computed over), a calcu
 group item (which substitutes its own logic around whichever measure is displayed), and
 a table's load query (which rows reach the model in the first place).
 
-### 3.5 Cross-platform reconciliation
-Compares a Power BI measure against the same metric defined in a SQL warehouse. Since DAX
-and SQL never produce the same hash even when they compute the same number, the comparison
-instead looks at what each definition structurally reads — which tables, which columns,
-which aggregation — and reports whether the two are consistent, divergent, or need human
-review.
-
-### 3.6 Lineage graph
-Traces a number visually from the file or warehouse it was loaded from, through the
+### 3.5 Lineage graph
+Traces a number visually from the file it was loaded from, through the
 columns and measures that transform it, to the figure a report displays — answering "where
 does this number actually come from" in one view.
 
-### 3.7 Grounded chatbot
+### 3.6 Grounded chatbot
 Answers plain-English questions about the model by calling read-only tools against the
 extracted graph — never from memory or general Power BI knowledge — so every answer is
 checkable against the real model. Supports automatic fallback across three LLM providers
 if one is unavailable.
 
-### 3.8 Review and audit trail
+### 3.7 Review and audit trail
 Low-confidence, inferred statements are queued for a human to accept, reject, or correct.
 Each decision is bound to the fingerprint of the logic it was made against, so if that
 logic later changes, the decision automatically becomes stale — it is not silently carried
@@ -103,9 +96,9 @@ also records whether its author was verified this way or merely self-declared, b
 trail that mixes the two without saying which is which forces every entry to be treated
 as unverified.
 
-### 3.9 Web application
-A six-view interface (Overview, Model browser with lineage, Requirements, Drift,
-Reconcile, Review) plus a docked chat panel, built in React and served directly by the
+### 3.8 Web application
+A five-view interface (Overview, Model browser with lineage, Requirements, Drift,
+Review) plus a docked chat panel, built in React and served directly by the
 Python backend as a single self-contained page — no separate build step required to run
 it.
 
@@ -130,45 +123,15 @@ in both themes, against the 4.5:1 floor. It runs as a script because the palette
 already hand-tuned once to exactly that floor, and a value maintained from memory is one
 that silently drifts below it.
 
-### 3.10 Command-line tool
-Eleven commands covering extraction, inspection, document generation, drift comparison,
-reconciliation, evidence-bundle export, and serving the web application.
+### 3.9 Command-line tool
+Ten commands covering extraction, inspection, document generation, drift comparison,
+evidence-bundle export, and serving the web application.
 
 ## 4. Platform integration status
 
 | Platform | Status |
 |---|---|
 | Power BI (`.pbix` and TMDL) | Fully implemented, tested end to end |
-| DuckDB (warehouse reconciliation) | Fully implemented, tested end to end — the default warehouse |
-| Snowflake | Connector implemented; unit-tested, **not yet run against a live account** |
-| Databricks (Unity Catalog) | Connector implemented; unit-tested, **not yet run against a live account** |
-| AWS Redshift | Connector implemented; unit-tested, **not yet run against a live account** |
-| AWS Athena (Glue) | Connector implemented; unit-tested, **not yet run against a live account** |
-
-The distinction in that table is the important part, so it is spelled out rather than left
-to the word "implemented".
-
-**What is implemented and proven.** The comparison logic — reading an information schema,
-parsing view SQL into an AST, comparing what each definition structurally reads — is
-platform-agnostic and exercised end to end against DuckDB, which implements the same
-standard information schema the cloud warehouses do. Each cloud platform adds a connection
-function of roughly thirty lines: authenticate, hand the resulting cursor to the same
-adapter, close. Those functions are unit-tested against fake database cursors, which
-proves the parameters sent to each driver, the identifier case folding (Snowflake folds
-unquoted names to upper case; Databricks, Redshift and Athena all fold to lower — get it
-wrong and the query silently matches nothing), the SQL dialect selected, and that the
-connection is closed on both the success and the failure path.
-
-**What is not proven.** No live handshake against a real Snowflake, Databricks, Redshift or
-Athena account. The network this project was built on blocks all four at the policy layer,
-so authenticating for real has to happen elsewhere. Everything inside this process is
-tested; whether a real account accepts the credentials is not, and the first real
-connection should be treated as the acceptance test.
-
-DuckDB remains the default for a deliberate reason: it needs no account, no credentials and
-no network, so anyone can clone this repository and run the full reconciliation demo in one
-command. A cloud warehouse as the default would have made the project's central feature
-unrunnable for anyone without a paid account.
 
 ## 5. Verification
 
@@ -176,7 +139,7 @@ unrunnable for anyone without a paid account.
 - Tests for the load-bearing claims were deliberately broken once and confirmed to fail,
   to prove they actually catch the problems they claim to — including the one asserting a
   reviewer cannot sign off under another reviewer's name.
-- Every major feature was also checked by hand against real models and a real warehouse —
+- Every major feature was also checked by hand against real models —
   not just unit tests — which is how several real defects were found and fixed during this
   project: a crash on a corrupted database file, a routing bug that served the wrong page,
   a metric-pairing rule that produced far too many false suggestions, a table declared
@@ -224,19 +187,11 @@ KPIs are not currently represented in any sample model.
   now vary according to what each measure actually does, but the vocabulary is finite by
   construction — this buys reproducibility and traceability at some cost in fluency, and
   that trade is deliberate.
-- Reconciliation compares what two definitions *structurally read* — tables, columns,
-  aggregations — not the numbers they produce. Deciding whether two arbitrary expressions
-  in two languages compute the same value is undecidable in general, which is why a third
-  verdict ("needs review") exists instead of a forced pass/fail.
-- Cloud warehouse connectors (Snowflake, Databricks, Redshift, Athena) are
-  implemented but have never been run against a live account — the build network
-  blocks all four. Their logic is unit-tested against fake database cursors; the
-  first real connection is the acceptance test. See section 4.
 
 ## 8. Summary
 
 The tool takes a Power BI model as input and produces a requirements document, a drift
-report, a reconciliation report, and a queryable chat interface — all derived from, and
+report, and a queryable chat interface — all derived from, and
 provably traceable back to, the same underlying model. That traceability, enforced by
 cryptographic fingerprints rather than by convention, is the project's central
 contribution and the answer to the problem statement's request for a BRD/FRD automation

@@ -860,15 +860,13 @@ def make_handler(
 def _capabilities_of(context: api.ApiContext) -> list[str]:
     """The optional features one loaded model can actually answer for.
 
-    Both are opt-in at startup: drift needs a second model to compare against,
-    reconcile needs a warehouse connection. Naming them in the banner is how
-    someone finds out a flag they passed did not take effect.
+    Opt-in at startup: drift needs a second model to compare against. Naming
+    it in the banner is how someone finds out a flag they passed did not
+    take effect.
     """
     enabled = []
     if context.compare_to is not None:
         enabled.append("drift")
-    if context.warehouse is not None:
-        enabled.append("reconcile")
     return enabled
 
 
