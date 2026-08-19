@@ -26,7 +26,9 @@ import { useState } from "react";
 import { api, type Requirement, type ReviewPayload, type Standing } from "@/lib/api";
 import { Button, Chip, Empty, Failure, Loading, Stat } from "@/components/primitives";
 import { DecisionDialog, type Verdict } from "@/components/DecisionDialog";
+import { DecisionBar } from "@/components/DecisionBar";
 import { RichText } from "@/components/RichText";
+import { CheckIcon } from "@/components/icons";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
 
@@ -45,6 +47,11 @@ export function Review() {
   const [asking, setAsking] = useState<{ requirement: Requirement; verdict: Verdict } | null>(
     null,
   );
+  // Which row just recorded, so the write is acknowledged rather than only
+  // implied by the list quietly rearranging itself. Accepting used to be
+  // entirely silent: the one action a reviewer takes most often gave the least
+  // evidence it had happened.
+  const [justDecided, setJustDecided] = useState("");
 
   async function send(id: string, verdict: string, note: string) {
     setBusy(id);
@@ -56,6 +63,8 @@ export function Review() {
       // note still in it, so a reviewer never loses what they typed to a
       // network error they can simply retry.
       setAsking(null);
+      setJustDecided(id);
+      setTimeout(() => setJustDecided((current) => (current === id ? "" : current)), 2400);
       reload();
     }
     setBusy("");
@@ -165,7 +174,17 @@ export function Review() {
           {data.pending.map((requirement) => (
             <li
               key={requirement.id}
-              className="rounded border border-review/40 bg-ground px-3.5 py-3"
+              className={cx(
+                "rounded border bg-ground px-3.5 py-3",
+                "transition-colors duration-(--duration-feedback) ease-(--ease-standard)",
+                // The row confirms its own write. Held briefly rather than
+                // permanently: it answers "did that land?", which stops being
+                // a question a couple of seconds later, and the standing line
+                // above carries the durable record.
+                justDecided === requirement.id
+                  ? "border-ok/50 bg-ok-soft"
+                  : "border-review/40",
+              )}
             >
               <div className="flex items-start gap-2.5">
                 <code className="mt-0.5 flex-none font-mono text-[11px] text-faint">
@@ -177,30 +196,29 @@ export function Review() {
                 <Chip tone="review">{requirement.category}</Chip>
               </div>
 
-              <StandingLine standing={requirement.standing} />
+              {justDecided === requirement.id ? (
+                <p
+                  role="status"
+                  className="mt-2 flex items-center gap-1.5 font-mono text-[11px] text-ok animate-(--animate-rise)"
+                >
+                  <CheckIcon size={13} />
+                  Recorded against this statement&rsquo;s fingerprint
+                </p>
+              ) : (
+                <StandingLine standing={requirement.standing} />
+              )}
 
               <p className="mt-2 border-l-2 border-review/40 pl-2.5 text-xs text-muted">
                 <RichText>{requirement.rationale}</RichText>
               </p>
 
               {data.can_decide && (
-                <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                  {(["accepted", "rejected", "corrected"] as const).map((verdict) => (
-                    <Button
-                      key={verdict}
-                      disabled={busy === requirement.id}
-                      onClick={() => record(requirement, verdict)}
-                      tone={verdict === "accepted" ? "ok" : "quiet"}
-                    >
-                      {verdict}
-                    </Button>
-                  ))}
-                  {requirement.standing.status === "stale" && (
-                    <span className="font-mono text-[11px] text-bad">
-                      re-decide: the definition moved
-                    </span>
-                  )}
-                </div>
+                <DecisionBar
+                  busy={busy === requirement.id}
+                  stale={requirement.standing.status === "stale"}
+                  decided={requirement.standing.status === "decided"}
+                  onDecide={(verdict) => record(requirement, verdict)}
+                />
               )}
 
               {requirement.evidence.length > 0 && (

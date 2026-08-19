@@ -172,7 +172,7 @@ def to_markdown(document: Document) -> str:
                 if "\n" in detail:
                     lines.append("*Implementation:*")
                     lines.append("")
-                    lines.append("```dax")
+                    lines.append(f"```{_fence_language(requirement.evidence[0].node_id)}")
                     lines.append(detail)
                     lines.append("```")
                 else:
@@ -211,3 +211,18 @@ def to_markdown(document: Document) -> str:
 def _plain(text: str) -> str:
     """Strip the light Markdown emphasis used inside statements."""
     return text.replace("**", "").replace("`", "")
+
+
+def _fence_language(node_id: str) -> str:
+    """Which language a code block actually holds.
+
+    Every fenced block used to be labelled ``dax``, including the ones holding
+    a table's Power Query -- which is M, a different language with different
+    keywords. A reader who trusts the label reads `let ... in` as DAX and finds
+    nothing wrong with it, and any tooling that syntax-highlights on the fence
+    marks half the document as broken DAX.
+
+    A table's evidence is its M query; a measure's or a calculated column's is
+    DAX. Nothing else in this document fences a multi-line expression.
+    """
+    return "m" if node_id.startswith("table:") else "dax"

@@ -105,3 +105,41 @@ export function DownloadIcon(props: IconProps) {
     </Glyph>
   );
 }
+
+/**
+ * The three review verdicts.
+ *
+ * Drawn as distinct silhouettes rather than three variations on a circle: at
+ * 14px, beside a word, in a row of three, the only thing that separates them
+ * at a glance is outline. A tick, a cross and a pencil are as far apart as
+ * three glyphs of this size get.
+ */
+
+/** Accept: the statement stands. */
+export function CheckIcon(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <path d="m20 6-11 11-5-5" />
+    </Glyph>
+  );
+}
+
+/** Reject: the statement is wrong. */
+export function CrossIcon(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </Glyph>
+  );
+}
+
+/** Correct: the statement is wrong and the reviewer supplies the replacement. */
+export function PencilIcon(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </Glyph>
+  );
+}
