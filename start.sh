@@ -17,6 +17,7 @@ set -eu
 exec concordance serve \
     data/models/ClinicalTrialSafety.SemanticModel \
     data/models/QualityControl.SemanticModel \
+    data/models/DiabetesCare.SemanticModel \
     --compare-to data/models/ClinicalTrialSafety_v2.SemanticModel \
     --decisions /app/state/decisions.jsonl \
     --host 0.0.0.0 \

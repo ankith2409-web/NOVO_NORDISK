@@ -30,12 +30,19 @@ COPY concordance ./concordance
 # project's pyproject.toml; nothing extra to request here.
 RUN pip install --no-cache-dir .
 
-# The two models this image serves live. Copied explicitly rather than the
-# whole `data/` tree, which also holds the .pbix samples this image has no
-# use for.
+# The models this image serves live. Copied explicitly rather than the whole
+# `data/` tree, which also holds the .pbix samples this image has no use for.
+#
+# DiabetesCare earns its place by being the only one of the four that defines
+# row-level security, object-level security, a KPI and a calculation group.
+# Without it the copilot's `describe_security`, `list_kpis` and
+# `list_calculation_groups` answer "this model defines none" on every model
+# the deployment can reach -- three working features that would look broken
+# to anyone who asked, which is worse than not having built them.
 COPY data/models/ClinicalTrialSafety.SemanticModel ./data/models/ClinicalTrialSafety.SemanticModel
 COPY data/models/ClinicalTrialSafety_v2.SemanticModel ./data/models/ClinicalTrialSafety_v2.SemanticModel
 COPY data/models/QualityControl.SemanticModel ./data/models/QualityControl.SemanticModel
+COPY data/models/DiabetesCare.SemanticModel ./data/models/DiabetesCare.SemanticModel
 
 # Decisions persist to this file for the life of the container. On a platform
 # without a mounted persistent volume (Render's free tier included) this
