@@ -110,7 +110,7 @@ steps.forEach(([h,b],i)=>{
 });
 s.addText('The graph is the only source of truth downstream. The chatbot, the documents, drift and reconciliation all read it — none of them re-parse the model, so none of them can disagree with each other.',
   {x:M,y:4.3,w:W-2*M,h:0.7,fontFace:SANS,fontSize:13,color:INK,margin:0});
-stat(s,M,5.15,2.9,'14,572','lines of Python');
+stat(s,M,5.15,2.9,'13,943','lines of Python');
 stat(s,M+3.1,5.15,2.9,'5,901','lines of TypeScript');
 stat(s,M+6.2,5.15,2.9,'797','automated tests',OK);
 stat(s,M+9.3,5.15,2.6,'0','regex in the DAX lexer',ACCENT);
