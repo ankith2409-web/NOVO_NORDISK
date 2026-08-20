@@ -10,21 +10,20 @@
 # edit anyway when this points at a different model.
 set -eu
 
-# `--compare-to` and `--warehouse` both attach only to whichever model is listed
-# first (concordance/cli.py's own comment: "a comparison model and a warehouse
-# describe *one* model"). The only real second version is
-# ClinicalTrialSafety_v2, so that model leads and drift runs live against it.
+# Both optional features are bound explicitly, by name, to the model each one
+# actually belongs to. Drift needs the version pair, which only
+# ClinicalTrialSafety has; the warehouse is built for QualityControl's schema
+# and reports nothing in common against anything else.
 #
-# The warehouse is built for QualityControl's schema, so reconciliation is
-# demonstrated from the CLI (`concordance reconcile
-# data/models/QualityControl.SemanticModel`) rather than bound to the first
-# model here, where it would compare a warehouse against a model it was never
-# built against and report every metric as unique to one side.
+# Without the MODEL= prefix both flags attach to whichever model is listed
+# first, which made this exact configuration impossible to start -- the
+# deployment served "not configured" on both tabs for every model.
 exec concordance serve \
     data/models/ClinicalTrialSafety.SemanticModel \
     data/models/QualityControl.SemanticModel \
     data/models/DiabetesCare.SemanticModel \
-    --compare-to data/models/ClinicalTrialSafety_v2.SemanticModel \
+    --compare-to ClinicalTrialSafety=data/models/ClinicalTrialSafety_v2.SemanticModel \
+    --warehouse QualityControl=data/warehouse/quality_control.duckdb \
     --decisions /app/state/decisions.jsonl \
     --host 0.0.0.0 \
     --port "${PORT:-8000}"

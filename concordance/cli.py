@@ -19,6 +19,37 @@ from concordance.graph.csg import SemanticGraph, measure_id
 from concordance.normalize.dax import canonicalise
 
 
+class _BadAttachment(Exception):
+    """A --compare-to or --warehouse naming a model this server was not given."""
+
+
+def _split_attachment(
+    value: str, known: set[str], default: str
+) -> tuple[str, str]:
+    """Split ``Model=value`` into the model it attaches to and the value.
+
+    A value with no ``=``, or one whose prefix is not a model this server was
+    given, attaches to ``default`` and is returned whole. That second case
+    matters: a path may legitimately contain ``=``, and splitting on one that
+    names nothing would turn a real path into a mysterious "no such file".
+    Only a prefix that actually matches a loaded model is treated as a name.
+
+    Raises ``KeyError`` when the prefix looks like a deliberate model name --
+    it matched nothing, but the value before ``=`` is not path-shaped -- so the
+    caller can refuse rather than silently attach it to the wrong model.
+    """
+    name, separator, rest = value.partition("=")
+    if not separator:
+        return default, value
+    if name in known:
+        return name, rest
+    # A prefix with no path separators and no dot reads as an attempt to name a
+    # model, not as part of a filename.
+    if name and "/" not in name and "\\" not in name and "." not in name:
+        raise KeyError(name)
+    return default, value
+
+
 def _load(path: str) -> SemanticGraph:
     """Load a model, choosing the adapter by what the path actually is.
 
@@ -440,18 +471,45 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # Resolved here, once, from arguments the operator typed. The browser never
     # names a file -- it names a key in the registry below -- so no request can
     # reach a path that was not authorised at launch.
-    compare_to = None
-    if args.compare_to:
-        compare_to = _load(args.compare_to)
+    #
+    # Both of these describe *one* of the loaded models, and which one can now
+    # be said out loud: `--warehouse QualityControl=qc.duckdb`. Without a name
+    # they attach to the first model, as they always did.
+    #
+    # The named form exists because the bare one made a real configuration
+    # unreachable. A server showing drift on one model and reconciliation on
+    # another could not be started at all: both flags bound to the first model,
+    # so a warehouse built for the second compared against the first and
+    # reported nothing in common. That is exactly the deployment this project
+    # ships, and it silently served two "not configured" screens.
+    known = {loaded.model.name: loaded for loaded in graphs}
 
-    warehouse = Path(args.warehouse) if args.warehouse else None
+    def _attached(value: str | None, what: str) -> tuple[str | None, str | None]:
+        if not value:
+            return None, None
+        try:
+            return _split_attachment(value, set(known), graph.model.name)
+        except KeyError as error:
+            print(
+                f"--{what} names {error.args[0]!r}, which is not one of the "
+                f"models this server was given: {', '.join(sorted(known))}.",
+                file=sys.stderr,
+            )
+            raise _BadAttachment from None
+
+    try:
+        compare_owner, compare_path = _attached(args.compare_to, "compare-to")
+        warehouse_owner, warehouse_path = _attached(args.warehouse, "warehouse")
+    except _BadAttachment:
+        return 2
+
+    compare_to = _load(compare_path) if compare_path else None
+
+    warehouse = Path(warehouse_path) if warehouse_path else None
     if warehouse and not warehouse.exists():
         print(f"No warehouse at {warehouse}.", file=sys.stderr)
         return 2
 
-    # A comparison model and a warehouse describe *one* model, so they attach to
-    # the first -- the default the interface opens on. Saying so beats silently
-    # giving every loaded model a drift baseline that belongs to another.
     contexts = {
         loaded.model.name: ApiContext(
             graph=loaded,
@@ -460,11 +518,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
             # flag of its own and degrades the same way chat does when no
             # key is configured.
             provider=provider,
-            compare_to=compare_to if loaded is graph else None,
+            compare_to=compare_to if loaded.model.name == compare_owner else None,
             compare_label=(
-                Path(args.compare_to).name if args.compare_to and loaded is graph else ""
+                Path(compare_path).name
+                if compare_path and loaded.model.name == compare_owner
+                else ""
             ),
-            warehouse=warehouse if loaded is graph else None,
+            warehouse=warehouse if loaded.model.name == warehouse_owner else None,
             warehouse_schema=args.schema,
             # One log per model. Sharing a file between models would let a
             # decision recorded against one model's requirement id collide
@@ -1068,7 +1128,7 @@ def main(argv: list[str] | None = None) -> int:
         nargs="+",
         help="one or more .pbix files or TMDL model folders. The first is the "
         "default the interface opens on, and the one --compare-to and "
-        "--warehouse attach to.",
+        "--warehouse attach to unless they name a model explicitly.",
     )
     p.add_argument("--model", default="gemini-3.6-flash", help="model name for the chosen provider")
     _add_provider_arguments(p)
@@ -1076,9 +1136,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--port", type=int, default=8000)
     p.add_argument(
         "--compare-to",
-        help="a second model to serve drift against, e.g. an earlier version",
+        metavar="[MODEL=]PATH",
+        help="a second model to serve drift against, e.g. an earlier version. "
+        "Prefix it with a loaded model's name to attach it to that one rather "
+        "than the first, e.g. --compare-to ClinicalTrialSafety=path/to/v1",
     )
-    p.add_argument("--warehouse", help="a DuckDB warehouse to serve reconciliation against")
+    p.add_argument(
+        "--warehouse",
+        metavar="[MODEL=]PATH",
+        help="a DuckDB warehouse to serve reconciliation against. Prefix it "
+        "with a loaded model's name to attach it to that one rather than the "
+        "first, e.g. --warehouse QualityControl=data/warehouse/qc.duckdb",
+    )
     p.add_argument("--schema", default="main", help="warehouse schema to read")
     p.add_argument(
         "--decisions",

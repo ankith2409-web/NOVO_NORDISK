@@ -264,3 +264,53 @@ def test_asking_an_unloaded_model_is_refused_and_spends_nothing(
     response = server.ask({"question": "hi", "model": "Nope"})
     assert response.status == 404
     assert len(server.sessions._sessions) == 0, "a refused ask still minted a chat"
+
+
+# -- attaching an optional feature to a named model ---------------------------
+
+def test_a_flag_can_name_which_model_it_attaches_to() -> None:
+    """The configuration the deployment actually needs.
+
+    Both --compare-to and --warehouse used to bind to whichever model was
+    listed first, which made "drift on one model, reconciliation on another"
+    impossible to start: a warehouse built for the second model compared
+    against the first and reported nothing in common. The deployed demo served
+    "not configured" on both tabs, for every model, because of it.
+    """
+    from concordance.cli import _split_attachment
+
+    known = {"QualityControl", "ClinicalTrialSafety"}
+    assert _split_attachment("QualityControl=qc.duckdb", known, "ClinicalTrialSafety") == (
+        "QualityControl",
+        "qc.duckdb",
+    )
+
+
+def test_a_bare_flag_still_attaches_to_the_first_model() -> None:
+    """Unchanged for anyone who never names a model."""
+    from concordance.cli import _split_attachment
+
+    assert _split_attachment("some/path.duckdb", {"QualityControl"}, "QualityControl") == (
+        "QualityControl",
+        "some/path.duckdb",
+    )
+
+
+def test_naming_a_model_the_server_does_not_hold_is_refused() -> None:
+    """Attaching it to the default instead would produce exactly the confident
+    wrong answer the registry exists to prevent."""
+    from concordance.cli import _split_attachment
+
+    with pytest.raises(KeyError):
+        _split_attachment("Nope=x.duckdb", {"QualityControl"}, "QualityControl")
+
+
+def test_a_path_containing_an_equals_sign_is_not_split() -> None:
+    """A prefix that is path-shaped is part of the filename, not a model name.
+    Splitting on it would turn a real path into a mysterious 'no such file'."""
+    from concordance.cli import _split_attachment
+
+    assert _split_attachment("data/a=b.duckdb", {"QualityControl"}, "QualityControl") == (
+        "QualityControl",
+        "data/a=b.duckdb",
+    )
