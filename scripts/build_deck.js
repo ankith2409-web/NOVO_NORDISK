@@ -68,19 +68,20 @@ s.addNotes('The problem is not that documentation is slow to write. It is that a
 
 /* 3 — what it does */
 s=p.addSlide(); light(s);
-title(s,'What Concordance does','one extraction, four things that stay true afterwards');
+title(s,'What Concordance does','one extraction, five things that stay true afterwards');
 const items=[
   ['Derives the BRD and FRD','Every statement comes from an object in the model, and shows which one.'],
   ['Fingerprints the logic','Canonicalised DAX, hashed. Reformatting is silent; a changed filter is not.'],
   ['Detects drift between versions','Names the requirements a change puts in question, and the ones it provably does not.'],
   ['Reconciles across platforms','Compares what a DAX measure and a warehouse view each read, and reports the difference.'],
+  ['Answers questions about the model','Fifteen read-only tools over the graph. Every answer is a real tool call, never recall.'],
 ];
 items.forEach(([h,b],i)=>{
-  const y=1.95+i*1.22;
-  s.addShape(p.ShapeType.ellipse,{x:M,y:y+0.05,w:0.42,h:0.42,fill:{color:ACCENT}});
-  s.addText(String(i+1),{x:M,y:y+0.05,w:0.42,h:0.42,align:'center',valign:'middle',fontFace:SANS,fontSize:14,bold:true,color:WHITE,margin:0});
-  s.addText(h,{x:M+0.62,y:y,w:5.4,h:0.4,fontFace:SANS,fontSize:15,bold:true,color:INK,margin:0});
-  s.addText(b,{x:M+0.62,y:y+0.38,w:5.6,h:0.62,fontFace:SANS,fontSize:12,color:MUTED,margin:0});
+  const y=1.95+i*0.99;
+  s.addShape(p.ShapeType.ellipse,{x:M,y:y+0.03,w:0.38,h:0.38,fill:{color:ACCENT}});
+  s.addText(String(i+1),{x:M,y:y+0.03,w:0.38,h:0.38,align:'center',valign:'middle',fontFace:SANS,fontSize:13,bold:true,color:WHITE,margin:0});
+  s.addText(h,{x:M+0.58,y:y-0.02,w:5.4,h:0.34,fontFace:SANS,fontSize:14,bold:true,color:INK,margin:0});
+  s.addText(b,{x:M+0.58,y:y+0.3,w:5.7,h:0.56,fontFace:SANS,fontSize:11.5,color:MUTED,margin:0});
 });
 s.addShape(p.ShapeType.roundRect,{x:7.6,y:1.9,w:5.0,h:4.9,fill:{color:INK},line:{color:INK},rectRadius:0.03});
 s.addText('The claim',{x:7.95,y:2.15,w:4.3,h:0.4,fontFace:SANS,fontSize:11,bold:true,color:'8896A0',charSpacing:1.5,margin:0});
@@ -91,11 +92,11 @@ s.addText('REQ-B-58c30b',{x:7.95,y:4.85,w:4.3,h:0.3,fontFace:MONO,fontSize:11,co
 s.addText('bound to  20128b29d1e1',{x:7.95,y:5.15,w:4.3,h:0.3,fontFace:MONO,fontSize:11,color:'6C7A80',margin:0});
 s.addText('now       ee32bfb1016c   STALE',{x:7.95,y:5.45,w:4.3,h:0.3,fontFace:MONO,fontSize:11,color:'E0736E',margin:0});
 mark(s,'20128b29d1e1');
-s.addNotes('Four capabilities, one mechanism underneath: the fingerprint binding.');
+s.addNotes('Five capabilities, one mechanism underneath: the fingerprint binding. The chatbot is grounded in the same graph, so it cannot contradict the documents.');
 
 /* 4 — how it works */
 s=p.addSlide(); light(s);
-title(s,'How it works','one pipeline, six real models, two Power BI formats');
+title(s,'How it works','one pipeline, seven real models, two Power BI formats');
 const steps=[['.pbix / TMDL','Two adapters, one model shape'],
              ['Canonical\nSemantic Graph','Tables, measures, joins,\ncolumns, sources'],
              ['SHA-256\nfingerprints','Over canonicalised DAX,\nnot raw text'],
@@ -109,9 +110,9 @@ steps.forEach(([h,b],i)=>{
 });
 s.addText('The graph is the only source of truth downstream. The chatbot, the documents, drift and reconciliation all read it — none of them re-parse the model, so none of them can disagree with each other.',
   {x:M,y:4.3,w:W-2*M,h:0.7,fontFace:SANS,fontSize:13,color:INK,margin:0});
-stat(s,M,5.15,2.9,'9,323','lines of Python');
-stat(s,M+3.1,5.15,2.9,'3,948','lines of TypeScript');
-stat(s,M+6.2,5.15,2.9,'531','automated tests',OK);
+stat(s,M,5.15,2.9,'14,572','lines of Python');
+stat(s,M+3.1,5.15,2.9,'5,901','lines of TypeScript');
+stat(s,M+6.2,5.15,2.9,'797','automated tests',OK);
 stat(s,M+9.3,5.15,2.6,'0','regex in the DAX lexer',ACCENT);
 mark(s,'8c102048e494');
 s.addNotes('DAX is lexed, not pattern-matched: a comment marker inside a string literal defeats regex, and the fingerprint scheme depends on getting that right.');
@@ -167,7 +168,7 @@ s.addNotes('Real numbers from the two shipped fixture models, not illustrative.'
 
 /* 7 — reconcile */
 s=p.addSlide(); light(s);
-title(s,'The same KPI, defined twice','QualityControl in Power BI against the same metrics in the warehouse');
+title(s,'The same KPI, defined twice','QualityControl in Power BI against the same metrics in the warehouse — run live against DuckDB');
 stat(s,M,1.9,2.9,'6','defined on both');
 stat(s,M+3.1,1.9,2.9,'1','divergent',CRIT);
 stat(s,M+6.2,1.9,2.9,'1','needs review',WARN);
@@ -178,12 +179,22 @@ s.addText('Power BI reads testresult;  the warehouse reads batch, testresult',
   {x:M+0.3,y:3.98,w:11.0,h:0.35,fontFace:MONO,fontSize:12,color:INK,margin:0});
 s.addText('The two divide by different denominators. They will report different numbers, and no fingerprint could have found it — DAX and SQL never hash alike, so what is compared is what each definition structurally reads.',
   {x:M+0.3,y:4.34,w:11.0,h:0.5,fontFace:SANS,fontSize:12,color:MUTED,margin:0});
-s.addShape(p.ShapeType.roundRect,{x:M,y:5.15,w:W-2*M,h:1.35,fill:{color:WHITE},line:{color:RULE,width:0.75},rectRadius:0.04});
-s.addText('Three verdicts, not pass/fail.',{x:M+0.3,y:5.32,w:11.0,h:0.35,fontFace:SANS,fontSize:14,bold:true,color:INK,margin:0});
-s.addText('Deciding whether two arbitrary expressions in two languages compute the same number is undecidable in general. "Needs review" is not hedging — it is the honest answer for a difference that may or may not change the number, and collapsing it into either neighbour would misreport it.',
-  {x:M+0.3,y:5.68,w:11.0,h:0.7,fontFace:SANS,fontSize:12,color:MUTED,margin:0,lineSpacingMultiple:1.15});
+s.addShape(p.ShapeType.roundRect,{x:M,y:5.15,w:W-2*M,h:1.0,fill:{color:WHITE},line:{color:RULE,width:0.75},rectRadius:0.04});
+s.addText('Three verdicts, not pass/fail.',{x:M+0.3,y:5.28,w:11.0,h:0.3,fontFace:SANS,fontSize:13.5,bold:true,color:INK,margin:0});
+s.addText('Deciding whether two arbitrary expressions in two languages compute the same number is undecidable in general. "Needs review" is the honest answer for a difference that may or may not change the number.',
+  {x:M+0.3,y:5.6,w:11.0,h:0.45,fontFace:SANS,fontSize:11.5,color:MUTED,margin:0,lineSpacingMultiple:1.1});
+
+/* The judged deliverable: the same code path reaches four enterprise platforms. */
+s.addText('Same extraction path, four more platforms:',
+  {x:M,y:6.32,w:3.5,h:0.3,fontFace:SANS,fontSize:11.5,bold:true,color:INK,margin:0});
+['Snowflake','Databricks','Redshift','Athena'].forEach((n,i)=>{
+  s.addShape(p.ShapeType.roundRect,{x:M+3.65+i*1.62,y:6.3,w:1.5,h:0.33,fill:{color:SOFT},line:{color:RULE,width:0.75},rectRadius:0.05});
+  s.addText(n,{x:M+3.65+i*1.62,y:6.3,w:1.5,h:0.33,fontFace:MONO,fontSize:10.5,color:INK,align:'center',valign:'middle',margin:0});
+});
+s.addText('information_schema + sqlglot — DuckDB needs no credentials, so the path is proven without one',
+  {x:M+10.2,y:6.32,w:2.2,h:0.3,fontFace:SANS,fontSize:8.5,color:MUTED,margin:0});
 mark(s,'batch_yield_pct');
-s.addNotes('DuckDB stands in for the warehouse; a Snowflake connector ships and is unit-tested, unauthenticated against a live account.');
+s.addNotes('DuckDB is the working warehouse and needs no credentials; connectors for Snowflake, Databricks, Redshift and Athena ship alongside it, unit-tested but never run against a live account.');
 
 /* 8 — honesty */
 s=p.addSlide(); dark(s);
@@ -230,9 +241,9 @@ s.addNotes('Deliberately no invented percentages. Every figure here is something
 /* 10 — honest status */
 s=p.addSlide(); light(s);
 title(s,'Where it stands, honestly','what is proven, what is written but unproven, and what is not built');
-card(s,M,1.95,3.85,3.5,'Proven end to end','Both Power BI formats. 531 tests. Drift, reconciliation, lineage to source, the chatbot and the decision log all verified against real models — several bugs in this list were found that way, not by unit tests.',OKBG);
-card(s,M+4.05,1.95,3.85,3.5,'Written, not yet live','A Snowflake connector ships and is unit-tested against a DB-API cursor. It has never authenticated to a live account — the sandbox blocks that host at the network layer, which was confirmed rather than assumed.',WARNBG);
-card(s,M+8.1,1.95,3.85,3.5,'Not built','RLS filters, calculation-group logic and M transformation steps are counted and named but not interpreted. Multi-user identity is absent; a shared token is not a person, and the log says so.',SOFT);
+card(s,M,1.95,3.85,3.5,'Proven end to end','Both Power BI formats. 797 tests. Drift, reconciliation against DuckDB, lineage to source, RLS and calculation-group logic, the 15-tool chatbot and the decision log — all verified against real models. Several bugs here were found that way, not by unit tests.',OKBG);
+card(s,M+4.05,1.95,3.85,3.5,'Written, not yet live','Connectors for Snowflake, Databricks, Redshift and Athena share the DuckDB code path and are unit-tested against a DB-API cursor — parameters, per-platform identifier case folding, SQL dialect. None has authenticated to a live account; the sandbox blocks those hosts, confirmed rather than assumed.',WARNBG);
+card(s,M+8.1,1.95,3.85,3.5,'Not built','No write path back into Power BI — Concordance reads and reports, it never edits a model. Report-page usage is outside the semantic layer, so a measure no other measure uses cannot be proven unused.',SOFT);
 s.addShape(p.ShapeType.roundRect,{x:M,y:5.7,w:W-2*M,h:1.05,fill:{color:INK},line:{color:INK},rectRadius:0.03});
 s.addText('Every one of these limits is stated by the software at the point of use, not only on this slide. That is the same standard the tool applies to the models it reads.',
   {x:M+0.35,y:5.95,w:W-2*M-0.7,h:0.6,fontFace:SANS,fontSize:13,color:'C2CDD2',margin:0});
@@ -245,7 +256,7 @@ s.addText('Concordance',{x:M,y:1.9,w:8.6,h:0.9,fontFace:SERIF,fontSize:44,bold:t
 s.addText('The document, the model and the warehouse — held together by something that breaks loudly when they diverge.',
   {x:M,y:2.9,w:8.6,h:1.0,fontFace:SANS,fontSize:18,color:'C2CDD2',margin:0,lineSpacingMultiple:1.2});
 [['Innovation','A requirement bound to a fingerprint; a sign-off that expires on its own'],
- ['Technical','Lexer-based canonicalisation, a real AST for SQL, 531 tests, no regex'],
+ ['Technical','Lexer-based canonicalisation, a real AST for SQL, 797 tests, no regex'],
  ['Impact','Documents that can be re-checked, and disagreements found before a meeting']].forEach(([t,b],i)=>{
   const y=4.25+i*0.78;
   s.addShape(p.ShapeType.ellipse,{x:M,y:y+0.06,w:0.3,h:0.3,fill:{color:ACCENT}});
