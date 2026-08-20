@@ -44,6 +44,15 @@ COPY data/models/ClinicalTrialSafety_v2.SemanticModel ./data/models/ClinicalTria
 COPY data/models/QualityControl.SemanticModel ./data/models/QualityControl.SemanticModel
 COPY data/models/DiabetesCare.SemanticModel ./data/models/DiabetesCare.SemanticModel
 
+# The demo warehouse is built here rather than copied: `data/warehouse/` is a
+# generated artefact and gitignored, so it is never in the repo this image is
+# built from. The script is self-contained -- it writes its own schema and rows
+# and reaches nothing external -- so building it at image time is reproducible
+# and needs no credentials. It is what makes the Reconcile tab answer on a
+# deployment nobody has handed a Snowflake account to.
+COPY scripts/build_warehouse.py ./scripts/build_warehouse.py
+RUN python scripts/build_warehouse.py
+
 # Decisions persist to this file for the life of the container. On a platform
 # without a mounted persistent volume (Render's free tier included) this
 # resets on every restart or redeploy -- acceptable for a demo, worth knowing

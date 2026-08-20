@@ -10,10 +10,16 @@
 # edit anyway when this points at a different model.
 set -eu
 
-# `--compare-to` attaches only to whichever model is listed first
-# (concordance/cli.py's own comment: "a comparison model describes *one*
-# model"). The only real second version is ClinicalTrialSafety_v2, so that
-# model leads and drift runs live against it.
+# `--compare-to` and `--warehouse` both attach only to whichever model is listed
+# first (concordance/cli.py's own comment: "a comparison model and a warehouse
+# describe *one* model"). The only real second version is
+# ClinicalTrialSafety_v2, so that model leads and drift runs live against it.
+#
+# The warehouse is built for QualityControl's schema, so reconciliation is
+# demonstrated from the CLI (`concordance reconcile
+# data/models/QualityControl.SemanticModel`) rather than bound to the first
+# model here, where it would compare a warehouse against a model it was never
+# built against and report every metric as unique to one side.
 exec concordance serve \
     data/models/ClinicalTrialSafety.SemanticModel \
     data/models/QualityControl.SemanticModel \

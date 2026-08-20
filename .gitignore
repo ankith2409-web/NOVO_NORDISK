@@ -17,6 +17,9 @@ data/models/*.pbix
 .env
 .DS_Store
 
+# Generated warehouse — reproducible via `scripts/build_warehouse.py`
+data/warehouse/
+
 # Generated snapshots — reproducible via `concordance snapshot`
 data/snapshots/
 

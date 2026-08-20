@@ -30,7 +30,7 @@ export interface Overview {
   user_hierarchies: number;
   unresolved_references: { from: string; to: string; reason: string }[];
   not_extracted: CoverageGap[];
-  capabilities: { drift: boolean };
+  capabilities: { drift: boolean; reconcile: boolean };
 }
 
 export interface LoadedModel {
@@ -38,7 +38,7 @@ export interface LoadedModel {
   source_format: string;
   measures: number;
   tables: number;
-  capabilities: { drift: boolean };
+  capabilities: { drift: boolean; reconcile: boolean };
 }
 
 export interface ModelsPayload {
@@ -135,6 +135,26 @@ export interface TableSummary {
   kind: "data" | "system" | "measure-only";
 }
 
+export type Verdict = "consistent" | "divergent" | "review";
+
+export interface MetricDefinition {
+  platform: string;
+  language: string;
+  expression: string;
+  tables: string[];
+  columns: string[];
+  aggregations: string[];
+  resolved_through: string[];
+}
+
+export interface Comparison {
+  metric: string;
+  verdict: Verdict;
+  needs_attention: boolean;
+  definitions: MetricDefinition[];
+  differences: { aspect: string; detail: string }[];
+}
+
 export interface Summary {
   text: string | null;
   /** Set when no summary could be produced -- no key configured, quota,
@@ -142,6 +162,35 @@ export interface Summary {
   error?: string;
   provider?: string;
   disclaimer?: string;
+}
+
+export interface ReconcilePayload {
+  model: string;
+  warehouse: string;
+  counts: {
+    shared_metrics: number;
+    divergent: number;
+    review: number;
+    consistent: number;
+  };
+  comparisons: Comparison[];
+  unique_to_platform: Record<string, string[]>;
+  possible_pairings: {
+    left: string;
+    left_platform: string;
+    right: string;
+    right_platform: string;
+    similarity: number;
+    /** How the pair was found. "structure" catches ones no name score could. */
+    basis: "name" | "structure" | "both";
+    /** Names are close and the two read nothing in common. */
+    contradicted: boolean;
+    /** What the two actually read, as one line a reviewer can act on. */
+    evidence: string;
+  }[];
+  coverage_gaps: { feature: string; count: number; reason: string }[];
+  /** Only present when requested with `?summary=true`. */
+  summary?: Summary;
 }
 
 export interface DriftChange {
@@ -437,10 +486,12 @@ export const api = {
       author,
     }),
   drift: () => get<DriftPayload>("/drift"),
-  // A separate call, not a flag on the one above: a summary is a second,
-  // slower request the caller opts into deliberately, on data it has
-  // already rendered -- not something every drift load should wait on.
+  reconcile: () => get<ReconcilePayload>("/reconcile"),
+  // Separate calls, not a flag on the calls above: a summary is a second,
+  // slower request the caller opts into deliberately, on data it has already
+  // rendered -- not something every drift/reconcile load should wait on.
   driftSummary: () => get<DriftPayload>("/drift", { summary: "true" }),
+  reconcileSummary: () => get<ReconcilePayload>("/reconcile", { summary: "true" }),
 
   async ask(question: string): Promise<
     Result<{

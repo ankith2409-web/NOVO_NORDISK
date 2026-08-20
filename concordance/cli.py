@@ -444,9 +444,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if args.compare_to:
         compare_to = _load(args.compare_to)
 
-    # A comparison model describes *one* model, so it attaches to the first --
-    # the default the interface opens on. Saying so beats silently giving
-    # every loaded model a drift baseline that belongs to another.
+    warehouse = Path(args.warehouse) if args.warehouse else None
+    if warehouse and not warehouse.exists():
+        print(f"No warehouse at {warehouse}.", file=sys.stderr)
+        return 2
+
+    # A comparison model and a warehouse describe *one* model, so they attach to
+    # the first -- the default the interface opens on. Saying so beats silently
+    # giving every loaded model a drift baseline that belongs to another.
     contexts = {
         loaded.model.name: ApiContext(
             graph=loaded,
@@ -459,6 +464,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
             compare_label=(
                 Path(args.compare_to).name if args.compare_to and loaded is graph else ""
             ),
+            warehouse=warehouse if loaded is graph else None,
+            warehouse_schema=args.schema,
             # One log per model. Sharing a file between models would let a
             # decision recorded against one model's requirement id collide
             # with another's, and requirement ids are only unique within a
@@ -683,6 +690,269 @@ def cmd_auditpack(args: argparse.Namespace) -> int:
     return 0
 
 
+#: Which environment variable each connection parameter comes from, per
+#: platform. Kept out of argparse, matching how the LLM providers take their
+#: API keys -- a warehouse password is exactly the kind of value a shell
+#: history or a process list should not carry.
+#:
+#: One table rather than a function per platform: every one of these is the
+#: same three steps (read the environment, refuse politely if something
+#: mandatory is missing, call the connector), and four near-identical functions
+#: would be four places for that logic to drift apart.
+_PLATFORM_ENV: dict[str, dict[str, str]] = {
+    "snowflake": {
+        "account": "SNOWFLAKE_ACCOUNT",
+        "user": "SNOWFLAKE_USER",
+        "password": "SNOWFLAKE_PASSWORD",
+        "warehouse": "SNOWFLAKE_WAREHOUSE",
+        "database": "SNOWFLAKE_DATABASE",
+        "role": "SNOWFLAKE_ROLE",
+    },
+    "databricks": {
+        "server_hostname": "DATABRICKS_SERVER_HOSTNAME",
+        "http_path": "DATABRICKS_HTTP_PATH",
+        "access_token": "DATABRICKS_TOKEN",
+        "catalog": "DATABRICKS_CATALOG",
+    },
+    "redshift": {
+        "host": "REDSHIFT_HOST",
+        "database": "REDSHIFT_DATABASE",
+        "user": "REDSHIFT_USER",
+        "password": "REDSHIFT_PASSWORD",
+        "port": "REDSHIFT_PORT",
+        # Shared with Athena on purpose: AWS_REGION is the variable the AWS
+        # SDKs themselves read, so a shell already configured for the AWS CLI
+        # needs nothing added for either service.
+        "region": "AWS_REGION",
+    },
+    "athena": {
+        "s3_staging_dir": "ATHENA_S3_STAGING_DIR",
+        "region": "AWS_REGION",
+        "work_group": "ATHENA_WORKGROUP",
+    },
+}
+
+#: What each platform cannot start without. Everything else in the table above
+#: is genuinely optional and is omitted rather than passed empty, so the
+#: connector's own default applies.
+#:
+#: Redshift lists neither user nor password: supplying both takes the password
+#: path, supplying neither takes IAM through the standard AWS credential chain,
+#: and demanding a password here would make the IAM path unreachable. Athena
+#: lists no credentials at all for the same reason.
+_PLATFORM_REQUIRED: dict[str, tuple[str, ...]] = {
+    "snowflake": ("account", "user", "password", "warehouse", "database"),
+    "databricks": ("server_hostname", "http_path", "access_token"),
+    "redshift": ("host", "database"),
+    "athena": ("s3_staging_dir", "region"),
+}
+
+#: The schema each platform calls its default one. Snowflake upper-cases
+#: unquoted identifiers and the others lower-case them, which is why these
+#: differ in case rather than all reading "public".
+_PLATFORM_DEFAULT_SCHEMA = {
+    "duckdb": "main",
+    "snowflake": "PUBLIC",
+    "databricks": "default",
+    "redshift": "public",
+    "athena": "default",
+}
+
+#: The connector function in ``adapters.sql`` each platform is served by.
+_PLATFORM_CONNECTOR = {
+    "snowflake": "from_snowflake",
+    "databricks": "from_databricks",
+    "redshift": "from_redshift",
+    "athena": "from_athena",
+}
+
+
+def _warehouse_model(platform: str, schema: str):
+    """Build the warehouse-side model from a live platform, or say what is missing.
+
+    Anything mandatory that is absent is reported by the *variable name* the
+    operator has to set, all of them at once, before a connection is attempted
+    -- discovering a missing password one round-trip at a time is a worse
+    experience than being told the whole list up front.
+
+    Optional values are dropped rather than passed as empty strings, so each
+    connector's own default applies. That distinction is load-bearing for
+    Redshift: an empty password is not "no password" to the driver, and passing
+    one would take the password path with a blank secret instead of the IAM
+    path the caller intended.
+
+    A failed connection is folded into ``SourceError`` like every other input
+    problem this CLI reports, rather than left to surface as the driver's own
+    traceback. A network policy rejecting the connection and a wrong password
+    look identical from here -- both are "could not reach or use this
+    warehouse" -- so both get the same readable treatment; ``--debug`` still
+    shows the real one underneath.
+    """
+    import os
+
+    from concordance.adapters import sql as sqladapter
+    from concordance.adapters.base import SourceError
+
+    variables = _PLATFORM_ENV[platform]
+    values = {key: os.environ.get(var, "").strip() for key, var in variables.items()}
+
+    missing = [variables[key] for key in _PLATFORM_REQUIRED[platform] if not values[key]]
+    if missing:
+        print(
+            f"Missing environment variable(s) for --platform {platform}: "
+            + ", ".join(missing),
+            file=sys.stderr,
+        )
+        return None
+
+    supplied = {key: value for key, value in values.items() if value}
+
+    # The one non-string parameter in any of these tables. Rejected here rather
+    # than handed to the driver as text, which would fail somewhere far less
+    # obvious than the variable that actually holds the wrong value.
+    if "port" in supplied:
+        try:
+            supplied["port"] = int(supplied["port"])
+        except ValueError:
+            print(
+                f"{variables['port']} must be a number: {supplied['port']!r}",
+                file=sys.stderr,
+            )
+            return None
+
+    connect = getattr(sqladapter, _PLATFORM_CONNECTOR[platform])
+    try:
+        return connect(schema=schema, **supplied)
+    except ImportError as error:
+        # A missing driver is a setup problem with an exact fix, and saying
+        # which extra to install beats the bare "No module named ..." the
+        # lazy import would otherwise raise from inside the connector.
+        print(
+            f"--platform {platform} needs a driver that is not installed: {error}\n"
+            f"  pip install 'concordance[{platform}]'",
+            file=sys.stderr,
+        )
+        return None
+    except Exception as error:
+        # Named by the values that identify the target, never the secret ones.
+        target = (
+            values.get("account")
+            or values.get("server_hostname")
+            or values.get("host")
+            or values.get("s3_staging_dir")
+            or platform
+        )
+        raise SourceError(
+            f"{platform}://{target}",
+            f"{type(error).__name__}: {error}",
+            "Check the connection details, credentials and network access. If "
+            "this is running somewhere with restricted outbound access, a "
+            "connection timeout here usually means that policy, not a wrong "
+            "password -- try the same command from an unrestricted network.",
+        ) from error
+
+
+def _print_platforms() -> int:
+    """List what each platform needs, so nobody has to read this file to find out.
+
+    Marked required/optional rather than listed flat: which variables are
+    genuinely mandatory is the part that is otherwise only discoverable by
+    running the command and reading what it complains about.
+    """
+    print("\nEnvironment variables per --platform:\n")
+    for platform in ("snowflake", "databricks", "redshift", "athena"):
+        required = _PLATFORM_REQUIRED[platform]
+        print(f"  {platform}  (pip install 'concordance[{platform}]')")
+        for key, variable in _PLATFORM_ENV[platform].items():
+            mark = "required" if key in required else "optional"
+            print(f"      {variable:<28} {mark}")
+        print(f"      {'--schema':<28} defaults to {_PLATFORM_DEFAULT_SCHEMA[platform]}")
+        print()
+
+    print("  redshift authenticates by password when REDSHIFT_USER and")
+    print("  REDSHIFT_PASSWORD are both set, and by IAM through the standard AWS")
+    print("  credential chain when they are not. athena always uses that chain.\n")
+    return 0
+
+
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    """Compare one KPI's Power BI definition against the warehouse's."""
+    from concordance.reconcile import metrics
+
+    if getattr(args, "help_platforms", False):
+        return _print_platforms()
+
+    # `source` is only optional so `--help-platforms` can run without one;
+    # every other invocation still requires it. Refused here rather than left
+    # to fail inside `_load`, where a None path surfaces as a TypeError from
+    # pathlib with no indication of what the caller forgot.
+    if not args.source:
+        print(
+            "the following arguments are required: source\n"
+            "  concordance reconcile <model> [--platform ...]",
+            file=sys.stderr,
+        )
+        return 2
+
+    graph = _load(args.source)
+
+    if args.platform != "duckdb":
+        model = _warehouse_model(
+            args.platform, args.schema or _PLATFORM_DEFAULT_SCHEMA[args.platform]
+        )
+        if model is None:
+            return 2
+    else:
+        import duckdb
+
+        from concordance.adapters import sql as sqladapter
+
+        warehouse = Path(args.warehouse)
+        if not warehouse.exists():
+            print(
+                f"No warehouse at {warehouse}. Run scripts/build_warehouse.py to create "
+                f"the local one, or pass --warehouse.",
+                file=sys.stderr,
+            )
+            return 2
+
+        try:
+            connection = duckdb.connect(str(warehouse), read_only=True)
+        except duckdb.Error as error:
+            # The path exists -- checked above -- but is not a database DuckDB
+            # can open: truncated, replaced by something else, or a real
+            # database from an incompatible version. Left unguarded this
+            # surfaces as a raw IOException, indistinguishable from the tool
+            # itself crashing.
+            print(f"Cannot open the warehouse at {warehouse}: {error}", file=sys.stderr)
+            return 2
+        try:
+            model = sqladapter.from_duckdb(connection, schema=args.schema or "main")
+        finally:
+            connection.close()
+
+    report = metrics.reconcile(
+        metrics.from_power_bi(graph, platform=args.model_platform),
+        metrics.from_warehouse(model, platform=args.warehouse_platform),
+    )
+
+    print()
+    print(metrics.to_text(report))
+    print()
+
+    if model.coverage_gaps:
+        print("Not read from the warehouse")
+        print("-" * 68)
+        for gap in model.coverage_gaps:
+            print(f"  {gap.feature}: {gap.count} — {gap.reason}")
+        print()
+
+    # Non-zero when a metric is divergent, so this can gate a pipeline. Metrics
+    # needing review do not fail the run: an unresolved question is not a defect,
+    # and failing on one would train people to pass --no-fail permanently.
+    divergent = report.counts()["divergent"]
+    return 1 if (divergent and args.fail_on_conflict) else 0
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="concordance",
@@ -719,6 +989,51 @@ def main(argv: list[str] | None = None) -> int:
                    help="show which tools were called to reach the answer")
     p.set_defaults(func=cmd_ask)
 
+    p = sub.add_parser(
+        "reconcile", help="compare a model's KPIs against the same KPIs in a warehouse"
+    )
+    # Optional only so `--help-platforms` can run without one. A missing source
+    # is still refused below, with the same message argparse would have given.
+    p.add_argument(
+        "source", nargs="?", help="path to a .pbix file or TMDL model folder"
+    )
+    p.add_argument(
+        "--platform",
+        choices=("duckdb", "snowflake", "databricks", "redshift", "athena"),
+        default="duckdb",
+        help="which warehouse to read from. Everything except duckdb takes its "
+        "connection details from environment variables rather than flags, the "
+        "same way the chat's API keys are read -- a warehouse password does not "
+        "belong in a shell history. See --help-platforms for the exact variables",
+    )
+    p.add_argument(
+        "--help-platforms",
+        action="store_true",
+        help="list the environment variables each --platform reads, and exit",
+    )
+    p.add_argument(
+        "--warehouse",
+        default="data/warehouse/quality_control.duckdb",
+        help="path to a DuckDB warehouse (default data/warehouse/quality_control.duckdb); "
+        "ignored for every other --platform",
+    )
+    p.add_argument(
+        "--schema",
+        default=None,
+        help="warehouse schema to read (defaults per platform: main for duckdb, "
+        "PUBLIC for snowflake, default for databricks and athena, public for redshift)",
+    )
+    p.add_argument("--model-platform", default="power_bi", help="label for the model side")
+    p.add_argument(
+        "--warehouse-platform", default="warehouse", help="label for the warehouse side"
+    )
+    p.add_argument(
+        "--fail-on-conflict",
+        action="store_true",
+        help="exit non-zero when a KPI is divergent, to gate a pipeline",
+    )
+    p.set_defaults(func=cmd_reconcile)
+
     p = sub.add_parser("auditpack", help="write the evidence bundle for a model")
     p.add_argument("source", help="path to a .pbix file or TMDL model folder")
     p.add_argument("-o", "--out", help="output directory")
@@ -752,7 +1067,8 @@ def main(argv: list[str] | None = None) -> int:
         "source",
         nargs="+",
         help="one or more .pbix files or TMDL model folders. The first is the "
-        "default the interface opens on, and the one --compare-to attaches to.",
+        "default the interface opens on, and the one --compare-to and "
+        "--warehouse attach to.",
     )
     p.add_argument("--model", default="gemini-3.6-flash", help="model name for the chosen provider")
     _add_provider_arguments(p)
@@ -762,6 +1078,8 @@ def main(argv: list[str] | None = None) -> int:
         "--compare-to",
         help="a second model to serve drift against, e.g. an earlier version",
     )
+    p.add_argument("--warehouse", help="a DuckDB warehouse to serve reconciliation against")
+    p.add_argument("--schema", default="main", help="warehouse schema to read")
     p.add_argument(
         "--decisions",
         nargs="?",

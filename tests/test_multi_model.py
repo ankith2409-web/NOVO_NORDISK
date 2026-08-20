@@ -119,14 +119,18 @@ def test_the_listing_carries_real_counts_not_placeholders(
 
 
 def test_capabilities_are_reported_per_model(
-    graphs: dict[str, SemanticGraph],
+    graphs: dict[str, SemanticGraph], tmp_path: Path
 ) -> None:
-    """Drift is configured per source, so one model having a comparison
-    baseline says nothing about the others. Reporting it registry-wide would
-    offer the interface a button that cannot work."""
+    """Drift and reconcile are configured per source, so one model having a
+    warehouse says nothing about the others. Reporting them registry-wide
+    would offer the interface a button that cannot work."""
+    warehouse = tmp_path / "w.duckdb"
+    warehouse.touch()
     registry = api.ModelRegistry(
         contexts={
-            "QualityControl": api.ApiContext(graph=graphs["QualityControl"]),
+            "QualityControl": api.ApiContext(
+                graph=graphs["QualityControl"], warehouse=warehouse
+            ),
             "ClinicalTrialSafety": api.ApiContext(
                 graph=graphs["ClinicalTrialSafety"],
                 compare_to=graphs["QualityControl"],
@@ -135,22 +139,28 @@ def test_capabilities_are_reported_per_model(
         default="QualityControl",
     )
     listed = {m["name"]: m["capabilities"] for m in registry.describe()["models"]}
-    assert listed["QualityControl"] == {"drift": False}
-    assert listed["ClinicalTrialSafety"] == {"drift": True}
+    assert listed["QualityControl"] == {"drift": False, "reconcile": True}
+    assert listed["ClinicalTrialSafety"] == {"drift": True, "reconcile": False}
 
 
 def test_the_banner_names_the_same_capabilities_the_api_does(
-    graphs: dict[str, SemanticGraph],
+    graphs: dict[str, SemanticGraph], tmp_path: Path
 ) -> None:
     """The startup banner is how someone finds out a flag they passed did not
     take effect, so it has to be derived from the context, not restated."""
+    warehouse = tmp_path / "w.duckdb"
+    warehouse.touch()
     assert _capabilities_of(api.ApiContext(graph=graphs["QualityControl"])) == []
+    assert _capabilities_of(
+        api.ApiContext(graph=graphs["QualityControl"], warehouse=warehouse)
+    ) == ["reconcile"]
     assert _capabilities_of(
         api.ApiContext(
             graph=graphs["QualityControl"],
             compare_to=graphs["ClinicalTrialSafety"],
+            warehouse=warehouse,
         )
-    ) == ["drift"]
+    ) == ["drift", "reconcile"]
 
 
 # -- over HTTP, including the chat --------------------------------------------

@@ -7,12 +7,12 @@ session cookies.
 
 Two things shape the design.
 
-*Nothing here reads a path supplied by the caller.* Drift needs a second model,
-and the obvious way to get it -- a query parameter naming a file -- would turn a
-read-only local server into an arbitrary file reader. It is instead configured
-when the server starts, so the client can only ask *whether* to compare, never
-*what against*. An endpoint that was not configured says so plainly rather than
-pretending the feature does not exist.
+*Nothing here reads a path supplied by the caller.* Drift needs a second model
+and reconciliation needs a warehouse, and the obvious way to get them -- a query
+parameter naming a file -- would turn a read-only local server into an arbitrary
+file reader. Both are instead configured when the server starts, so the client
+can only ask *whether* to compare, never *what against*. Endpoints that were not
+configured say so plainly rather than pretending the feature does not exist.
 
 *Read-only endpoints do not touch session state.* The graph is built once and
 never mutated, so every visitor can share it. Only the chat needs a session,
@@ -58,19 +58,21 @@ class ApiContext:
     """Everything the API is allowed to reach.
 
     Whatever is absent here is genuinely unavailable to a request -- which is
-    the point. ``compare_to`` is supplied at startup by whoever ran the
-    command, never by the browser.
+    the point. ``compare_to`` and ``warehouse`` are supplied at startup by
+    whoever ran the command, never by the browser.
     """
 
     graph: SemanticGraph
     compare_to: SemanticGraph | None = None
     compare_label: str = ""
+    warehouse: Path | None = None
+    warehouse_schema: str = "main"
     #: Where review decisions are written. Absent means the queue is read-only,
     #: which the interface says rather than showing controls that do nothing.
     decisions: Path | None = None
     #: The provider the chat already uses. Reused, not reconfigured, for the
-    #: optional AI summary on drift -- absent means that summary is
-    #: unavailable, the same way an absent comparison model means drift is.
+    #: optional AI summary on drift and reconcile -- absent means that summary
+    #: is unavailable, the same way an absent warehouse means reconcile is.
     provider: Any = None
 
     def requirements(self, kind: Kind) -> list[Requirement]:
@@ -93,7 +95,7 @@ class ModelRegistry:
     among what an operator loaded, and cannot reach anything they did not.
 
     Each model keeps its own comparison sources, so serving several does not
-    mean they share a drift baseline.
+    mean they share a warehouse or a drift baseline.
     """
 
     contexts: dict[str, ApiContext]
@@ -132,6 +134,7 @@ class ModelRegistry:
                     "tables": len(context.graph.model.user_tables()),
                     "capabilities": {
                         "drift": context.compare_to is not None,
+                        "reconcile": context.warehouse is not None,
                     },
                 }
                 for name, context in sorted(self.contexts.items())
@@ -192,6 +195,7 @@ def overview(context: ApiContext, params: Params) -> dict[str, Any]:
     payload = ModelTools(context.graph).overview()
     payload["capabilities"] = {
         "drift": context.compare_to is not None,
+        "reconcile": context.warehouse is not None,
     }
     return payload
 
@@ -477,6 +481,93 @@ def drift(context: ApiContext, params: Params) -> dict[str, Any]:
     return result
 
 
+def reconcile(context: ApiContext, params: Params) -> dict[str, Any]:
+    """Whether the warehouse agrees with the model, metric by metric."""
+    if context.warehouse is None:
+        raise ApiError(
+            HTTPStatus.NOT_IMPLEMENTED,
+            "no warehouse was configured; restart with --warehouse <path.duckdb>",
+        )
+
+    import duckdb
+
+    from concordance.adapters import sql as sqladapter
+    from concordance.reconcile import metrics
+
+    try:
+        connection = duckdb.connect(str(context.warehouse), read_only=True)
+    except duckdb.Error as error:
+        # The file at --warehouse changed underneath a running server -- moved,
+        # truncated, replaced with something that isn't a database at all. Left
+        # unguarded this reaches the request thread as a raw IOException, which
+        # the client sees as a dropped connection rather than an answer: no
+        # status, no body, nothing to act on. A 502 here is deliberate --
+        # nothing about this request into Concordance was wrong; the warehouse
+        # it depends on is what failed to open.
+        raise ApiError(
+            HTTPStatus.BAD_GATEWAY,
+            f"cannot open the warehouse at {context.warehouse}: {error}",
+        ) from error
+    try:
+        warehouse_model = sqladapter.from_duckdb(connection, schema=context.warehouse_schema)
+    finally:
+        connection.close()
+
+    report = metrics.reconcile(
+        metrics.from_power_bi(context.graph), metrics.from_warehouse(warehouse_model)
+    )
+
+    result = {
+        "model": context.graph.model.name,
+        "warehouse": str(context.warehouse.name),
+        "counts": report.counts(),
+        "comparisons": [
+            {
+                "metric": c.metric,
+                "verdict": c.verdict.value,
+                "needs_attention": c.needs_attention,
+                "definitions": [
+                    {
+                        "platform": d.platform,
+                        "language": d.language,
+                        "expression": d.expression,
+                        "tables": sorted(d.tables),
+                        "columns": sorted(d.columns),
+                        "aggregations": sorted(d.aggregations),
+                        "resolved_through": list(d.resolved_through),
+                    }
+                    for d in c.definitions
+                ],
+                "differences": [
+                    {"aspect": d.aspect, "detail": d.detail} for d in c.differences
+                ],
+            }
+            for c in report.comparisons
+        ],
+        "unique_to_platform": report.unique_to_platform,
+        "possible_pairings": [
+            {
+                "left": p.left,
+                "left_platform": p.left_platform,
+                "right": p.right,
+                "right_platform": p.right_platform,
+                "similarity": p.similarity,
+                "basis": p.basis,
+                "contradicted": p.contradicted,
+                "evidence": p.evidence,
+            }
+            for p in report.possible_pairings
+        ],
+        "coverage_gaps": [
+            {"feature": g.feature, "count": g.count, "reason": g.reason}
+            for g in warehouse_model.coverage_gaps
+        ],
+    }
+    if _wants_summary(params):
+        result["summary"] = _narrate(context, "reconcile", result)
+    return result
+
+
 def _wants_summary(params: Params) -> bool:
     """Opt-in only: a summary spends LLM quota and latency the caller may not want."""
     return (params.get("summary") or [""])[0].strip().lower() in ("1", "true", "yes")
@@ -486,15 +577,18 @@ def _narrate(context: ApiContext, kind: str, result: dict[str, Any]) -> dict[str
     """Best-effort AI summary. Never fails the request it rides along with.
 
     A missing key, an exhausted quota, or a network hiccup is exactly as
-    common here as it is for the chat, and the drift report underneath is the
-    actual answer -- it must still be returned in full.
+    common here as it is for the chat, and the drift or reconcile report
+    underneath is the actual answer -- it must still be returned in full.
     """
     from concordance.generate import narrative
 
     if context.provider is None:
         return {"text": None, "error": "no language model provider is configured"}
     try:
-        found = narrative.summarize_drift(result, context.provider)
+        if kind == "drift":
+            found = narrative.summarize_drift(result, context.provider)
+        else:
+            found = narrative.summarize_reconcile(result, context.provider)
     except narrative.LlmError as error:
         return {"text": None, "error": str(error)}
     return {"text": found.text, "provider": found.provider, "disclaimer": found.disclaimer}
@@ -536,6 +630,7 @@ ROUTES: dict[str, Callable[[ApiContext, Params], dict[str, Any]]] = {
     "/api/requirements": requirements,
     "/api/review": review,
     "/api/drift": drift,
+    "/api/reconcile": reconcile,
 }
 
 #: Answered outside `ROUTES` because neither is a pure function of a context:
