@@ -172,7 +172,7 @@ unrunnable for anyone without a paid account.
 
 ## 5. Verification
 
-- **737 automated Python tests, 60 automated frontend tests**, all passing.
+- **741 automated Python tests, 60 automated frontend tests**, all passing.
 - Tests for the load-bearing claims were deliberately broken once and confirmed to fail,
   to prove they actually catch the problems they claim to — including the one asserting a
   reviewer cannot sign off under another reviewer's name.

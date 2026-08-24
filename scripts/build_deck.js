@@ -110,9 +110,9 @@ steps.forEach(([h,b],i)=>{
 });
 s.addText('The graph is the only source of truth downstream. The chatbot, the documents, drift and reconciliation all read it — none of them re-parse the model, so none of them can disagree with each other.',
   {x:M,y:4.3,w:W-2*M,h:0.7,fontFace:SANS,fontSize:13,color:INK,margin:0});
-stat(s,M,5.15,2.9,'13,943','lines of Python');
+stat(s,M,5.15,2.9,'14,012','lines of Python');
 stat(s,M+3.1,5.15,2.9,'5,901','lines of TypeScript');
-stat(s,M+6.2,5.15,2.9,'797','automated tests',OK);
+stat(s,M+6.2,5.15,2.9,'801','automated tests',OK);
 stat(s,M+9.3,5.15,2.6,'0','regex in the DAX lexer',ACCENT);
 mark(s,'8c102048e494');
 s.addNotes('DAX is lexed, not pattern-matched: a comment marker inside a string literal defeats regex, and the fingerprint scheme depends on getting that right.');
@@ -241,7 +241,7 @@ s.addNotes('Deliberately no invented percentages. Every figure here is something
 /* 10 — honest status */
 s=p.addSlide(); light(s);
 title(s,'Where it stands, honestly','what is proven, what is written but unproven, and what is not built');
-card(s,M,1.95,3.85,3.5,'Proven end to end','Both Power BI formats. 797 tests. Drift, reconciliation against DuckDB, lineage to source, RLS and calculation-group logic, the 15-tool chatbot and the decision log — all verified against real models. Several bugs here were found that way, not by unit tests.',OKBG);
+card(s,M,1.95,3.85,3.5,'Proven end to end','Both Power BI formats. 801 tests. Drift, reconciliation against DuckDB, lineage to source, RLS and calculation-group logic, the 15-tool chatbot and the decision log — all verified against real models. Several bugs here were found that way, not by unit tests.',OKBG);
 card(s,M+4.05,1.95,3.85,3.5,'Written, not yet live','Connectors for Snowflake, Databricks, Redshift and Athena share the DuckDB code path and are unit-tested against a DB-API cursor — parameters, per-platform identifier case folding, SQL dialect. None has authenticated to a live account; the sandbox blocks those hosts, confirmed rather than assumed.',WARNBG);
 card(s,M+8.1,1.95,3.85,3.5,'Not built','No write path back into Power BI — Concordance reads and reports, it never edits a model. Report-page usage is outside the semantic layer, so a measure no other measure uses cannot be proven unused.',SOFT);
 s.addShape(p.ShapeType.roundRect,{x:M,y:5.7,w:W-2*M,h:1.05,fill:{color:INK},line:{color:INK},rectRadius:0.03});
@@ -256,7 +256,7 @@ s.addText('Concordance',{x:M,y:1.9,w:8.6,h:0.9,fontFace:SERIF,fontSize:44,bold:t
 s.addText('The document, the model and the warehouse — held together by something that breaks loudly when they diverge.',
   {x:M,y:2.9,w:8.6,h:1.0,fontFace:SANS,fontSize:18,color:'C2CDD2',margin:0,lineSpacingMultiple:1.2});
 [['Innovation','A requirement bound to a fingerprint; a sign-off that expires on its own'],
- ['Technical','Lexer-based canonicalisation, a real AST for SQL, 797 tests, no regex'],
+ ['Technical','Lexer-based canonicalisation, a real AST for SQL, 801 tests, no regex'],
  ['Impact','Documents that can be re-checked, and disagreements found before a meeting']].forEach(([t,b],i)=>{
   const y=4.25+i*0.78;
   s.addShape(p.ShapeType.ellipse,{x:M,y:y+0.06,w:0.3,h:0.3,fill:{color:ACCENT}});

@@ -125,7 +125,7 @@ This is the part that is hardest to demo and matters most in a regulated industr
 
 ## 6. Engineering
 
-- **13,943 lines of Python, 5,901 of TypeScript, 797 automated tests** (737 Python, 60
+- **14,012 lines of Python, 5,901 of TypeScript, 801 automated tests** (741 Python, 60
   frontend). Tests were mutation-checked — each confirmed to fail when the logic it covers
   is deliberately broken, because a test that cannot fail protects nothing and a green run
   does not show that. The check applies to the load-bearing claims as well as the frontend:

@@ -294,7 +294,7 @@ Node required).
 
 ## 14. Testing
 
-**737 Python tests, 60 frontend tests.** Both suites are written against real behavior,
+**741 Python tests, 60 frontend tests.** Both suites are written against real behavior,
 not mocks of it wherever a real dependency is available — DuckDB stands in for a warehouse
 credential-free, and the fixture models in `data/models/` are real (if small) Power BI
 files, not synthetic data.

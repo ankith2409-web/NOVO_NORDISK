@@ -751,7 +751,7 @@ concordance/
     metrics.py         comparing one KPI's definition across two platforms
   cli.py
 scripts/               report generator, warehouse fixture, snapshot capture
-tests/                 737 tests, run against the real models
+tests/                 741 tests, run against the real models
 frontend/              React interface over the JSON API (Vite, Tailwind)
 data/models/           three Microsoft .pbix samples + an authored TMDL model and its v2
 ```
