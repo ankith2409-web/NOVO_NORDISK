@@ -33,7 +33,7 @@ import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
 
 export function Review() {
-  const { data, error, reload } = useLoad<ReviewPayload>(() => api.review(), []);
+  const { data, error, retrying, reload } = useLoad<ReviewPayload>(() => api.review(), []);
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState("");
   // Kept apart from `error`. A queue that failed to load leaves nothing on
@@ -86,6 +86,7 @@ export function Review() {
         status={error.status}
         what="the review queue"
         onRetry={reload}
+        retrying={retrying}
       />
     );
   if (!data) return <Loading what="the review queue" rows={3} />;

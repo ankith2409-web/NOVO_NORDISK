@@ -45,7 +45,7 @@ const TONE = {
 } as const;
 
 export function Drift({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
-  const { data, error, reload } = useLoad<DriftPayload>(() => api.drift(), []);
+  const { data, error, retrying, reload } = useLoad<DriftPayload>(() => api.drift(), []);
   const [only, setOnly] = useState<DriftChange["kind"] | null>(null);
 
   // 501 is the server saying a flag was not passed, which is not a failure and
@@ -71,6 +71,7 @@ export function Drift({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
         status={error.status}
         what="the drift report"
         onRetry={reload}
+        retrying={retrying}
       />
     );
   if (!data) return <Loading what="both versions" rows={4} />;

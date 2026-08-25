@@ -38,7 +38,7 @@ const HEADING: Record<Verdict, string> = {
 const ORDER: Verdict[] = ["divergent", "review", "consistent"];
 
 export function Reconcile({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
-  const { data, error, reload } = useLoad<ReconcilePayload>(() => api.reconcile(), []);
+  const { data, error, retrying, reload } = useLoad<ReconcilePayload>(() => api.reconcile(), []);
   const [showConsistent, setShowConsistent] = useState(false);
 
   if (error?.status === 501 && SNAPSHOT_MODE)
@@ -62,6 +62,7 @@ export function Reconcile({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
         status={error.status}
         what="the reconciliation"
         onRetry={reload}
+        retrying={retrying}
       />
     );
   if (!data) return <Loading what="both platforms" rows={4} />;

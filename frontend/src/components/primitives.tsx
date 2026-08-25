@@ -243,6 +243,7 @@ export function Failure({
   status = 500,
   what,
   onRetry,
+  retrying = false,
 }: {
   message: string;
   hint?: string[];
@@ -250,6 +251,8 @@ export function Failure({
   /** What was being loaded, for the fallback title: "Could not load …". */
   what?: string;
   onRetry?: () => void;
+  /** True while a retry is in flight, so the button can say so. */
+  retrying?: boolean;
 }) {
   const shown = present({ status, message, didYouMean: hint, what });
   const suggestions = shown.suggestions ?? [];
@@ -307,13 +310,24 @@ export function Failure({
           )}
 
           {onRetry && shown.retryLabel && (
+            // Disabled while in flight so a second click cannot queue a second
+            // attempt, and labelled so the wait is visibly the button's doing
+            // rather than nothing having happened.
             <Button
               onClick={onRetry}
+              disabled={retrying}
+              aria-busy={retrying}
               tone={shown.tone === "bad" ? "bad" : "review"}
               className="mt-2.5"
             >
-              <RetryIcon size={11} className="flex-none" />
-              {shown.retryLabel}
+              <RetryIcon
+                size={11}
+                className={cx(
+                  "flex-none",
+                  retrying && "motion-safe:animate-spin",
+                )}
+              />
+              {retrying ? "Trying…" : shown.retryLabel}
             </Button>
           )}
         </div>

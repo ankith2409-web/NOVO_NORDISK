@@ -15,7 +15,7 @@ import { useLoad } from "@/lib/useLoad";
 export function Overview({ overview }: { overview: OverviewData | null }) {
   // The overview itself is fetched once by the shell and passed in; only the
   // review queue is this view's own.
-  const { data: review, error, reload } = useLoad(() => api.review(), []);
+  const { data: review, error, retrying, reload } = useLoad(() => api.review(), []);
 
   const data = overview;
   if (!data)
@@ -25,6 +25,7 @@ export function Overview({ overview }: { overview: OverviewData | null }) {
         status={error.status}
         what="the model"
         onRetry={reload}
+        retrying={retrying}
       />
     ) : (
       <Loading what="the model" />

@@ -93,7 +93,7 @@ function group(nodes: Node[]): TableGroup[] {
 }
 
 export function Model() {
-  const { data: graph, error, reload } = useLoad<GraphPayload>(() => api.graph(), []);
+  const { data: graph, error, retrying, reload } = useLoad<GraphPayload>(() => api.graph(), []);
   const [filter, setFilter] = useState("");
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Node | null>(null);
@@ -125,6 +125,7 @@ export function Model() {
         status={error.status}
         what="the semantic graph"
         onRetry={reload}
+        retrying={retrying}
       />
     );
   if (!graph) return <Loading what="the semantic graph" rows={5} />;

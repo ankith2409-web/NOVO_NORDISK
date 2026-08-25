@@ -46,7 +46,7 @@ export function Requirements() {
     setKindState(next);
     remember("requirements-kind", next);
   }
-  const { data, error, reload } = useLoad<RequirementsPayload>(
+  const { data, error, retrying, reload } = useLoad<RequirementsPayload>(
     () => api.requirements(kind),
     [kind],
   );
@@ -87,6 +87,7 @@ export function Requirements() {
           status={error.status}
           what="the requirements"
           onRetry={reload}
+          retrying={retrying}
         />
       )}
       {!data && !error && <Loading what="the requirements" rows={4} />}

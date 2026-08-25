@@ -24,8 +24,17 @@ export interface Failed {
 export interface Loaded<T> {
   data: T | null;
   error: Failed | null;
-  /** True only for the first load, so a retry does not blank the screen. */
-  loading: boolean;
+  /**
+   * True while a `reload` is in flight.
+   *
+   * There is deliberately no separate first-load flag: `data` being null is
+   * already that, and every view keys its skeleton off it. A retry is the
+   * case that needs its own signal, because it is the one where something is
+   * happening and nothing on screen would otherwise say so -- the failure
+   * stays up, so without this a Retry click looks like it did nothing until
+   * the response happens to land.
+   */
+  retrying: boolean;
   reload: () => void;
 }
 
@@ -35,7 +44,7 @@ export function useLoad<T>(
 ): Loaded<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<Failed | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [retrying, setRetrying] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
   // The request closure is rebuilt on every render, so it cannot be a
@@ -48,7 +57,6 @@ export function useLoad<T>(
     // the user has already switched model or tab -- the classic race that
     // shows one model's figures under another's name.
     let current = true;
-    setLoading(true);
     void (async () => {
       const result = await run();
       if (!current) return;
@@ -63,14 +71,19 @@ export function useLoad<T>(
         });
         setData(null);
       }
-      setLoading(false);
+      setRetrying(false);
     })();
     return () => {
       current = false;
     };
   }, [run, attempt]);
 
-  const reload = useCallback(() => setAttempt((n) => n + 1), []);
+  // Set here rather than in the effect so the button goes busy on the click
+  // itself, not one render later once the effect has scheduled.
+  const reload = useCallback(() => {
+    setRetrying(true);
+    setAttempt((n) => n + 1);
+  }, []);
 
-  return { data, error, loading, reload };
+  return { data, error, retrying, reload };
 }
