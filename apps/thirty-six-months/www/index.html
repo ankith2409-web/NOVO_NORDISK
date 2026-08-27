@@ -966,8 +966,19 @@ window.addEventListener('pagehide',saveNow);
   syncSettingInputs();
   buildStatic();sel=curPhaseIdx();renderAll();paintReminder();paintWaterStatus();
   resumeTimer();
-  if(S.ron&&!NAT)schedule();
-  if(S.wron&&!NAT){S.wron=false;toggleWaterRem();}   // restart the hourly interval after a reload
+  /* Re-arm whatever was switched on. In the browser that means restarting
+     the in-page timers, which do not survive a reload. On Android the
+     alarms normally persist, but a force-stop cancels them silently and
+     nothing else would ever put them back. Re-arming is idempotent. */
+  if(NAT){
+    if(S.ron&&NAT.setDailyReminder){const[h,mi]=S.rt.split(':').map(Number);
+      try{NAT.setDailyReminder(true,h,mi)}catch(e){}}
+    if(S.wron&&NAT.setWaterReminder){
+      try{NAT.setWaterReminder(true,t2m(S.set.wake),t2m(S.set.sleep))}catch(e){}}
+  }else{
+    if(S.ron)schedule();
+    if(S.wron){S.wron=false;toggleWaterRem();}
+  }
   document.getElementById('build').textContent =
     (NAT&&NAT.appVersion?`36 Months ${(()=>{try{return NAT.appVersion()}catch(e){return ''}})()} · `:'')
     + (HAS_HOST_STORE?'stored in the artifact runtime':'stored on this device');
