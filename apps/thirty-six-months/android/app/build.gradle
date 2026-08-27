@@ -1,0 +1,71 @@
+plugins {
+    id 'com.android.application'
+}
+
+// CI passes the run number so every build supersedes the last one on the phone.
+def vCode = (project.findProperty('appVersionCode') ?: '1') as Integer
+def vName = project.findProperty('appVersionName') ?: '1.0.0'
+
+android {
+    namespace 'app.thirtysixmonths.engine'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'app.thirtysixmonths.engine'
+        minSdk 26
+        targetSdk 34
+        versionCode vCode
+        versionName vName
+        resourceConfigurations += ['en']
+    }
+
+    // The web app is the single source of truth; it is not copied into the
+    // module, it is packaged straight out of ../../www.
+    sourceSets {
+        main {
+            assets.srcDirs = ['../../www']
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    signingConfigs {
+        sideload {
+            storeFile file('../sideload.jks')
+            storePassword 'sideload'
+            keyAlias 'sideload'
+            keyPassword 'sideload'
+        }
+    }
+
+    buildTypes {
+        release {
+            // No shrinking: the app is one Activity and a WebView, and R8
+            // stripping the @JavascriptInterface methods would break the bridge.
+            minifyEnabled false
+            signingConfig signingConfigs.sideload
+        }
+        debug {
+            signingConfig signingConfigs.sideload
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packagingOptions {
+        resources {
+            excludes += ['META-INF/*.kotlin_module', 'DebugProbesKt.bin']
+        }
+    }
+}
+
+dependencies {
+    // WebViewAssetLoader — serves assets over a real https origin so
+    // localStorage is dependable.
+    implementation 'androidx.webkit:webkit:1.11.0'
+}

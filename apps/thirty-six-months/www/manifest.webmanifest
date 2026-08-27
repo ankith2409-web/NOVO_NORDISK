@@ -1,0 +1,16 @@
+{
+  "name": "36 Months — daily engine",
+  "short_name": "36 Months",
+  "description": "The daily engine for a 36-month plan: schedule, study timer, water, workout and the phase checklists.",
+  "start_url": "index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#E9E7E0",
+  "theme_color": "#E9E7E0",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

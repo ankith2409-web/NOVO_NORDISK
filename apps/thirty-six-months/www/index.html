@@ -1,0 +1,976 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#E9E7E0">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="36 Months">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<title>36 Months — daily engine</title>
+<link rel="stylesheet" href="fonts/local.css">
+<style>
+:root{--bone:#E9E7E0;--bone-2:#DFDCD3;--ink:#16191B;--ink-soft:#4E5559;--mist:#C9C6BB;--sp:clamp(16px,3.5vw,28px)}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bone);color:var(--ink);font-family:"Public Sans",system-ui,sans-serif;font-size:16px;line-height:1.55;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;overscroll-behavior-y:contain}
+.wrap{max-width:1120px;margin:0 auto;padding:0 var(--sp) calc(100px + env(safe-area-inset-bottom))}
+h1,h2,h3,h4{font-family:"Bricolage Grotesque",system-ui,sans-serif;margin:0;line-height:1.03;letter-spacing:-.02em}
+h1{font-size:clamp(34px,7vw,68px);font-weight:800}
+h2{font-size:clamp(22px,3.6vw,32px);font-weight:700}
+h3{font-size:15px;font-weight:700}
+h4{font-size:16.5px;font-weight:700}
+.eyebrow{font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:500;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-soft)}
+.mono{font-family:"JetBrains Mono",monospace}
+.lede{max-width:58ch;color:var(--ink-soft);font-size:clamp(15px,1.7vw,18px);margin:14px 0 0}
+.hint{font-size:13px;color:var(--ink-soft)}
+button{font-family:inherit}
+.seg{display:inline-flex;border:1.5px solid var(--ink)}
+.seg button{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding:9px 14px;border:0;background:transparent;color:var(--ink);cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bone)}
+.seg button+button{border-left:1.5px solid var(--ink)}
+.btn{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding:10px 16px;border:1.5px solid var(--ink);background:var(--ink);color:var(--bone);cursor:pointer}
+.btn.ghost{background:transparent;color:var(--ink)}
+.btn.sm{padding:6px 10px;font-size:10px}
+.btn:focus-visible,.seg button:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+
+nav{position:sticky;top:0;z-index:20;background:var(--bone);border-bottom:2px solid var(--ink);padding:calc(12px + env(safe-area-inset-top)) var(--sp) 12px;display:flex;gap:14px;align-items:center;margin-bottom:var(--sp)}
+nav .brand{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:17px;letter-spacing:-.02em}
+nav .seg{margin-left:auto}
+.view{display:none}.view.on{display:block}
+
+.card{border:1.5px solid var(--ink);padding:18px}
+.card+.card{margin-top:16px}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+@media(max-width:760px){.two{grid-template-columns:1fr}}
+
+/* today head */
+.dayhead{border-bottom:2px solid var(--ink);padding-bottom:18px}
+.dayhead .row{display:flex;flex-wrap:wrap;gap:10px 24px;align-items:flex-end;margin-top:8px}
+.stat{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--ink-soft);text-align:right;margin-left:auto}
+.stat b{display:block;font-family:"Bricolage Grotesque",sans-serif;font-size:30px;color:var(--ink);line-height:1}
+.warn{margin-top:16px;border-left:3px solid #B5731C;padding:12px 0 12px 16px;background:transparent}
+.warn b{font-family:"Bricolage Grotesque",sans-serif;font-size:15px}
+.warn p{margin:4px 0 0;font-size:14px;color:var(--ink-soft)}
+
+/* schedule */
+.blk{display:grid;grid-template-columns:64px 1fr auto;gap:14px;padding:13px 0;border-bottom:1px solid var(--mist);align-items:start}
+.blk .t{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--ink-soft);line-height:1.5;padding-top:3px}
+.blk .t b{display:block;color:var(--ink);font-weight:500}
+.blk .bd{min-width:0;border-left:3px solid var(--k);padding-left:13px}
+.blk .bd h4{font-size:16px}
+.blk .bd p{margin:3px 0 0;font-size:13.5px;color:var(--ink-soft)}
+.blk .bd .acts{margin-top:9px;display:flex;gap:8px;flex-wrap:wrap}
+.blk .dur{font-family:"JetBrains Mono",monospace;font-size:10.5px;color:var(--ink-soft);letter-spacing:.08em;text-transform:uppercase}
+.blk input[type=checkbox]{appearance:none;-webkit-appearance:none;width:19px;height:19px;border:1.5px solid var(--ink);background:transparent;cursor:pointer;margin-top:4px;flex:0 0 auto}
+.blk input:checked{background:var(--k);border-color:var(--k)}
+.blk input:checked::after{content:"";display:block;width:5px;height:10px;margin:2px 0 0 5px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.blk input:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.blk.done .bd h4,.blk.done .bd p{color:var(--ink-soft);text-decoration:line-through;text-decoration-thickness:1px}
+.blk.now{background:linear-gradient(90deg,rgba(29,74,87,.07),transparent 60%)}
+.blk.now .t b::after{content:" ·now";color:#B5731C}
+
+/* timer */
+.clock{font-family:"JetBrains Mono",monospace;font-weight:700;font-size:clamp(48px,12vw,68px);line-height:1;letter-spacing:-.03em;margin:10px 0 4px;font-variant-numeric:tabular-nums}
+.clock.run{color:#B5731C}
+.timer-ctl{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.meter{height:12px;background:var(--bone-2);margin:9px 0 6px}
+.meter i{display:block;height:100%;background:#1D4A57;transition:width .4s ease}
+.dayfacts{display:flex;justify-content:space-between;font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--ink-soft)}
+.field{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px}
+input[type=time],input[type=number]{font-family:"JetBrains Mono",monospace;font-size:15px;padding:8px 10px;border:1.5px solid var(--ink);background:transparent;color:var(--ink);width:130px}
+textarea{font-family:"JetBrains Mono",monospace;font-size:12px;width:100%;min-height:90px;padding:8px;border:1.5px solid var(--ink);background:transparent;color:var(--ink)}
+.stripe{display:grid;grid-template-columns:repeat(14,1fr);gap:3px;margin-top:12px}
+.stripe i{display:block;height:24px;background:var(--bone-2)}
+.stripe i.on{background:#1D4A57}
+.stripe i.today{outline:1.5px solid var(--ink);outline-offset:1px}
+
+/* water */
+.glasses{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+.gl{width:26px;height:34px;border:1.5px solid var(--ink);cursor:pointer;background:transparent;padding:0;position:relative;overflow:hidden}
+.gl.f::after{content:"";position:absolute;inset:auto 0 0 0;height:72%;background:#3A7286}
+/* workout */
+.ex{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--mist);font-size:14.5px}
+.ex span:last-child{font-family:"JetBrains Mono",monospace;font-size:12.5px;color:var(--ink-soft);white-space:nowrap}
+
+details{border:1.5px solid var(--ink);padding:14px 18px;margin-top:16px}
+summary{cursor:pointer;font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase}
+.setgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-top:16px}
+.setgrid label{display:block;font-size:13px;color:var(--ink-soft)}
+.setgrid input{margin-top:5px;width:100%}
+
+/* plan view */
+.spine{display:flex;gap:22px;margin-top:24px;flex-wrap:wrap}
+.year{flex:1 1 260px;min-width:0}
+.year-hd{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:3px;height:104px;align-items:end}
+.cell{position:relative;padding:0;border:0;cursor:pointer;background:var(--bone-2);height:100%;display:flex;align-items:flex-end}
+.cell .fill{width:100%;background:var(--era);transition:height .35s cubic-bezier(.2,.7,.3,1),opacity .2s}
+.cell[aria-pressed="true"]{outline:2px solid var(--ink);outline-offset:2px}
+.cell:hover .fill{opacity:.72}
+.cell:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.cell.now::after{content:"";position:absolute;left:50%;bottom:-9px;width:5px;height:5px;background:var(--ink);transform:translateX(-50%) rotate(45deg)}
+.cell.pin::before{content:"";position:absolute;left:50%;top:-7px;width:1.5px;height:5px;background:var(--ink);transform:translateX(-50%)}
+.axis{display:flex;justify-content:space-between;margin-top:12px;font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--ink-soft)}
+.panel{margin-top:34px;border-top:2px solid var(--ink);padding-top:24px}
+.panel-hd{display:flex;flex-wrap:wrap;gap:8px 20px;align-items:baseline}
+.tag{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding:4px 9px;color:#fff;background:var(--era)}
+.cols{display:grid;grid-template-columns:minmax(0,300px) minmax(0,1fr);gap:34px;margin-top:24px}
+@media(max-width:760px){.cols{grid-template-columns:1fr;gap:26px}}
+.hours .big{font-family:"Bricolage Grotesque",sans-serif;font-size:56px;font-weight:800;line-height:.9}
+.hours .big span{font-size:19px;font-weight:500}
+.bar{display:flex;height:13px;margin:16px 0 12px;background:var(--bone-2)}
+.bar i{display:block;height:100%}
+.legend{list-style:none;margin:0;padding:0;font-size:13px}
+.legend li{display:flex;align-items:center;gap:9px;padding:3px 0}
+.legend .sw{width:10px;height:10px;flex:0 0 auto}
+.legend .h{margin-left:auto;font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--ink-soft)}
+.foot{margin-top:14px;padding-top:12px;border-top:1px solid var(--mist);font-size:13px;color:var(--ink-soft)}
+.foot b{color:var(--ink)}
+.block+.block{margin-top:26px}
+.block h3{border-bottom:1px solid var(--mist);padding-bottom:7px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.block h3 .count{font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:400;color:var(--ink-soft)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-family:"JetBrains Mono",monospace;font-size:11px;padding:5px 9px;border:1.5px solid var(--ink)}
+.chip.sec{border-style:dashed;color:var(--ink-soft)}
+ul.checks{list-style:none;margin:0;padding:0}
+ul.checks li{border-bottom:1px solid var(--mist)}
+ul.checks label{display:flex;gap:12px;align-items:flex-start;padding:9px 2px;cursor:pointer;font-size:15px}
+ul.checks input{appearance:none;-webkit-appearance:none;flex:0 0 auto;width:17px;height:17px;margin:3px 0 0;border:1.5px solid var(--ink);background:transparent;cursor:pointer}
+ul.checks input:checked{background:var(--era);border-color:var(--era)}
+ul.checks input:checked::after{content:"";display:block;width:5px;height:9px;margin:1px 0 0 4px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+ul.checks input:checked+span{color:var(--ink-soft);text-decoration:line-through}
+section.band{margin-top:48px;border-top:2px solid var(--ink);padding-top:24px}
+.lang-row{display:grid;grid-template-columns:120px minmax(0,1fr);gap:14px;align-items:center;margin-top:9px}
+.lang-name{font-family:"JetBrains Mono",monospace;font-size:12px;font-weight:500}
+.track{display:grid;grid-template-columns:repeat(6,1fr);gap:3px;height:22px}
+.track i{display:block;background:var(--bone-2)}
+.track i[data-i="2"]{background:var(--c)}
+.track i[data-i="1"]{background:var(--c);opacity:.34}
+.track-key{display:grid;grid-template-columns:120px minmax(0,1fr);gap:14px;margin-top:14px}
+.track-key .k{display:grid;grid-template-columns:repeat(6,1fr);gap:3px;font-family:"JetBrains Mono",monospace;font-size:9.5px;color:var(--ink-soft);text-align:center}
+.date-row{display:grid;grid-template-columns:150px 14px minmax(0,1fr);gap:14px;align-items:start;padding:11px 0;border-bottom:1px solid var(--mist)}
+.date-row .d{font-family:"JetBrains Mono",monospace;font-size:12px;font-weight:500}
+.date-row .dot{width:9px;height:9px;margin-top:6px;background:var(--c)}
+.date-row .t em{display:block;font-style:normal;font-size:13px;color:var(--ink-soft);margin-top:2px}
+@media(max-width:600px){.date-row{grid-template-columns:14px minmax(0,1fr);gap:10px}.date-row .d{grid-column:1/-1;color:var(--ink-soft)}}
+.outs{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));margin-top:24px;border-top:1px solid var(--mist)}
+.out{border-bottom:1px solid var(--mist);padding:20px 0 20px 18px;border-left:3px solid var(--c);margin-bottom:-1px}
+.out .when{font-family:"JetBrains Mono",monospace;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-soft)}
+.out h3{font-size:19px;margin:6px 0 0;font-weight:700}
+.out .pay{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:26px;color:var(--c);margin:8px 0 2px}
+.out .sub{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--ink-soft)}
+.out p{margin:10px 0 0;font-size:14.5px;color:var(--ink-soft)}
+.out .req{margin:10px 0 0;padding:0;list-style:none;font-size:13.5px}
+.out .req li{padding-left:16px;position:relative;color:var(--ink-soft);margin:3px 0}
+.out .req li::before{content:"";position:absolute;left:0;top:8px;width:6px;height:6px;background:var(--c)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:20px;margin-top:22px}
+.g{border-left:3px solid var(--c);padding-left:16px}
+.g h3{font-size:16px;margin-bottom:6px}
+.g p{margin:0;font-size:14.5px;color:var(--ink-soft)}
+.g ul{margin:8px 0 0;padding-left:18px;font-size:14px;color:var(--ink-soft)}
+.rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:22px;margin-top:22px}
+.rule .n{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--ink-soft);letter-spacing:.1em}
+.rule p{margin:6px 0 0;font-size:14.5px;color:var(--ink-soft)}
+.rule strong{color:var(--ink)}
+#toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(180%);background:var(--ink);color:var(--bone);padding:14px 20px;max-width:min(440px,92vw);z-index:99;transition:transform .3s;font-size:14.5px}
+#toast.show{transform:translateX(-50%) translateY(0)}
+#toast b{font-family:"Bricolage Grotesque",sans-serif;display:block;font-size:16px;margin-bottom:2px}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<nav>
+  <span class="brand">36 Months</span>
+  <div class="seg" role="group" aria-label="View">
+    <button id="v-today" aria-pressed="true">Today</button>
+    <button id="v-plan" aria-pressed="false">The plan</button>
+  </div>
+</nav>
+
+<div class="wrap">
+
+<!-- ============ TODAY ============ -->
+<div class="view on" id="view-today">
+  <div class="dayhead">
+    <div class="eyebrow" id="dstamp">—</div>
+    <div class="row">
+      <h1 id="dtitle">Today</h1>
+      <div class="stat"><b id="dpct">0%</b><span id="dsum">—</span></div>
+    </div>
+    <p class="lede" id="dthesis"></p>
+    <div id="sleepwarn"></div>
+  </div>
+
+  <div class="card" style="margin-top:22px">
+    <div class="eyebrow">Schedule</div>
+    <div id="sched" style="margin-top:12px"></div>
+    <p class="hint" id="carryline" style="margin-top:14px"></p>
+    <p class="hint" id="audioline" style="margin-top:6px"></p>
+  </div>
+
+  <div class="two" style="margin-top:16px">
+    <div class="card">
+      <div class="eyebrow">Study timer</div>
+      <div class="clock" id="clock" role="timer">25:00</div>
+      <div class="seg" role="group" aria-label="Session length">
+        <button data-len="25" aria-pressed="true">25</button>
+        <button data-len="50" aria-pressed="false">50</button>
+        <button data-len="90" aria-pressed="false">90</button>
+      </div>
+      <div class="timer-ctl">
+        <button class="btn" id="go">Start</button>
+        <button class="btn ghost" id="reset">Reset</button>
+        <button class="btn ghost" id="add15">Log 15</button>
+      </div>
+      <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--mist)">
+        <div class="meter"><i id="meter" style="width:0%"></i></div>
+        <div class="dayfacts"><span id="logged">0.0h logged</span><span id="target">target 3.0h</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="eyebrow">Water</div>
+      <div class="clock" style="font-size:clamp(38px,9vw,52px)" id="wnum">0.0L</div>
+      <div class="dayfacts"><span id="wsub">0 of 12 glasses</span><span id="wgoal">goal 3.0L</span></div>
+      <div class="glasses" id="glasses"></div>
+      <div class="field">
+        <button class="btn sm" id="wadd">+ 1 glass</button>
+        <button class="btn ghost sm" id="wundo">Undo</button>
+        <button class="btn ghost sm" id="wrem">Remind hourly</button>
+      </div>
+      <p class="hint" id="wstatus" style="margin-top:10px">Nudges off.</p>
+    </div>
+  </div>
+
+  <div class="two" style="margin-top:16px">
+    <div class="card">
+      <div class="eyebrow">Home workout</div>
+      <h4 id="wkname" style="margin-top:8px">—</h4>
+      <p class="hint" id="wknote" style="margin-top:4px"></p>
+      <div id="wklist" style="margin-top:12px"></div>
+      <div class="field"><button class="btn sm" id="wkdone">Mark done</button></div>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Daily reminder</div>
+      <div class="field">
+        <input type="time" id="rtime" value="19:15" aria-label="Reminder time">
+        <button class="btn" id="rtoggle">Turn on</button>
+      </div>
+      <p class="hint" id="rstatus" style="margin-top:10px">Off.</p>
+      <div class="eyebrow" style="margin-top:22px">Last 14 days</div>
+      <div class="stripe" id="stripe"></div>
+      <div class="dayfacts" style="margin-top:8px"><span id="streak">0-day streak</span><span id="fortnight">0.0h in 14 days</span></div>
+    </div>
+  </div>
+
+  <details>
+    <summary>Your day — edit the times</summary>
+    <div class="setgrid">
+      <label>Wake<input type="time" id="s-wake"></label>
+      <label>Leave home<input type="time" id="s-leave"></label>
+      <label>Reach campus<input type="time" id="s-arrive"></label>
+      <label>Classes start<input type="time" id="s-cs"></label>
+      <label>Classes end<input type="time" id="s-ce"></label>
+      <label>Home by<input type="time" id="s-home"></label>
+      <label>Lights out<input type="time" id="s-sleep"></label>
+      <label>Workout minutes<input type="number" id="s-wk" min="0" max="90" step="5"></label>
+      <label>Water goal (L)<input type="number" id="s-wg" min="1" max="6" step="0.25"></label>
+    </div>
+    <p class="hint" style="margin-top:14px">Defaults assume you leave at 6:00 and reach campus at 7:30, so the return commute mirrors it. Change anything that's wrong — the schedule rebuilds itself and study blocks re-fit to your phase target.</p>
+  </details>
+
+  <details>
+    <summary>Backup — three years is a long time to trust one phone</summary>
+    <p class="hint" style="margin-top:12px">Every tick, log and setting lives only on this device. Export now and again; keep the file somewhere else.</p>
+    <div class="field">
+      <button class="btn sm" id="bexport">Export</button>
+      <button class="btn ghost sm" id="bcopy">Copy to clipboard</button>
+      <button class="btn ghost sm" id="bshow">Paste a backup in</button>
+    </div>
+    <div id="brestore" style="display:none;margin-top:12px">
+      <textarea id="bjson" placeholder="Paste the contents of a backup file here" aria-label="Backup JSON"></textarea>
+      <div class="field"><button class="btn sm" id="bimport">Restore</button><span class="hint">This replaces everything currently stored.</span></div>
+    </div>
+    <p class="hint" id="bstatus" style="margin-top:10px"></p>
+  </details>
+
+  <p class="hint" style="margin-top:24px;text-align:center" id="build">—</p>
+</div>
+
+<!-- ============ PLAN ============ -->
+<div class="view" id="view-plan">
+  <div class="dayhead">
+    <div class="eyebrow">36 months · Sep 2026 → Aug 2029</div>
+    <div class="row"><h1>Build the<br>engineer.</h1>
+      <div class="stat"><b id="pct">0%</b>plan complete<br><span id="done" class="mono">0 / 0</span></div></div>
+  </div>
+  <div class="spine" id="spine"></div>
+  <div class="axis"><span>M01 · SEP 2026</span><span>M18 · FEB 2028</span><span>M36 · AUG 2029</span></div>
+  <div style="margin-top:18px"><div class="seg" role="group" aria-label="Intensity">
+    <button id="m-steady" aria-pressed="true">Semester pace</button>
+    <button id="m-sprint" aria-pressed="false">Break sprint</button>
+  </div> <span class="hint" id="modeHint">Realistic alongside classes, labs and freelance.</span></div>
+  <section class="panel" id="panel"></section>
+  <section class="band">
+    <div class="eyebrow">If you finish this</div><h2 style="margin-top:8px">What it's actually worth</h2>
+    <p class="lede">2026 market bands, not promises. The gap between low and high end is almost entirely portfolio and internship.</p>
+    <div class="outs" id="outs"></div>
+    <p class="hint" style="margin-top:18px">Advertised ranges skew high; medians sit lower. Yen converted at roughly ¥1 = ₹0.58. Re-check before you negotiate anything.</p>
+  </section>
+  <section class="band">
+    <div class="eyebrow">Language load</div><h2 style="margin-top:8px">What you write, and when</h2>
+    <div id="langs" style="margin-top:20px"></div>
+    <div class="track-key"><span></span><div class="k"><span>P1</span><span>P2</span><span>P3</span><span>P4</span><span>P5</span><span>P6</span></div></div>
+  </section>
+  <section class="band">
+    <div class="eyebrow">Dates that don't negotiate</div><h2 style="margin-top:8px">Work backwards from these</h2>
+    <div id="dates" style="margin-top:22px"></div>
+  </section>
+  <section class="band">
+    <div class="eyebrow">Guardrails</div><h2 style="margin-top:8px">What keeps this from collapsing</h2>
+    <div class="cards" id="guards"></div>
+  </section>
+  <section class="band"><div class="eyebrow">Operating rules</div><div class="rules" id="rules"></div></section>
+</div>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* ============================================================
+   Storage shim.
+   window.storage exists only inside the Claude artifact runtime.
+   In a browser, a home-screen PWA or the Android WebView it does
+   not, and without this every tick, log and setting is silently
+   thrown away on reload. localStorage is the real store now;
+   window.storage is used when it happens to be there.
+   ============================================================ */
+const HAS_HOST_STORE = typeof window.storage === 'object' && window.storage && typeof window.storage.get === 'function';
+const STORE = HAS_HOST_STORE ? window.storage : {
+  get: async k => ({ value: localStorage.getItem(k) }),
+  set: async (k, v) => { localStorage.setItem(k, v); }
+};
+/* The Android wrapper injects this. Absent in any browser. */
+const NAT = (typeof AndroidBridge !== 'undefined') ? AndroidBridge : null;
+
+const A='#1D4A57',A2='#3A7286',B='#B5731C',B2='#E0A02E',C='#7A3B5E',C2='#A85585';
+const PHASES=[
+{id:'p1',n:'Phase 01',color:A,title:'Ground floor',span:'M01–M06 · Sep 2026 → Feb 2027',
+ thesis:'Two languages, done properly. Python becomes your hands; C++ becomes how you understand what the machine is doing.',
+ hours:3,split:[['DSA in C++',1.25,A],['Python + tooling',1,A2],['Math for ML',0.75,'#7BA3AE']],
+ primary:['Python','C++'],secondary:['Bash','Git'],
+ compute:'₹0. Your laptop is enough. Claim the GitHub Student Developer Pack now.',
+ audio:['StatQuest — explained out loud, works fine without the screen','3Blue1Brown linear algebra, as a second pass on something you already watched','CS50 lectures','Or nothing at all. A 6 AM bus is a legitimate place to sleep.'],
+ learn:['Python past the basics: OOP, generators, decorators, type hints, virtualenv/uv, pytest','C++ fundamentals: pointers, references, memory, RAII, and the STL you actually use','DSA patterns in C++: two pointers, sliding window, recursion, binary search, trees, graphs, intro DP','Linear algebra: vectors, matrix ops, rank, eigenvalues','Probability and calculus: distributions, Bayes, derivatives, chain rule, gradients','Linux + bash + Docker basics'],
+ ship:['150 DSA problems in C++, sorted by pattern','One Python project with tests, a real README, and a Dockerfile','Three data-wrangling notebooks on genuinely messy datasets'],
+ people:['Run one GDG session yourself','Find two seniors placed in ML roles; ask what they would redo','List Amity faculty whose work touches ML, data or systems']},
+{id:'p2',n:'Phase 02',color:A2,title:'Learn the models',span:'M07–M12 · Mar → Aug 2027',
+ thesis:'Classical ML for judgement, PyTorch for power, and a transformer you built yourself so nothing downstream feels like magic.',
+ hours:3.5,split:[['PyTorch + DL',1.5,A2],['Classical ML + math',1,A],['DSA upkeep',0.5,'#7BA3AE'],['Papers',0.5,'#B9C6CB']],
+ primary:['Python','SQL'],secondary:['C++'],
+ compute:'Free tiers only. Kaggle ~30 GPU hours a week, Colab for the rest.',
+ audio:['Machine Learning Street Talk','The TWIML AI Podcast','Karpathy Zero to Hero — re-listen only, after you have done it with the screen','Or nothing.'],
+ learn:['Classical ML end to end: regression, trees, boosting, SVM, k-means, PCA','Evaluation discipline: cross-validation, data leakage, when F1/AUC mislead','PyTorch properly: tensors, autograd, nn.Module, training loops by hand','MLP → CNN → RNN/LSTM, regularisation, optimisers, schedules','Transformers from scratch — a working GPT you trained yourself','SQL: joins, CTEs, window functions'],
+ ship:['Two end-to-end ML projects with honest baselines and MLflow tracking','One Kaggle competition finished — top 25%, or a written post-mortem','A from-scratch transformer in a public repo with training curves','DSA kept warm: three problems a week'],
+ people:['Approach three faculty about their research; ask to assist','Read one open-source ML project’s issues weekly','Shift one freelance client toward something AI-shaped']},
+{id:'p3',n:'Phase 03',color:B,title:'LLM engineering core',span:'M13–M18 · Sep 2027 → Feb 2028',
+ thesis:'Stop calling APIs and start engineering systems around them. Retrieval, tools, and the part almost nobody does — evaluation.',
+ hours:4,split:[['Building',1.75,B],['LLM theory',1,B2],['Backend + deploy',0.5,'#8A5714'],['DSA upkeep',0.5,'#EBC57F'],['Japanese',0.25,C2]],
+ primary:['Python','TypeScript'],secondary:['SQL','C++','Japanese'],
+ compute:'₹500–1500/month API spend. Cheap models to develop, frontier to evaluate. Hard billing cap on day one.',
+ audio:['Latent Space — closest thing to an LLM engineering podcast','Nihongo con Teppei — short episodes, ideal bus length','Practical AI','Or nothing.'],
+ learn:['HuggingFace: transformers, tokenizers, datasets — and what tokenisation really does','Embeddings and vector search: Qdrant/Chroma/pgvector, hybrid search, rerankers','RAG for real: chunking, recall@k, MRR, grounding, citations, failure modes','Structured outputs, JSON schemas, function calling, prompt versioning','Agents: tool loops, planning, memory, multi-agent, MCP','Evals: golden sets, LLM-as-judge, regression suites, tracing','Serving: FastAPI, async, streaming, Docker, deploy','Japanese from zero — kana and basic grammar, 20 min a day'],
+ ship:['One deployed RAG product with a real eval harness — a live URL','One agent that completes a genuine task, plus a writeup of where it breaks','Your Claude Code skills work as a documented public repo','Summer 2028 internship applications sent Dec 2027 – Feb 2028'],
+ people:['Lock in one faculty research advisor — your future MEXT letter','Publish under your own name','Become known in one open-source community first']},
+{id:'p4',n:'Phase 04',color:B2,title:'Under the hood',span:'M19–M24 · Mar → Aug 2028',
+ thesis:'Fine-tuning, inference economics, and an internship. This separates you from everyone who only glued APIs together.',
+ hours:4,split:[['Fine-tuning + systems',1.75,B2],['MLOps + cloud',1,B],['Interview prep',0.5,'#8A5714'],['Writing',0.5,'#EBC57F'],['Japanese',0.25,C2]],
+ primary:['Python','Bash'],secondary:['C++/CUDA (read-level)','Japanese'],
+ compute:'The expensive phase. Student-pack, Lightning and Modal credits first, then GPUs by the hour. Cap ₹3000/month.',
+ audio:['Latent Space and TWIML — the inference and serving episodes','Japanese listening drills at N4 level','MLOps conference talks, audio only','Or nothing.'],
+ learn:['LoRA/QLoRA with PEFT; SFT vs DPO; why dataset curation beats hyperparameters','Quantisation, KV cache, batching, vLLM, latency against cost','Data parallel, mixed precision, gradient accumulation','MLOps: CI/CD for models, monitoring, drift, rollback','One cloud properly: compute, storage, IAM, managed GPU','Japanese continues — N5 comfortable, N4 in reach'],
+ ship:['A fine-tuned model benchmarked against base, with a result table','Summer 2028 internship completed','One merged PR into an open-source ML library','Two technical writeups published'],
+ people:['Treat the internship as a referral engine','Ask for the recommendation before your last day','Give your advisor something real to supervise']},
+{id:'p5',n:'Phase 05',color:C,title:'Depth, research, MEXT',span:'M25–M30 · Sep 2028 → Feb 2029',
+ thesis:'Convert engineering into research credibility, and start the MEXT machine early — it rewards a year of preparation.',
+ hours:4,split:[['Research',1.75,C],['Japanese',1,C2],['Interview prep',0.75,'#5A2B46'],['MEXT admin',0.5,'#C79BB3']],
+ primary:['Python','Japanese'],secondary:['C++','LaTeX'],
+ compute:'Mostly free. Budget for JLPT, TOEFL/IELTS and document attestation instead.',
+ audio:['JLPT N3 listening practice — the exam has a listening section, so this bus is literally exam prep','Audio overviews of the papers you are reimplementing','Recorded lab talks from your target professors','Or nothing.'],
+ learn:['Reimplement two or three papers from scratch','Research method: literature review, ablations, honest baselines','ML system design with cost and latency numbers attached','Japanese hard push: N4 secured, N3 underway','MEXT mechanics: research plan, outreach, transcripts, letters'],
+ ship:['A workshop paper or arXiv preprint submitted','Two reimplementations public with reproducible results','Five to eight labs shortlisted, professors contacted individually','MEXT package assembled, plan-B applications drafted in parallel'],
+ people:['Email professors one at a time, referencing their actual papers','Request letters six weeks out with a one-page brief','Ask your internship manager for the second letter']},
+{id:'p6',n:'Phase 06',color:C2,title:'Convert',span:'M31–M36 · Mar → Aug 2029',
+ thesis:'Everything built so far becomes offers. Heaviest hours, shortest list of new things to learn.',
+ hours:4.5,split:[['Interview prep',2,C2],['Capstone',1.25,C],['Applications',0.75,'#5A2B46'],['Japanese',0.5,'#C79BB3']],
+ primary:['C++','Python'],secondary:['Japanese','TypeScript'],
+ compute:'₹0 on compute. Spend on application fees and a domain for the portfolio.',
+ audio:['Record yourself explaining each project, then listen back and hear the gaps','System design talks','JLPT N3 listening','Or nothing.'],
+ learn:['DSA revision sprint in C++: 200 problems by pattern, timed','ML and LLM system design under interview conditions','Deep-dives on your own projects — you will be asked why, not what','Behavioural answers from real decisions'],
+ ship:['Portfolio live, every project with a working link, one-page resume','100+ targeted applications','Capstone deployed and documented','Offer signed, or MEXT result — with plan B in motion'],
+ people:['Activate every referral you built','Tell people exactly what you are applying for','Keep one person ahead of you in each track']}];
+
+const LANGS=[{name:'Python',c:A,lv:[2,2,2,2,2,2]},{name:'C++',c:A2,lv:[2,1,1,1,1,2]},{name:'SQL',c:B,lv:[0,2,2,1,1,1]},{name:'Bash / Linux',c:B2,lv:[1,1,1,2,1,1]},{name:'TypeScript',c:C,lv:[0,0,2,1,1,1]},{name:'Japanese',c:C2,lv:[0,0,1,1,2,2]}];
+const DATES=[{m:4,d:'Dec 2026',c:A,t:'Semester exams',s:'CGPA is the first filter everywhere. Cut this plan’s hours before coursework.'},{m:7,d:'Mar 2027',c:A2,t:'JLPT July registration',s:'Register for N5. The exam runs twice a year only.'},{m:11,d:'Jul 2027',c:A2,t:'JLPT N5',s:'Low stakes, starts the paper trail.'},{m:16,d:'Dec 2027 – Feb 2028',c:B,t:'Summer 2028 internship applications',s:'The highest-leverage six weeks in this plan.'},{m:23,d:'Jul 2028',c:B2,t:'JLPT N4',s:'Register by March 2028.'},{m:24,d:'Aug 2028',c:B2,t:'Internship ends',s:'Recommendation, referral commitment, public writeup — before your last day.'},{m:28,d:'Dec 2028',c:C,t:'JLPT N3 attempt',s:'Register around September 2028.'},{m:30,d:'Jan – Feb 2029',c:C,t:'TOEFL / IELTS',s:'Valid two years. Sit it early so a bad day is recoverable.'},{m:31,d:'Feb – Mar 2029',c:C2,t:'Letters requested',s:'Six weeks notice minimum, plus a one-page brief each.'},{m:33,d:'Feb – May 2029',c:C2,t:'MEXT embassy window',s:'Confirm exact dates with the Embassy of Japan in India.'},{m:35,d:'Jul 2029',c:C2,t:'JLPT N3 retake',s:'Last chance before the result matters.'},{m:36,d:'Aug – Oct 2029',c:C2,t:'Placements and final applications',s:'Campus season plus remote and Japan, parallel to MEXT.'}];
+const OUTS=[
+{c:A,when:'Aug 2029 · India · the default',h:'AI/ML engineer',pay:'₹6 – 12 LPA',sub:'₹50k – 1L per month',p:'What a CSE graduate with AI/ML coursework and notebook projects gets. Bottom of the band is IT services; top is product companies, and the difference is whether your projects are deployed.',req:['A degree and decent grades','Some ML coursework','Projects that exist on GitHub']},
+{c:B,when:'Aug 2029 · India · the target',h:'GenAI / LLM engineer',pay:'₹12 – 22 LPA',sub:'the premium band for freshers',p:'GenAI and LLM roles pay materially more than generalist ML at every level, and the entry premium is largest because the talent is genuinely scarce. This is what the plan is built for.',req:['Two production-deployed LLM systems with eval harnesses','A summer 2028 internship, ideally converted','Public writing and open-source presence']},
+{c:B2,when:'2032 – 34 · three to five years in',h:'Mid-level ML / LLM engineer',pay:'₹25 – 50 LPA',sub:'higher at FAANG India',p:'The realistic trajectory if you start in the premium band, specialise rather than generalise, and change companies once or twice.',req:['Shipped systems at scale','One recognised open-source contribution','A specialisation people can name you for']},
+{c:C2,when:'2030 – 32 · while studying',h:'MEXT-funded masters',pay:'¥144,000 / month',sub:'≈ ₹84k, plus full tuition and airfare',p:'Not a salary — two fully funded years with tuition, entrance fees and round-trip airfare covered. Roughly 9,000 people hold one at any time, so selection is the hard part, not funding.',req:['Strong transcript — screened first','JLPT N3-ish plus a real research plan','Two credible recommendation letters']},
+{c:C,when:'2032 – 34 · Japan, post-masters',h:'ML engineer, Tokyo',pay:'¥6M – 10M',sub:'≈ ₹35 – 58 LPA; foreign-capital firms higher',p:'Typical Tokyo band, with AI specialists carrying a clear premium over general software roles. Japan is short on IT talent and has started recruiting on Indian campuses directly.',req:['Masters or equivalent research record','Working Japanese for domestic firms; English fine at foreign-capital ones','The same deployed portfolio — it travels']},
+{c:A2,when:'Later · not a fresher route',h:'Remote, for a global company',pay:'₹60 – 80 LPA equivalent',sub:'senior roles only',p:'Real, but it opens at senior level, not on graduation. Worth knowing so you optimise toward it rather than assuming it is a starting point.',req:['Three to five years of shipped production work','A verifiable public track record','Async work that needs no supervision']}];
+const GUARDS=[
+{c:A,h:'The academic floor',p:'MEXT screens on transcript before anyone reads your research plan.',ul:['Target 8.5+, treat 8.0 as the line you do not cross','If a semester wobbles, cut this plan — not coursework','Exam weeks are automatically sprint-off']},
+{c:A2,h:'Slack, by design',p:'Thirty-six months at full tilt with no buffer breaks in month four.',ul:['Sunday off, genuinely','One catch-up week per phase','A quarterly retro where you may delete goals']},
+{c:B,h:'Compute on a student budget',p:'Only the fine-tuning phase costs real money.',ul:['Student Pack, Kaggle, Colab, Lightning, Modal','Cloud credits through GDG','A hard billing cap before the first API call']},
+{c:B2,h:'Freelance, repurposed',p:'Client work is a time tax until you steer it toward AI.',ul:['Move clients to chatbots, document search, automation','Charge more — you learn on their budget','Every project ships with a public case study']},
+{c:C,h:'The plan-B ladder',p:'MEXT acceptance runs in the single digits.',ul:['Lab-funded direct applications: Todai, Kyoto, Tokyo Tech','JASSO and university-specific scholarships','DAAD, Erasmus Mundus','A funded MTech at IISc or an IIT as the floor']},
+{c:C2,h:'People are the multiplier',p:'A solitary plan produces a candidate nobody can vouch for.',ul:['A faculty advisor by Phase 3','An internship manager who takes your call in 2029','A public writing habit']}];
+const RULES=[['Rule 01','<strong>Ship beats study.</strong> A deployed thing with a URL outranks three courses.'],['Rule 02','<strong>One public artifact a month.</strong> Thirty-six of them is a career.'],['Rule 03','<strong>Never let C++ go cold.</strong> Three problems a week saves your placement season.'],['Rule 04','<strong>Depth in one, literacy in the rest.</strong>'],['Rule 05','<strong>Sleep is a study tool.</strong> Under six hours and yesterday’s work does not stick.'],['Rule 06','<strong>Protect the transcript.</strong> Nothing here is worth a semester you must explain.']];
+
+const WORKOUTS=[
+ {n:'Rest — walk and stretch',note:'Sunday is the rest day the plan is built around. Move gently, do not train.',ex:[['Easy walk','20–30 min'],['Full-body stretch','10 min'],['Shoulder + hip mobility','5 min']]},
+ {n:'Push',note:'Chest, shoulders, triceps. Chair or desk edge works for dips.',ex:[['Push-ups','4 × max-2'],['Pike push-ups','3 × 8–12'],['Chair dips','3 × 10–15'],['Plank','3 × 45s']]},
+ {n:'Legs',note:'No equipment needed. Slow on the way down, that is where the work is.',ex:[['Bodyweight squats','4 × 20'],['Split squats','3 × 12 each'],['Glute bridges','3 × 20'],['Calf raises','3 × 25']]},
+ {n:'Core + mobility',note:'Short and sharp. Good on a heavy academic day.',ex:[['Hollow hold','3 × 30s'],['Leg raises','3 × 15'],['Side plank','3 × 30s each'],['Hip + T-spine mobility','8 min']]},
+ {n:'Pull + push',note:'Row under a sturdy table, or use a towel around a door handle.',ex:[['Table / towel rows','4 × 10–12'],['Superman holds','3 × 30s'],['Push-ups','3 × 12'],['Scapular shrugs','3 × 15']]},
+ {n:'Legs + conditioning',note:'The sweaty one. Keep rest short.',ex:[['Jump squats','3 × 15'],['Walking lunges','3 × 20'],['Burpees','3 × 10'],['Mountain climbers','3 × 40s']]},
+ {n:'Long session',note:'Saturday — more time, so use it. Circuit or a run, your call.',ex:[['Full-body circuit','4 rounds'],['Push-ups + squats + rows','12 each'],['Plank + hollow','45s each'],['Or: easy run','25–35 min']]}
+];
+
+/* ================= state ================= */
+let sel=0;                     /* the phase being BROWSED in the plan view */
+let S={c:{},logs:{},water:{},wk:{},blocks:{},audio:{},rt:'19:15',ron:false,wron:false,mode:'steady',
+  timer:{len:25,endsAt:0,remain:25*60000,running:false},
+  set:{wake:'05:15',leave:'06:00',arrive:'07:30',cs:'08:30',ce:'16:30',home:'18:00',sleep:'23:00',wkmin:35,wgoal:3}};
+const MULT={steady:1,sprint:1.4};
+const PIN=new Set(DATES.map(d=>d.m));
+const key=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const today=()=>key(new Date());
+const DOW=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+/* ---- where we are in the 36 months ----
+   Month 1 is Sep 2026. Today's schedule follows the calendar, not
+   whatever phase you happen to be browsing in the plan view. */
+const PLAN_Y=2026, PLAN_M=8;   /* Sep = month index 8 */
+function monthIndex(d){d=d||new Date();return (d.getFullYear()-PLAN_Y)*12+(d.getMonth()-PLAN_M)}
+function curPhaseIdx(){return Math.max(0,Math.min(PHASES.length-1,Math.floor(monthIndex()/6)))}
+function beforeStart(){return monthIndex()<0}
+function daysToStart(){return Math.ceil((new Date(PLAN_Y,PLAN_M,1)-new Date())/86400000)}
+/* Today always runs off the real phase. */
+const P0=()=>PHASES[curPhaseIdx()];
+
+async function load(){try{const r=await STORE.get('roadmap-v4');if(r&&r.value){const p=JSON.parse(r.value);S=Object.assign(S,p);S.set=Object.assign({},S.set,p.set||{});S.timer=Object.assign({len:25,endsAt:0,remain:25*60000,running:false},p.timer||{})}}catch(e){}}
+let sT;function save(){clearTimeout(sT);sT=setTimeout(async()=>{try{await STORE.set('roadmap-v4',JSON.stringify(S))}catch(e){}},250)}
+function saveNow(){clearTimeout(sT);try{STORE.set('roadmap-v4',JSON.stringify(S))}catch(e){}}
+
+/* ================= time helpers ================= */
+const t2m=t=>{const[a,b]=String(t).split(':').map(Number);return a*60+b};
+const m2t=m=>{m=((m%1440)+1440)%1440;const h=Math.floor(m/60),x=m%60,ap=h<12?'AM':'PM',hh=h%12===0?12:h%12;return `${hh}:${String(x).padStart(2,'0')} ${ap}`};
+const nowM=()=>{const d=new Date();return d.getHours()*60+d.getMinutes()};
+
+/* ================= schedule ================= */
+function dayShape(){
+  const st=S.set;
+  // evening desk time = home→lights-out, minus 30 reset, 15 break, 15 wind-down
+  const ev=Math.max(0,t2m(st.sleep)-t2m(st.home)-60);
+  const gap=t2m(st.cs)-t2m(st.arrive);
+  const camp=gap>=30?Math.min(gap-5,60):0;      // under 30 min is not a study slot
+  const morn=t2m(st.leave)-t2m(st.wake);
+  const wkAM=Math.max(0,Math.min(+st.wkmin||0,morn-25)); // 25 min reserved to wash and eat
+  return {ev,camp,gap,morn,wkAM,wdCap:ev+camp};
+}
+function targets(){
+  const wb=Math.round(P0().hours*MULT[S.mode]*60*6); // the phase target is a WEEKLY budget over six days
+  const s=dayShape();
+  const wd=Math.min(s.wdCap,Math.round(wb/6));       // weekdays take what the day actually holds
+  const sat=Math.max(0,Math.min(360,wb-wd*5));       // Saturday absorbs the rest, capped at 6h
+  return {wb,wd,sat,short:Math.max(0,wb-wd*5-sat)};
+}
+function baseTarget(dow){const t=targets();return dow===0?0:dow===6?t.sat:t.wd}
+function carryMinutes(){
+  // deficit from earlier this week, spread over remaining Mon–Sat, capped
+  const n=new Date(),dow=n.getDay();
+  if(dow===0)return 0;
+  let deficit=0;
+  for(let i=1;i<dow;i++){
+    const d=new Date(n);d.setDate(n.getDate()-(dow-i));
+    const t=baseTarget(i),done=(S.logs[key(d)]||0);
+    if(t>0)deficit+=Math.max(0,t-done);
+  }
+  const remaining=Math.max(1,6-dow+1);
+  return Math.min(60,Math.round(deficit/remaining));
+}
+function todayTarget(){const d=new Date().getDay();const b=baseTarget(d);return b===0?0:b+carryMinutes()}
+
+function buildBlocks(){
+  const st=S.set,d=new Date().getDay(),out=[],P=P0(),s=dayShape();
+  const push=(a,b,title,note,type,k)=>{if(b>a)out.push({a,b,title,note,type,k})};
+
+  if(d===0){ // Sunday
+    push(t2m('08:00'),t2m('09:00'),'Sleep in, properly','The one morning you do not set an alarm.','life',A2);
+    push(t2m('10:00'),t2m('10:40'),'Rest-day movement',WORKOUTS[0].note,'body','#3A7286');
+    push(t2m('11:00'),t2m('12:00'),'Weekly review','Tick off the phase list, check the 14-day stripe, decide what gets dropped this week.','life',C);
+    push(t2m('17:00'),t2m('18:00'),'Set up the week','Prep tomorrow’s materials. Not study — logistics.','life',C2);
+    return out;
+  }
+
+  if(d!==6){
+    const wake=t2m(st.wake),leave=t2m(st.leave),want=+st.wkmin||0;
+    if(s.wkAM>=10){
+      push(wake+5,wake+5+s.wkAM,'Morning workout — '+WORKOUTS[d].n,
+        s.wkAM<want?`Trimmed to ${s.wkAM} min — that is all a ${s.morn}-minute morning holds once washing and eating are counted. Wake ${want-s.wkAM} min earlier to get the full ${want}.`:WORKOUTS[d].note,
+        'body','#3A7286');
+      push(wake+5+s.wkAM,leave,'Wash, eat, out the door','First glass of water goes here.','life','#B9C6CB');
+    }else{
+      push(wake,leave,'Wash, eat, out the door',
+        `Only ${s.morn} min between waking and leaving — not enough for a workout and getting ready. Wake earlier, or move the session to Saturday.`,'life','#B9C6CB');
+    }
+    push(leave,t2m(st.arrive),'Bus — audio or nothing',
+      `${t2m(st.arrive)-leave} minutes on a bus. Headphones or sleep; nothing is owed in this window.`,'audio','#7BA3AE');
+    if(s.camp>0)push(t2m(st.arrive),t2m(st.arrive)+s.camp,'Campus buffer','Quiet slot before class starts.','slot-campus',A);
+    else push(t2m(st.arrive),t2m(st.cs),'Reach campus, settle in',
+      `${s.gap} minutes. Not a study slot — just get to class.`,'life','#B9C6CB');
+    push(t2m(st.cs),t2m(st.ce),'Classes and labs','Protected. This is the CGPA that gates MEXT and placements.','academics','#16191B');
+    push(t2m(st.ce),t2m(st.home),'Bus home — audio or nothing',
+      `${t2m(st.home)-t2m(st.ce)} minutes. After a full day of class, switching off here is usually the better call.`,'audio','#7BA3AE');
+
+    const reset=t2m(st.home),work=reset+30,endWork=t2m(st.sleep)-15;
+    push(reset,work,'Shower, eat, reset','Thirty minutes. Do not let this eat the block behind it.','life','#B9C6CB');
+    const cap1=Math.min(120,endWork-work);
+    push(work,work+cap1,'Deep block','Your best window. Phone in another room.','slot-eve1',P.color);
+    const after=work+cap1;
+    if(endWork-after>25){
+      push(after,after+15,'Break','Stand up, walk, water.','life','#B9C6CB');
+      push(after+15,endWork,'Late block','Lighter than the first — review, problems, Japanese.','slot-eve2',P.color);
+    }
+    push(endWork,t2m(st.sleep),'Wind down','Lay out tomorrow. Screens off. Lights out at '+m2t(t2m(st.sleep))+'.','life','#B9C6CB');
+  }else{
+    const want=+st.wkmin||0;
+    push(t2m('07:30'),t2m('08:15'),'Slow start','No alarm panic. Eat properly.','life','#B9C6CB');
+    push(t2m('08:15'),t2m('08:15')+want+20,'Long workout — '+WORKOUTS[6].n,WORKOUTS[6].note,'body','#3A7286');
+    push(t2m('09:30'),t2m('12:30'),'Long build block','Saturday carries what the weekdays cannot. Deep work, no context switching.','slot-sat1',P.color);
+    push(t2m('12:30'),t2m('13:30'),'Break and food','','life','#B9C6CB');
+    push(t2m('13:30'),t2m('16:00'),'Second build block','Ship something before you leave the desk.','slot-sat2',P.color);
+    push(t2m('16:00'),t2m('16:30'),'Break','','life','#B9C6CB');
+    push(t2m('16:30'),t2m('18:00'),'Third block / freelance','Client work, or whatever slipped this week.','slot-sat3','#B5731C');
+    push(t2m('22:30'),t2m('23:00'),'Wind down','','life','#B9C6CB');
+  }
+  return out;
+}
+
+// allocate the day's study target across study slots, in preference order
+let DEFICIT=0;
+// the next unfinished items from the phase checklists, in order
+function taskQueue(){
+  const p=P0(),q=[];
+  p.learn.forEach((t,i)=>{if(!S.c[`${p.id}l-${i}`])q.push({id:`${p.id}l-${i}`,text:t,kind:'Learn'})});
+  p.ship.forEach((t,i)=>{if(!S.c[`${p.id}s-${i}`])q.push({id:`${p.id}s-${i}`,text:t,kind:'Deliverable'})});
+  return q;
+}
+function allocate(blocks){
+  let left=todayTarget();
+  // evening first, then late, then the campus hour — the bus is not in this list
+  const order=['slot-eve1','slot-eve2','slot-campus','slot-sat1','slot-sat2','slot-sat3'];
+  const P=P0();let ci=0,qi=0;
+  const cats=P.split.slice().sort((a,b)=>b[1]-a[1]);
+  const q=taskQueue();
+  blocks.forEach(b=>{b.assigned=0;b.task=null});
+  order.forEach(type=>{
+    blocks.filter(b=>b.type===type).forEach(b=>{
+      if(left<=0)return;
+      const give=Math.min(b.b-b.a,left);
+      b.assigned=give;left-=give;
+      const c=cats[ci%cats.length];b.cat=c[0];b.k=c[2];ci++;
+      b.task=q[qi]||null;qi++;
+    });
+  });
+  DEFICIT=Math.max(0,left);
+  return blocks.filter(b=>!(b.type.startsWith('slot')&&b.assigned===0));
+}
+/* One computation per paint, shared by the schedule and the header.
+   Block ids key off type and start minute, not array position, so
+   editing your times does not shuffle this morning's ticks onto
+   different rows. */
+function dayBlocks(){return allocate(buildBlocks())}
+const blockId=b=>`${today()}|${b.type}|${b.a}`;
+
+function renderSched(){
+  const blocks=dayBlocks(),el=document.getElementById('sched');
+  const n=nowM(),P=P0();el.innerHTML='';
+  blocks.forEach(b=>{
+    const id=blockId(b), done=!!S.blocks[id];
+    const dur=b.assigned||b.b-b.a;
+    const isNow=n>=b.a&&n<b.b;
+    const isSlot=b.type.startsWith('slot');
+    const title=isSlot?(b.task?b.task.text:'Open block — your call'):b.title;
+    const meta=isSlot?`${b.title} · ${b.cat||'study'}${b.task?' · '+b.task.kind:''}`:'';
+    const queue=b.type==='audio'
+      ?`<ul style="margin:9px 0 0;padding-left:16px;font-size:13.5px;color:var(--ink-soft)">${P.audio.map(a=>`<li style="margin:2px 0">${a}</li>`).join('')}</ul>`:'';
+    const row=document.createElement('div');
+    row.className='blk'+(done?' done':'')+(isNow?' now':'');
+    row.style.setProperty('--k',b.k);
+    row.innerHTML=`<span class="t"><b>${m2t(b.a)}</b>${m2t(isSlot?b.a+dur:b.b)}</span>
+      <div class="bd">${meta?`<div class="dur" style="margin-bottom:4px">${meta}</div>`:''}<h4>${title}</h4>
+        ${b.note?`<p>${b.note}</p>`:''}${queue}
+        <div class="acts"><span class="dur">${dur} min${b.type==='academics'?' · protected':b.type==='audio'?' · not counted':''}</span>
+        ${isSlot?`<button class="btn ghost sm" data-start="${dur}">Start timer</button>`:''}
+        ${isSlot&&b.task?`<button class="btn ghost sm" data-tick="${b.task.id}">Item finished</button>`:''}
+        ${b.type==='audio'?`<button class="btn ghost sm" data-listen="${dur}">Log listen</button>`:''}</div></div>
+      <input type="checkbox" ${done?'checked':''} aria-label="Block done">`;
+    const tk=row.querySelector('[data-tick]');
+    if(tk)tk.onclick=()=>{S.c[tk.dataset.tick]=true;save();renderAll();
+      toast('Ticked off the plan','Tomorrow’s blocks pick up the next item automatically.')};
+    const lb=row.querySelector('[data-listen]');
+    if(lb)lb.onclick=()=>{S.audio[today()]=(S.audio[today()]||0)+ +lb.dataset.listen;save();paintAudioLine();
+      toast('Listening logged','Tracked separately — it supplements the deep blocks, it does not replace them.')};
+    row.querySelector('input').onchange=e=>{S.blocks[id]=e.target.checked;save();renderSched();paintDayHead()};
+    const sb=row.querySelector('[data-start]');
+    if(sb)sb.onclick=()=>{const mins=Math.min(90,+sb.dataset.start);
+      S.timer.len=mins;setLen(mins*60000);startStop();
+      document.querySelectorAll('[data-len]').forEach(x=>x.setAttribute('aria-pressed',String(+x.dataset.len===mins)));
+      toast('Timer running',`${mins} minutes. Anything longer, run it twice.`)};
+    el.appendChild(row);
+  });
+  const cm=carryMinutes(),T=targets(),dw=new Date().getDay();
+  let line = dw===0
+    ? 'Sunday. No study target — the rest day is part of the plan, not a gap in it.'
+    : `Week budget ${(T.wb/60).toFixed(1)}h · ${(T.wd/60).toFixed(1)}h × 5 weekdays + ${(T.sat/60).toFixed(1)}h Saturday. Weekdays take what your evening actually holds; Saturday carries the rest.`;
+  if(cm>0)line+=` +${cm} min carried in from earlier this week.`;
+  if(T.short>0)line+=` ${(T.short/60).toFixed(1)}h a week does not fit anywhere — drop the target or find time elsewhere.`;
+  document.getElementById('carryline').textContent=line;
+  paintAudioLine();
+}
+function paintAudioLine(){
+  const m=S.audio[today()]||0;
+  const el=document.getElementById('audioline');
+  if(el)el.textContent=m>0?`${(m/60).toFixed(1)}h listened on the bus today — tracked, but deliberately not counted toward the study target.`:'';
+}
+
+/* ================= day head ================= */
+function paintDayHead(){
+  const d=new Date(),dow=d.getDay(),P=P0(),mi=monthIndex();
+  const mLabel=beforeStart()?'Pre-season':`M${String(mi+1).padStart(2,'0')}`;
+  document.getElementById('dstamp').textContent=`${DOW[dow]} · ${d.toLocaleDateString('en-IN',{day:'numeric',month:'long'})} · ${P.n} · ${mLabel}`;
+  document.getElementById('dtitle').textContent=dow===0?'Rest day.':P.title+'.';
+  const q=taskQueue(),lrn=q.filter(x=>x.kind==='Learn').length,dlv=q.length-lrn;
+  const nextPerson=P.people.find((_,i)=>!S.c[`${P.id}r-${i}`]);
+  const pre=beforeStart()?`<span class="mono" style="font-size:12.5px;color:var(--ink-soft)">Month 01 starts in ${daysToStart()} days. Everything below already works — start early and you are ahead.</span><br>`:'';
+  document.getElementById('dthesis').innerHTML = dow===0
+    ? 'You do not build anything today. The plan needs this to survive three years.'
+    : pre + (q.length===0
+      ? `${P.title} is clear — every item ticked. Move to the next phase, or spend the blocks on whatever is actually in front of you.`
+      : `${P.thesis}<br><span class="mono" style="font-size:12.5px">${lrn} learn item${lrn===1?'':'s'} and ${dlv} deliverable${dlv===1?'':'s'} left in ${P.n}.</span>${nextPerson?`<br><span class="mono" style="font-size:12.5px;color:var(--ink-soft)">People move this phase: ${nextPerson}</span>`:''}`);
+  const blocks=dayBlocks();
+  let t=0,dn=0;blocks.forEach(b=>{t++;if(S.blocks[blockId(b)])dn++});
+  document.getElementById('dpct').textContent=t?Math.round(dn/t*100)+'%':'—';
+  document.getElementById('dsum').innerHTML=`${dn} / ${t} blocks<br><span class="mono">${(todayTarget()/60).toFixed(1)}h study target</span>`;
+  // sleep guard
+  const sl=(t2m(S.set.wake)+1440-t2m(S.set.sleep))%1440;
+  const commute=(t2m(S.set.arrive)-t2m(S.set.leave))+(t2m(S.set.home)-t2m(S.set.ce));
+  const w=document.getElementById('sleepwarn');let html='';
+  if(sl<390&&dow!==0)html+=`<div class="warn"><b>You're on ${Math.floor(sl/60)}h ${sl%60}m of sleep</b>
+    <p>Evening and late night are your best focus windows, but you're out the door at ${m2t(t2m(S.set.leave))}. The late block stays short on purpose — under six hours a night for three years costs more in retention than the extra hour buys. Saturday is the lever here, not a later bedtime.</p></div>`;
+  if(commute>=240&&dow>0&&dow<6)html+=`<div class="warn"><b>${(commute/60).toFixed(1)}h on buses today — about ${((commute*5)/60).toFixed(0)}h a week</b>
+    <p>That's more hours than this entire study plan asks for, and none of it can be used for real work. Nothing in this app fixes it. If a PG or hostel closer to campus ever becomes possible, it returns more time than any productivity change you could make — worth pricing out at least once.</p></div>`;
+  w.innerHTML=html;
+}
+
+/* ================= timer =================
+   The countdown is an end timestamp, not a tick count, and it is
+   persisted — so backgrounding the app, locking the phone or the
+   system killing the WebView does not lose the session. */
+let tick=null;
+const fmt=ms=>{const s=Math.max(0,Math.round(ms/1000));return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')};
+function setLen(ms){S.timer.len=ms/60000;S.timer.remain=ms;S.timer.endsAt=0;S.timer.running=false;save();paintClock();
+  document.getElementById('go').textContent='Start';keepAwake(false)}
+function paintClock(){const e=document.getElementById('clock');
+  e.textContent=fmt(S.timer.running?S.timer.endsAt-Date.now():S.timer.remain);
+  e.classList.toggle('run',S.timer.running)}
+function keepAwake(on){if(NAT&&NAT.keepAwake){try{NAT.keepAwake(!!on)}catch(e){}}}
+function startStop(){
+  if(S.timer.running){S.timer.remain=Math.max(0,S.timer.endsAt-Date.now());S.timer.running=false;clearInterval(tick);
+    document.getElementById('go').textContent='Resume';keepAwake(false)}
+  else{S.timer.endsAt=Date.now()+S.timer.remain;S.timer.running=true;document.getElementById('go').textContent='Pause';
+    keepAwake(true);runTick()}
+  saveNow();paintClock();
+}
+function runTick(){clearInterval(tick);tick=setInterval(()=>{S.timer.endsAt-Date.now()<=0?finish():paintClock()},250)}
+function finish(){clearInterval(tick);const mins=S.timer.len;
+  S.timer.running=false;S.timer.remain=mins*60000;S.timer.endsAt=0;
+  document.getElementById('go').textContent='Start';paintClock();keepAwake(false);
+  logMinutes(mins);chime();notify('Session done','Logged. Stand up, drink water, come back.')}
+function resetTimer(){clearInterval(tick);S.timer.running=false;S.timer.remain=S.timer.len*60000;S.timer.endsAt=0;
+  document.getElementById('go').textContent='Start';keepAwake(false);saveNow();paintClock()}
+/* Coming back to the app: settle whatever happened while we were gone. */
+function resumeTimer(){
+  if(!S.timer.running){paintClock();return}
+  if(S.timer.endsAt-Date.now()<=0){finish();return}
+  document.getElementById('go').textContent='Pause';runTick();paintClock();
+}
+function logMinutes(m){S.logs[today()]=(S.logs[today()]||0)+m;saveNow();paintDay();paintDayHead()}
+function chime(){try{const a=new(window.AudioContext||window.webkitAudioContext)();[880,1320].forEach((f,i)=>{const o=a.createOscillator(),g=a.createGain();o.connect(g);g.connect(a.destination);o.frequency.value=f;o.type='sine';const t=a.currentTime+i*.18;g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.25,t+.02);g.gain.exponentialRampToValueAtTime(.001,t+.5);o.start(t);o.stop(t+.5)})}catch(e){}}
+function toast(t,b){const e=document.getElementById('toast');e.innerHTML=`<b>${t}</b>${b}`;e.classList.add('show');clearTimeout(e._x);e._x=setTimeout(()=>e.classList.remove('show'),6000)}
+function notify(t,b){
+  if(NAT&&NAT.notifyNow){try{NAT.notifyNow(t,b);toast(t,b);return}catch(e){}}
+  try{if('Notification' in window&&Notification.permission==='granted'){new Notification(t,{body:b});return}}catch(e){}
+  toast(t,b);
+}
+
+/* ================= water ================= */
+const GLASS=250;
+function paintWater(){
+  const goalL=+S.set.wgoal||3, need=Math.round(goalL*1000/GLASS), had=S.water[today()]||0;
+  document.getElementById('wnum').textContent=(had*GLASS/1000).toFixed(1)+'L';
+  document.getElementById('wsub').textContent=`${had} of ${need} glasses`;
+  document.getElementById('wgoal').textContent=`goal ${goalL.toFixed(1)}L`;
+  const g=document.getElementById('glasses');g.innerHTML='';
+  for(let i=0;i<need;i++){const b=document.createElement('button');b.className='gl'+(i<had?' f':'');
+    b.setAttribute('aria-label',`Glass ${i+1}`);b.onclick=()=>{S.water[today()]=i<had?i:i+1;save();paintWater()};g.appendChild(b)}
+}
+let wT=null;
+function toggleWaterRem(){
+  if(S.wron){S.wron=false;clearInterval(wT);wT=null;
+    if(NAT&&NAT.setWaterReminder){try{NAT.setWaterReminder(false,0,0)}catch(e){}}
+    save();paintWaterStatus();return}
+  S.wron=true;save();
+  if(NAT&&NAT.setWaterReminder){
+    /* Android schedules these itself, so they fire with the app closed. */
+    try{if(NAT.requestNotifPermission)NAT.requestNotifPermission()}catch(e){}
+    try{NAT.setWaterReminder(true,t2m(S.set.wake),t2m(S.set.sleep))}catch(e){}
+  }else{
+    (async()=>{try{if('Notification' in window)await Notification.requestPermission()}catch(e){}})();
+    clearInterval(wT);
+    wT=setInterval(()=>{
+      const m=nowM();if(m<t2m(S.set.wake)||m>t2m(S.set.sleep))return;
+      const had=S.water[today()]||0,goal=Math.round((+S.set.wgoal||3)*1000/GLASS);
+      if(had>=goal)return;
+      notify('Water',`${had} of ${goal} glasses so far. Have one now.`);
+    },3600000);
+  }
+  paintWaterStatus();toast('Water nudges on','Hourly between wake and lights out.');
+}
+function paintWaterStatus(){
+  document.getElementById('wrem').textContent=S.wron?'Stop nudges':'Remind hourly';
+  document.getElementById('wstatus').textContent=!S.wron?'Nudges off.'
+    :NAT?'Hourly nudges on, between wake and lights out. These fire with the app closed.'
+        :'Hourly nudges on, between wake and lights out — only while this page stays open.';
+}
+
+/* ================= workout ================= */
+function paintWorkout(){
+  const d=new Date().getDay(),w=WORKOUTS[d===6?6:d];
+  document.getElementById('wkname').textContent=w.n;
+  document.getElementById('wknote').textContent=w.note;
+  document.getElementById('wklist').innerHTML=w.ex.map(e=>`<div class="ex"><span>${e[0]}</span><span>${e[1]}</span></div>`).join('');
+  const done=!!S.wk[today()];
+  document.getElementById('wkdone').textContent=done?'Done ✓':'Mark done';
+}
+
+/* ================= reminder ================= */
+let remT=null;
+async function toggleReminder(){
+  if(S.ron){S.ron=false;clearTimeout(remT);
+    if(NAT&&NAT.setDailyReminder){try{NAT.setDailyReminder(false,0,0)}catch(e){}}
+    save();paintReminder();return}
+  S.rt=document.getElementById('rtime').value||'19:15';
+  const[h,mi]=S.rt.split(':').map(Number);
+  let m='in-page';
+  if(NAT&&NAT.setDailyReminder){
+    try{if(NAT.requestNotifPermission)NAT.requestNotifPermission()}catch(e){}
+    try{NAT.setDailyReminder(true,h,mi);m='native'}catch(e){}
+  }else{
+    try{if('Notification' in window){const p=await Notification.requestPermission();if(p==='granted')m='system'}}catch(e){}
+    schedule();
+  }
+  S.ron=true;S._mode=m;save();paintReminder();toast('Reminder set',`Next nudge at ${S.rt}.`);
+}
+function schedule(){clearTimeout(remT);if(!S.ron||NAT)return;
+  const[h,m]=S.rt.split(':').map(Number),n=new Date(),t=new Date();t.setHours(h,m,0,0);if(t<=n)t.setDate(t.getDate()+1);
+  remT=setTimeout(()=>{const done=(S.logs[today()]||0),tgt=todayTarget();
+    notify('Deep block',tgt===0?'Rest day — nothing owed.':done>=tgt?`Already ${(done/60).toFixed(1)}h in. Anything more is profit.`:`${Math.round(tgt-done)} min left on today's target.`);
+    chime();schedule()},t-n);
+}
+function paintReminder(){
+  document.getElementById('rtoggle').textContent=S.ron?'Turn off':'Turn on';
+  const el=document.getElementById('rstatus');
+  if(!S.ron){el.textContent='Off.';return}
+  if(S._mode==='native'){
+    const ok=(NAT&&NAT.hasNotifPermission)?(()=>{try{return NAT.hasNotifPermission()}catch(e){return true}})():true;
+    el.textContent=ok?`On — Android will nudge you at ${S.rt} whether or not the app is open.`
+                     :`On, but Android has notifications blocked for this app. Allow them in Settings → Apps → 36 Months → Notifications.`;
+    return;
+  }
+  el.textContent=S._mode==='system'
+    ?`On — system notification at ${S.rt} daily, while open or installed.`
+    :`On — in-app nudge at ${S.rt}. Your browser blocked system notifications; install to the home screen for lock-screen alerts.`;
+}
+
+/* ================= backup ================= */
+function backupBlob(){return JSON.stringify({app:'36-months',v:4,exported:new Date().toISOString(),data:S},null,1)}
+function bstat(t){document.getElementById('bstatus').textContent=t}
+function doExport(){
+  const json=backupBlob(),name=`36months-backup-${today()}.json`;
+  if(NAT&&NAT.exportBackup){try{const p=NAT.exportBackup(name,json);bstat(p||'Saved.');return}catch(e){}}
+  try{
+    const u=URL.createObjectURL(new Blob([json],{type:'application/json'}));
+    const a=document.createElement('a');a.href=u;a.download=name;document.body.appendChild(a);a.click();
+    a.remove();setTimeout(()=>URL.revokeObjectURL(u),4000);bstat('Downloaded '+name);
+  }catch(e){bstat('Could not download here — use "Copy to clipboard" instead.')}
+}
+async function doCopy(){
+  const json=backupBlob();
+  try{await navigator.clipboard.writeText(json);bstat('Copied. Paste it somewhere safe.');return}catch(e){}
+  const ta=document.getElementById('bjson');document.getElementById('brestore').style.display='block';
+  ta.value=json;ta.select();bstat('Clipboard is blocked here — the backup is in the box, copy it by hand.');
+}
+function doImport(){
+  const raw=document.getElementById('bjson').value.trim();
+  if(!raw){bstat('Nothing pasted.');return}
+  let p;try{p=JSON.parse(raw)}catch(e){bstat('That is not valid JSON.');return}
+  const d=p&&p.data?p.data:p;
+  if(!d||typeof d!=='object'||!('logs' in d)&&!('c' in d)){bstat('That does not look like a 36 Months backup.');return}
+  S=Object.assign(S,d);S.set=Object.assign({wake:'05:15',leave:'06:00',arrive:'07:30',cs:'08:30',ce:'16:30',home:'18:00',sleep:'23:00',wkmin:35,wgoal:3},d.set||{});
+  S.timer=Object.assign({len:25,endsAt:0,remain:25*60000,running:false},d.timer||{});
+  saveNow();syncSettingInputs();renderAll();resumeTimer();bstat('Restored.');
+  toast('Backup restored','Everything from that file is now live on this device.');
+}
+
+/* ================= plan view ================= */
+function buildSpine(){const el=document.getElementById('spine');el.innerHTML='';
+  const yr=[['Year 1','2026 – 27'],['Year 2','2027 – 28'],['Year 3','2028 – 29']];
+  const mi=monthIndex();
+  for(let y=0;y<3;y++){const w=document.createElement('div');w.className='year';
+    w.innerHTML=`<div class="year-hd"><span class="eyebrow">${yr[y][0]}</span><span class="mono" style="font-size:10px;color:var(--ink-soft)">${yr[y][1]}</span></div>`;
+    const g=document.createElement('div');g.className='grid';
+    for(let m=0;m<12;m++){const idx=y*12+m,p=Math.floor(idx/6),b=document.createElement('button');
+      b.className='cell'+(idx===mi?' now':'')+(PIN.has(idx+1)?' pin':'');
+      b.style.setProperty('--era',PHASES[p].color);b.setAttribute('aria-pressed',p===sel?'true':'false');
+      b.setAttribute('aria-label',`Month ${idx+1}, ${PHASES[p].title}`);
+      const h=PHASES[p].hours*MULT[S.mode];
+      b.innerHTML=`<span class="fill" style="height:${28+((h-3)/3.3)*72}%"></span>`;
+      b.onclick=()=>{sel=p;buildSpine();buildPanel()};g.appendChild(b)}
+    w.appendChild(g);el.appendChild(w)}}
+const list=(a,k)=>a.map((t,i)=>`<li><label><input type="checkbox" data-id="${k}-${i}" ${S.c[k+'-'+i]?'checked':''}><span>${t}</span></label></li>`).join('');
+const cnt=(a,k)=>`${a.filter((_,i)=>S.c[k+'-'+i]).length}/${a.length}`;
+function buildPanel(){const p=PHASES[sel],h=p.hours*MULT[S.mode],tot=p.split.reduce((a,b)=>a+b[1],0),el=document.getElementById('panel');
+  el.style.setProperty('--era',p.color);
+  const isNow=sel===curPhaseIdx();
+  el.innerHTML=`<div class="panel-hd"><span class="tag">${p.n}</span><h2>${p.title}</h2>
+   <span class="mono" style="font-size:11.5px;color:var(--ink-soft);margin-left:auto">${p.span}${isNow?' · you are here':''}</span></div>
+   <p class="lede" style="margin-top:14px">${p.thesis}</p><div class="cols"><div>
+   <div class="card hours"><div class="eyebrow">Self-study hours per day</div><div class="big">${h.toFixed(1)}<span>h</span></div>
+   <div class="bar">${p.split.map(s=>`<i style="width:${s[1]/tot*100}%;background:${s[2]}"></i>`).join('')}</div>
+   <ul class="legend">${p.split.map(s=>`<li><span class="sw" style="background:${s[2]}"></span>${s[0]}<span class="h">${(s[1]*MULT[S.mode]).toFixed(2)}h</span></li>`).join('')}</ul>
+   <div class="foot">On top of coursework and commute. <b>Today tab places these into real slots</b> around your classes${isNow?'.':', using whichever phase the calendar is actually in.'}</div></div>
+   <div class="card"><div class="eyebrow">Languages</div><div class="chips" style="margin-top:10px">${p.primary.map(l=>`<span class="chip">${l}</span>`).join('')}${p.secondary.map(l=>`<span class="chip sec">${l}</span>`).join('')}</div></div>
+   <div class="card"><div class="eyebrow">Compute &amp; cost</div><p style="margin:10px 0 0;font-size:14px;color:var(--ink-soft)">${p.compute}</p></div>
+   </div><div>
+   <div class="block"><h3>Learn <span class="count">${cnt(p.learn,p.id+'l')}</span></h3><ul class="checks">${list(p.learn,p.id+'l')}</ul></div>
+   <div class="block"><h3>Ship by end of phase <span class="count">${cnt(p.ship,p.id+'s')}</span></h3><ul class="checks">${list(p.ship,p.id+'s')}</ul></div>
+   <div class="block"><h3>People &amp; leverage <span class="count">${cnt(p.people,p.id+'r')}</span></h3><ul class="checks">${list(p.people,p.id+'r')}</ul></div>
+   </div></div>`;
+  el.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.onchange=()=>{S.c[cb.dataset.id]=cb.checked;save();
+    buildPanel();buildProgress();renderSched();paintDayHead()});
+}
+function buildStatic(){
+  document.getElementById('langs').innerHTML=LANGS.map(l=>`<div class="lang-row" style="--c:${l.c}"><span class="lang-name">${l.name}</span><div class="track">${l.lv.map(v=>`<i data-i="${v}"></i>`).join('')}</div></div>`).join('');
+  document.getElementById('dates').innerHTML=DATES.map(d=>`<div class="date-row" style="--c:${d.c}"><span class="d">${d.d}</span><span class="dot"></span><span class="t">${d.t}<em>${d.s}</em></span></div>`).join('');
+  document.getElementById('outs').innerHTML=OUTS.map(o=>`<div class="out" style="--c:${o.c}"><div class="when">${o.when}</div><h3>${o.h}</h3><div class="pay">${o.pay}</div><div class="sub">${o.sub}</div><p>${o.p}</p><ul class="req">${o.req.map(r=>`<li>${r}</li>`).join('')}</ul></div>`).join('');
+  document.getElementById('guards').innerHTML=GUARDS.map(g=>`<div class="g" style="--c:${g.c}"><h3>${g.h}</h3><p>${g.p}</p><ul>${g.ul.map(x=>`<li>${x}</li>`).join('')}</ul></div>`).join('');
+  document.getElementById('rules').innerHTML=RULES.map(r=>`<div class="rule"><div class="n">${r[0]}</div><p>${r[1]}</p></div>`).join('');
+}
+function buildProgress(){let t=0,d=0;
+  PHASES.forEach(p=>['l','s','r'].forEach(k=>{const a=k==='l'?p.learn:k==='s'?p.ship:p.people;
+    a.forEach((_,i)=>{t++;if(S.c[`${p.id}${k}-${i}`])d++})}));
+  document.getElementById('pct').textContent=Math.round(d/t*100)+'%';
+  document.getElementById('done').textContent=`${d} / ${t}`;}
+
+function paintDay(){
+  const tgt=todayTarget()/60,h=(S.logs[today()]||0)/60;
+  document.getElementById('meter').style.width=tgt?Math.min(100,h/tgt*100)+'%':'100%';
+  document.getElementById('logged').textContent=`${h.toFixed(1)}h logged`;
+  document.getElementById('target').textContent=tgt?`target ${tgt.toFixed(1)}h`:'rest day';
+  const st=document.getElementById('stripe');st.innerHTML='';let tot=0;
+  for(let i=13;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);const v=(S.logs[key(d)]||0)/60;tot+=v;
+    const el=document.createElement('i');el.className=(v>0?'on':'')+(i===0?' today':'');
+    if(v>0)el.style.opacity=String(Math.min(1,.35+v/(tgt||3)*.65));
+    el.title=`${key(d)} — ${v.toFixed(1)}h`;st.appendChild(el)}
+  let s=0;for(let i=0;i<400;i++){const d=new Date();d.setDate(d.getDate()-i);
+    if((S.logs[key(d)]||0)>0)s++;else if(i>0)break}
+  document.getElementById('streak').textContent=`${s}-day streak`;
+  document.getElementById('fortnight').textContent=`${tot.toFixed(1)}h in 14 days`;
+}
+function renderAll(){buildSpine();buildPanel();buildProgress();renderSched();paintDayHead();paintDay();paintWater();paintWorkout()}
+
+/* ================= wire ================= */
+document.getElementById('v-today').onclick=()=>swap('today');
+document.getElementById('v-plan').onclick=()=>swap('plan');
+function swap(v){['today','plan'].forEach(x=>{document.getElementById('view-'+x).classList.toggle('on',x===v);
+  document.getElementById('v-'+x).setAttribute('aria-pressed',x===v)});window.scrollTo(0,0)}
+/* Android hardware back: plan → today, then out of the app. */
+window.onAndroidBack=function(){
+  if(document.getElementById('view-plan').classList.contains('on')){swap('today');return true}
+  return false;
+};
+document.querySelectorAll('[data-len]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('[data-len]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
+  setLen(+b.dataset.len*60000)});
+document.getElementById('go').onclick=startStop;
+document.getElementById('reset').onclick=resetTimer;
+document.getElementById('add15').onclick=()=>{logMinutes(15);toast('15 minutes logged','For work you did away from this screen.')};
+document.getElementById('wadd').onclick=()=>{S.water[today()]=(S.water[today()]||0)+1;save();paintWater()};
+document.getElementById('wundo').onclick=()=>{S.water[today()]=Math.max(0,(S.water[today()]||0)-1);save();paintWater()};
+document.getElementById('wrem').onclick=toggleWaterRem;
+document.getElementById('wkdone').onclick=()=>{S.wk[today()]=!S.wk[today()];save();paintWorkout()};
+document.getElementById('rtoggle').onclick=toggleReminder;
+document.getElementById('rtime').onchange=e=>{S.rt=e.target.value;save();
+  if(S.ron){if(NAT&&NAT.setDailyReminder){const[h,mi]=S.rt.split(':').map(Number);try{NAT.setDailyReminder(true,h,mi)}catch(e2){}}else schedule();paintReminder()}};
+document.getElementById('bexport').onclick=doExport;
+document.getElementById('bcopy').onclick=doCopy;
+document.getElementById('bshow').onclick=()=>{const r=document.getElementById('brestore');
+  r.style.display=r.style.display==='none'?'block':'none'};
+document.getElementById('bimport').onclick=doImport;
+document.getElementById('m-steady').onclick=()=>setMode('steady');
+document.getElementById('m-sprint').onclick=()=>setMode('sprint');
+function setMode(m){S.mode=m;save();
+  document.getElementById('m-steady').setAttribute('aria-pressed',String(m==='steady'));
+  document.getElementById('m-sprint').setAttribute('aria-pressed',String(m==='sprint'));
+  document.getElementById('modeHint').textContent=m==='steady'?'Realistic alongside classes, labs and freelance.':'Semester breaks only — never during exam weeks.';
+  renderAll()}
+const SETKEYS=['wake','leave','arrive','cs','ce','home','sleep','wkmin','wgoal'];
+const setId=k=>k==='wkmin'?'s-wk':k==='wgoal'?'s-wg':'s-'+k;
+function syncSettingInputs(){SETKEYS.forEach(k=>{document.getElementById(setId(k)).value=S.set[k]});
+  document.getElementById('rtime').value=S.rt;
+  document.getElementById('m-steady').setAttribute('aria-pressed',String(S.mode==='steady'));
+  document.getElementById('m-sprint').setAttribute('aria-pressed',String(S.mode==='sprint'));
+  document.querySelectorAll('[data-len]').forEach(x=>x.setAttribute('aria-pressed',String(+x.dataset.len===S.timer.len)));}
+SETKEYS.forEach(k=>{const el=document.getElementById(setId(k));
+  el.onchange=()=>{S.set[k]=el.type==='number'?+el.value:el.value;save();renderAll();
+    if(S.wron&&NAT&&NAT.setWaterReminder){try{NAT.setWaterReminder(true,t2m(S.set.wake),t2m(S.set.sleep))}catch(e){}}}});
+
+/* Repaint on the minute, and whenever the app comes back to the front. */
+let lastDay=today();
+setInterval(()=>{
+  if(today()!==lastDay){lastDay=today();renderAll();return}
+  if(document.getElementById('view-today').classList.contains('on'))renderSched();
+},60000);
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState!=='visible')return;
+  if(today()!==lastDay){lastDay=today();renderAll()}
+  resumeTimer();paintReminder();paintDay();
+});
+window.addEventListener('pagehide',saveNow);
+
+(async()=>{await load();
+  syncSettingInputs();
+  buildStatic();sel=curPhaseIdx();renderAll();paintReminder();paintWaterStatus();
+  resumeTimer();
+  if(S.ron&&!NAT)schedule();
+  if(S.wron&&!NAT){S.wron=false;toggleWaterRem();}   // restart the hourly interval after a reload
+  document.getElementById('build').textContent =
+    (NAT&&NAT.appVersion?`36 Months ${(()=>{try{return NAT.appVersion()}catch(e){return ''}})()} · `:'')
+    + (HAS_HOST_STORE?'stored in the artifact runtime':'stored on this device');
+})();
+</script>
+</html>
