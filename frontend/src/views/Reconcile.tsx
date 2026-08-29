@@ -28,6 +28,7 @@ import { Summary } from "@/components/Summary";
 import { Button, Chip, Failure, Loading, Panel, Stat, VerdictChip } from "@/components/primitives";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
+import { FEATURE } from "@/lib/naming";
 
 const HEADING: Record<Verdict, string> = {
   divergent: "Divergent — these will report different numbers",
@@ -42,11 +43,11 @@ export function Reconcile({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
   const [showConsistent, setShowConsistent] = useState(false);
 
   if (error?.status === 501 && SNAPSHOT_MODE)
-    return <SnapshotGap title='Cross-platform reconciliation' why='Reconciliation reads a live warehouse alongside the model, so it cannot be captured into a static page.' />;
+    return <SnapshotGap title={FEATURE.reconcile.heading} why='Reconciliation reads a live warehouse alongside the model, so it cannot be captured into a static page.' />;
   if (error?.status === 501)
     return (
       <NotConfigured
-        title="Cross-platform reconciliation"
+        title={FEATURE.reconcile.heading}
         answers="Whether the numbers defined in Power BI and the ones defined in the warehouse actually agree — metric by metric, not model-wide."
         needs="a warehouse to read the other definitions from"
         flag="--warehouse"
@@ -60,7 +61,7 @@ export function Reconcile({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
       <Failure
         message={error.message}
         status={error.status}
-        what="the reconciliation"
+        what={FEATURE.reconcile.subject}
         onRetry={reload}
         retrying={retrying}
       />
@@ -73,7 +74,7 @@ export function Reconcile({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
     <div className="flex flex-col gap-4 p-4">
       <header>
         <h1 className="font-serif text-2xl leading-tight font-semibold">
-          Cross-platform reconciliation
+          {FEATURE.reconcile.heading}
         </h1>
         <p className="mt-1 font-mono text-xs text-faint">
           {data.model} against {data.warehouse}

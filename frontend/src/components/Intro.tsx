@@ -20,6 +20,7 @@
 import { useEffect, useRef } from "react";
 import type { Overview } from "@/lib/api";
 import { Button } from "@/components/primitives";
+import { FEATURE } from "@/lib/naming";
 
 export function Intro({
   overview,
@@ -56,11 +57,15 @@ export function Intro({
       "The BRD and FRD, derived from the model rather than typed. Each statement carries the objects it came from.",
     ],
     [
-      "Drift · Reconcile",
+      `${FEATURE.dataset.tab}`,
+      "Every measure at once, with the SQL that computes the same number beside the DAX that defines it.",
+    ],
+    [
+      `${FEATURE.drift.tab} · ${FEATURE.reconcile.tab}`,
       "What moved between two versions of a model, and whether the warehouse computes the same numbers Power BI does.",
     ],
     [
-      "Review",
+      `${FEATURE.review.tab}`,
       "Everything the tool was not confident enough to assert on its own. It is meant to be short, and it is meant to be read.",
     ],
     [

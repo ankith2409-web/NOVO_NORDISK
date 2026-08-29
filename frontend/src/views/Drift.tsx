@@ -19,6 +19,7 @@ import { Summary } from "@/components/Summary";
 import { cx } from "@/lib/cx";
 import { diffLines, worthMarking, type DiffLine } from "@/lib/linediff";
 import { useLoad } from "@/lib/useLoad";
+import { FEATURE } from "@/lib/naming";
 
 /** Most costly to overlook first. */
 const SEVERITY: Record<DriftChange["kind"], number> = {
@@ -55,7 +56,7 @@ export function Drift({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
   if (error?.status === 501)
     return (
       <NotConfigured
-        title="Drift"
+        title={FEATURE.drift.heading}
         answers="Which objects moved between two versions of this model, and which requirements were written against the ones that moved."
         needs="a second version of this model to compare against"
         flag="--compare-to"
@@ -90,7 +91,9 @@ export function Drift({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
   return (
     <div className="flex flex-col gap-4 p-4">
       <header>
-        <h1 className="font-serif text-2xl leading-tight font-semibold">Drift</h1>
+        <h1 className="font-serif text-2xl leading-tight font-semibold">
+          {FEATURE.drift.heading}
+        </h1>
         <p className="mt-1 font-mono text-xs text-faint">
           {data.before} → {data.after}
         </p>

@@ -25,6 +25,7 @@ import { FAVICON_SVG, Wordmark } from "@/components/Logo";
 import { Overview } from "@/views/Overview";
 import { Model } from "@/views/Model";
 import { Dataset } from "@/views/Dataset";
+import { FEATURE } from "@/lib/naming";
 import { Requirements } from "@/views/Requirements";
 import { Drift } from "@/views/Drift";
 import { Reconcile } from "@/views/Reconcile";
@@ -46,11 +47,11 @@ const VIEWS: { id: ViewId; label: string; needs?: "drift" | "reconcile" }[] = [
   { id: "model", label: "Model" },
   // Sits next to Model because it answers the same question at a different
   // altitude: Model is one object in depth, Dataset is every measure at once.
-  { id: "dataset", label: "Dataset + SQL" },
+  { id: "dataset", label: FEATURE.dataset.tab },
   { id: "requirements", label: "Requirements" },
-  { id: "drift", label: "Drift", needs: "drift" },
-  { id: "reconcile", label: "Reconcile", needs: "reconcile" },
-  { id: "review", label: "Review" },
+  { id: "drift", label: FEATURE.drift.tab, needs: "drift" },
+  { id: "reconcile", label: FEATURE.reconcile.tab, needs: "reconcile" },
+  { id: "review", label: FEATURE.review.tab },
 ];
 
 function useTheme() {
@@ -345,11 +346,16 @@ export default function App() {
                   : "text-muted hover:bg-raised hover:text-ink",
               )}
             >
-              {entry.label}
+              {/* Wrapped and held on one line. As a bare text node this was an
+                  anonymous flex item free to shrink below its own width, so a
+                  two-word label broke across two lines as soon as the "off"
+                  badge appeared beside it -- and the badge was then stranded
+                  on the first line beside half a name. */}
+              <span className="truncate whitespace-nowrap">{entry.label}</span>
               {/* Dimmed rather than hidden or disabled: still reachable, and
                   reading the view is how someone finds out what to pass. */}
               {!configured(entry) && (
-                <span className="font-mono text-[10px] text-faint">off</span>
+                <span className="flex-none font-mono text-[10px] text-faint">off</span>
               )}
             </button>
           ))}

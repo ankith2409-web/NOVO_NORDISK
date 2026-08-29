@@ -27,6 +27,7 @@ import { CopyIcon, DownloadIcon } from "@/components/icons";
 import { SNAPSHOT_MODE } from "@/lib/api";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
+import { FEATURE } from "@/lib/naming";
 
 /** The whole-model figure, which is a single row rather than an absence. */
 const WHOLE_MODEL = "__whole__";
@@ -51,7 +52,7 @@ export function Dataset() {
       <Failure
         message={error.message}
         status={error.status}
-        what="the dataset"
+        what={FEATURE.dataset.subject}
         onRetry={reload}
         retrying={retrying}
       />
@@ -81,7 +82,7 @@ export function Dataset() {
   return (
     <div className="flex flex-col gap-4 p-3">
       <header className="flex flex-col gap-1">
-        <h1 className="font-serif text-2xl font-bold">The whole dataset</h1>
+        <h1 className="font-serif text-2xl font-bold">{FEATURE.dataset.heading}</h1>
         <p className="text-sm text-muted">
           Every measure in {data.model}, as it is written in Power BI and as it would
           be written in SQL.

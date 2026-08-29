@@ -11,6 +11,7 @@ import { api, type Overview as OverviewData } from "@/lib/api";
 import { Chip, Empty, Failure, Loading, Panel, Stat } from "@/components/primitives";
 import { RichText } from "@/components/RichText";
 import { useLoad } from "@/lib/useLoad";
+import { FEATURE } from "@/lib/naming";
 
 export function Overview({ overview }: { overview: OverviewData | null }) {
   // The overview itself is fetched once by the shell and passed in; only the
@@ -117,8 +118,14 @@ export function Overview({ overview }: { overview: OverviewData | null }) {
         </Panel>
       )}
 
+      {/* Lower-cased so it reads as a status line rather than a heading, but
+          named the same as the tabs -- a reader who sees "reconcile" here and
+          "Warehouse check" in the rail has to work out that they are the same
+          thing. */}
       <p className="font-mono text-[11px] text-faint">
-        drift {data.capabilities.drift ? "configured" : "not configured"} · reconcile{" "}
+        {FEATURE.drift.tab.toLowerCase()}{" "}
+        {data.capabilities.drift ? "configured" : "not configured"} ·{" "}
+        {FEATURE.reconcile.tab.toLowerCase()}{" "}
         {data.capabilities.reconcile ? "configured" : "not configured"}
       </p>
     </div>
