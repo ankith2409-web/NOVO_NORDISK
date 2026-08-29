@@ -151,6 +151,48 @@ def _requirements(word: WordDocument, document: Document) -> None:
             value.font.color.rgb = _CONFIDENCE_COLOUR[requirement.confidence]
 
             _implementation(word, requirement)
+            _sql(word, document, requirement)
+
+
+def _sql(word: WordDocument, document: Document, requirement) -> None:
+    """The same measure as SQL, directly beneath its DAX.
+
+    Kept beside the requirement rather than gathered into an appendix, for the
+    same reason as in the Markdown: a reader who has found the requirement has
+    found the query, without a second lookup.
+    """
+    from concordance.generate.document import measure_of
+
+    translation = document.sql.get(measure_of(requirement))
+    if translation is None:
+        return
+
+    query = getattr(translation, "sql", "")
+    if query:
+        caption = word.add_paragraph()
+        run = caption.add_run(f"Equivalent SQL ({document.sql_dialect})")
+        run.bold = True
+        run.font.size = Pt(9.5)
+
+        code = word.add_paragraph()
+        code.paragraph_format.left_indent = Pt(18)
+        # One run per line: Word does not break a run on a newline, so a single
+        # run would render the whole query as one unwrapped line.
+        for number, line in enumerate(query.splitlines()):
+            text = code.add_run(("\n" if number else "") + line)
+            text.font.name = _MONO
+            text.font.size = Pt(8.5)
+        return
+
+    note = word.add_paragraph()
+    reason = (getattr(translation, "reason", "") or "").rstrip(".")
+    run = note.add_run(
+        f"No SQL equivalent: {reason}. This is a property of the expression "
+        "rather than a gap in the translation."
+    )
+    run.italic = True
+    run.font.size = Pt(9.5)
+    run.font.color.rgb = _CONFIDENCE_COLOUR[Confidence.LOW]
 
 
 def _implementation(word: WordDocument, requirement) -> None:

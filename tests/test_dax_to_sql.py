@@ -357,3 +357,100 @@ def test_no_grain_is_a_valid_request(model):
     assert payload["grain"] == []
     served = [r for r in payload["measures"] if r["sql"]]
     assert served and all("GROUP BY" not in r["sql"] for r in served)
+
+
+# -- the FRD carrying its own SQL ---------------------------------------------
+
+def _frd(model, **kwargs):
+    from concordance.generate.document import build
+    from concordance.generate.requirements import Kind
+    from concordance.graph.csg import SemanticGraph
+
+    return build(SemanticGraph(model), Kind.FUNCTIONAL, generated_on="2026-01-01", **kwargs)
+
+
+def test_the_frd_carries_sql_when_a_grain_is_given(model):
+    from concordance.generate.document import to_markdown
+
+    text = to_markdown(_frd(model, sql_grain=SITE))
+    assert text.count("*Equivalent SQL*") == 16
+    assert text.count("*No SQL equivalent:*") == 4
+
+
+def test_the_sql_sits_with_the_requirement_not_in_an_appendix(model):
+    """What makes the document work as retrieval input: a chunk that lands on
+    a requirement carries its DAX and its SQL, rather than a query with nothing
+    saying what it is for."""
+    from concordance.generate.document import to_markdown
+
+    text = to_markdown(_frd(model, sql_grain=SITE))
+    body = text.split("## Traceability matrix")[0]
+    assert body.count("*Equivalent SQL*") == 16, "SQL drifted out of the sections"
+
+    start = body.index("### REQ-F-", body.index("Measure definitions"))
+    block = body[start : body.index("### REQ-F-", start + 10)]
+    assert "*Implementation:*" in block and "*Equivalent SQL*" in block
+
+
+def test_the_grain_is_stated_in_the_front_matter(model):
+    """SQL shown without the grain it was rendered at is a claim the document
+    cannot support: the same measure at another grain is another query."""
+    from concordance.generate.document import to_markdown
+
+    text = to_markdown(_frd(model, sql_grain=SITE))
+    assert "**SQL:** 16 of 20 measures" in text
+    assert "Site[SiteName]" in text.split("## ")[0]
+
+
+def test_a_measure_with_no_sql_says_why_in_the_document(model):
+    from concordance.generate.document import to_markdown
+
+    text = to_markdown(_frd(model, sql_grain=SITE))
+    assert "PREVIOUSMONTH shifts the date filter context rather than reading it." in text
+    assert "property of the expression rather than a gap in the translation" in text
+
+
+def test_the_brd_never_carries_sql(model):
+    """A BRD states what the business needs, not how a query would express it."""
+    from concordance.generate.document import build
+    from concordance.generate.requirements import Kind
+    from concordance.graph.csg import SemanticGraph
+
+    built = build(SemanticGraph(model), Kind.BUSINESS, sql_grain=SITE)
+    assert built.sql == {}
+
+
+def test_omitting_the_grain_leaves_the_document_exactly_as_it_was(model):
+    """The feature is opt-in. Anyone generating an FRD the way they did last
+    week gets the same bytes."""
+    from concordance.generate.document import to_markdown
+
+    assert "Equivalent SQL" not in to_markdown(_frd(model))
+    assert "**SQL:**" not in to_markdown(_frd(model))
+
+
+def test_the_dialect_reaches_the_document(model):
+    from concordance.generate.document import to_markdown
+
+    text = to_markdown(_frd(model, sql_grain=SITE, sql_dialect="snowflake"))
+    assert "rendered as snowflake" in text
+    assert "COUNT_IF" in text
+
+
+def test_word_renders_sql_as_real_line_breaks(model):
+    """Word does not break a run on a newline, so a query added as one run
+    would render as a single unwrapped line running off the page."""
+    docx = pytest.importorskip("docx")
+    from concordance.generate.word import render
+
+    import io
+
+    buffer = io.BytesIO()
+    render(_frd(model, sql_grain=SITE)).save(buffer)
+    buffer.seek(0)
+    paragraphs = docx.Document(buffer).paragraphs
+    captions = [p for p in paragraphs if p.text.startswith("Equivalent SQL")]
+    assert len(captions) == 16
+
+    query = next(p for p in paragraphs if p.text.startswith("SELECT"))
+    assert query._p.xml.count("<w:br/>") >= 3

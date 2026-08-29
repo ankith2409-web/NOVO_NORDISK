@@ -15,8 +15,16 @@
  */
 import { useMemo, useState } from "react";
 import { api, type DatasetMeasure, type DatasetPayload } from "@/lib/api";
-import { Button, Chip, Failure, Loading, Stat } from "@/components/primitives";
-import { CopyIcon } from "@/components/icons";
+import {
+  Button,
+  Chip,
+  controlClasses,
+  Failure,
+  Loading,
+  Stat,
+} from "@/components/primitives";
+import { CopyIcon, DownloadIcon } from "@/components/icons";
+import { SNAPSHOT_MODE } from "@/lib/api";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
 
@@ -138,14 +146,42 @@ export function Dataset() {
           only those with SQL
         </label>
 
-        <Button
-          tone="primary"
-          className="ml-auto"
-          onClick={() => copy(everything, "all")}
-        >
-          <CopyIcon size={11} className="flex-none" />
-          {copied === "all" ? "copied" : "copy every query"}
-        </Button>
+        <div className="ml-auto flex items-center gap-1.5">
+          {/* The FRD is offered here rather than only on Requirements because
+              the grain and dialect are chosen here: the document downloads
+              with exactly the queries on screen, not a different set. */}
+          {!SNAPSHOT_MODE && (
+            <>
+              <span className="font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
+                frd with this sql
+              </span>
+              {(
+                [
+                  { format: "md", label: ".md" },
+                  { format: "docx", label: ".docx" },
+                ] as const
+              ).map(({ format, label }) => (
+                <a
+                  key={format}
+                  href={api.documentUrl("functional", format, {
+                    grain: grains,
+                    dialect,
+                  })}
+                  download
+                  className={controlClasses("quiet")}
+                  title={`Download the FRD as ${label}, with every measure's SQL beneath its DAX`}
+                >
+                  <DownloadIcon size={11} className="flex-none" />
+                  {label}
+                </a>
+              ))}
+            </>
+          )}
+          <Button tone="primary" onClick={() => copy(everything, "all")}>
+            <CopyIcon size={11} className="flex-none" />
+            {copied === "all" ? "copied" : "copy every query"}
+          </Button>
+        </div>
       </div>
 
       {data.grain_options.length === 0 && (

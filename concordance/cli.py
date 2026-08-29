@@ -285,7 +285,13 @@ def cmd_document(args: argparse.Namespace) -> int:
 
     graph = _load(args.source)
     kind = Kind.BUSINESS if args.type == "brd" else Kind.FUNCTIONAL
-    built = doc.build(graph, kind)
+    grain = tuple(args.sql_grain or ())
+    built = doc.build(
+        graph,
+        kind,
+        sql_grain=grain if (grain or args.sql) else None,
+        sql_dialect=args.sql_dialect,
+    )
 
     suffix = "docx" if args.format == "docx" else "md"
     out = Path(args.out) if args.out else (
@@ -1209,6 +1215,27 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--format", choices=["md", "docx"], default="md",
                    help="Markdown, or Word for circulation and sign-off")
     p.add_argument("-o", "--out", help="output path (default data/out/<name>.<type>.md)")
+    p.add_argument(
+        "--sql",
+        action="store_true",
+        help="include each measure's SQL alongside its DAX (FRD only). Without "
+             "--sql-grain the query is the whole-model figure, which is one row",
+    )
+    p.add_argument(
+        "--sql-grain",
+        action="append",
+        metavar="TABLE[COLUMN]",
+        help="group the generated SQL by this column, e.g. --sql-grain "
+             "'Site[SiteName]'. Repeatable. Naming a grain is what gives a "
+             "measure a single SQL translation at all, since GROUP BY is the "
+             "filter context DAX supplies from the visual. Implies --sql",
+    )
+    p.add_argument(
+        "--sql-dialect",
+        default="duckdb",
+        choices=["duckdb", "snowflake", "databricks", "redshift", "athena"],
+        help="which warehouse the generated SQL should be written for",
+    )
     p.set_defaults(func=cmd_document)
 
     parser.add_argument(

@@ -534,7 +534,17 @@ def make_handler(
                 self._json(error.status, error.payload())
                 return
 
-            built = document.build(context.graph, kinds[requested])
+            # An FRD asked for with a grain carries each measure's SQL. The
+            # BRD never does: it states what the business needs, not how a
+            # query would express it.
+            grain = tuple(g for g in params.get("grain", []) if g.strip())
+            dialect = (params.get("dialect") or ["duckdb"])[0].strip() or "duckdb"
+            built = document.build(
+                context.graph,
+                kinds[requested],
+                sql_grain=grain if grain or "sql" in params else None,
+                sql_dialect=dialect,
+            )
             if fmt == "docx":
                 from concordance.generate import word
 

@@ -12,7 +12,7 @@ looks complete but silently is not is worse than one that admits its edges.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import date
 
 from concordance.generate.requirements import (
@@ -40,6 +40,14 @@ class Document:
     source: str
     generated_on: str
     sections: tuple[Section, ...]
+    #: Measure name -> its SQL translation, when the document was built with a
+    #: grain. Held here rather than looked up while rendering so that both
+    #: renderers agree, and so a document can be inspected without a model.
+    sql: dict[str, object] = field(default_factory=dict)
+    #: The grain those translations were rendered at. Meaningless to show SQL
+    #: without it: the same measure at a different grain is a different query.
+    sql_grain: tuple[str, ...] = ()
+    sql_dialect: str = "duckdb"
 
     @property
     def requirements(self) -> tuple[Requirement, ...]:
@@ -83,8 +91,20 @@ _FUNCTIONAL_ORDER = [
 ]
 
 
-def build(graph: SemanticGraph, kind: Kind, generated_on: str | None = None) -> Document:
-    """Assemble one document from a model's derived requirements."""
+def build(
+    graph: SemanticGraph,
+    kind: Kind,
+    generated_on: str | None = None,
+    sql_grain: tuple[str, ...] | None = None,
+    sql_dialect: str = "duckdb",
+) -> Document:
+    """Assemble one document from a model's derived requirements.
+
+    Passing ``sql_grain`` renders each measure's SQL alongside its DAX. It is
+    off by default because SQL without a stated grain would be a claim the
+    document cannot support -- and because a BRD describes what the business
+    needs, not how a query would express it.
+    """
     requirements = [r for r in RequirementDeriver(graph).derive() if r.kind is kind]
     order = _BUSINESS_ORDER if kind is Kind.BUSINESS else _FUNCTIONAL_ORDER
 
@@ -113,7 +133,39 @@ def build(graph: SemanticGraph, kind: Kind, generated_on: str | None = None) -> 
         source=graph.model.source_path,
         generated_on=generated_on or date.today().isoformat(),
         sections=tuple(sections),
+        sql=_translations(graph, sql_grain, sql_dialect)
+        if sql_grain is not None and kind is Kind.FUNCTIONAL
+        else {},
+        sql_grain=tuple(sql_grain or ()),
+        sql_dialect=sql_dialect,
     )
+
+
+def _translations(graph: SemanticGraph, grain, dialect: str) -> dict[str, object]:
+    """Every measure's SQL, keyed by measure name."""
+    from concordance.generate.sql import to_dialect, translate_all
+
+    out: dict[str, object] = {}
+    for translation in translate_all(graph.model, tuple(grain or ())):
+        out[translation.measure] = (
+            translation
+            if not translation.sql
+            else replace(translation, sql=to_dialect(translation.sql, dialect))
+        )
+    return out
+
+
+def measure_of(requirement: Requirement) -> str:
+    """The measure a requirement is about, or "" when it is about something else.
+
+    Evidence node ids are ``measure:Table[Name]``; the name is what the SQL
+    translations are keyed by.
+    """
+    for evidence in requirement.evidence:
+        node = evidence.node_id
+        if node.startswith("measure:") and node.endswith("]") and "[" in node:
+            return node[node.index("[") + 1 : -1]
+    return ""
 
 
 def to_markdown(document: Document) -> str:
@@ -129,6 +181,13 @@ def to_markdown(document: Document) -> str:
         f"**Requirements:** {counts['requirements']} "
         f"({counts['high']} stated, {counts['medium']} inferred, {counts['low']} need confirmation)"
     )
+    if document.sql:
+        translated = sum(1 for t in document.sql.values() if getattr(t, "sql", ""))
+        grain = ", ".join(f"`{g}`" for g in document.sql_grain) or "the whole model"
+        lines.append(
+            f"**SQL:** {translated} of {len(document.sql)} measures rendered as "
+            f"{document.sql_dialect} at one row per {grain}  "
+        )
     lines.append("")
     lines.append(
         "> Every requirement below was derived from the implemented semantic model and is "
@@ -184,6 +243,9 @@ def to_markdown(document: Document) -> str:
                     f"traceability matrix.*"
                 )
                 lines.append("")
+
+            # After the implementation, so the DAX and the SQL read as one pair.
+            lines.extend(_sql_lines(document, requirement))
             lines.append("")
 
     lines.append("## Traceability matrix")
@@ -206,6 +268,43 @@ def to_markdown(document: Document) -> str:
     lines.append("")
 
     return "\n".join(lines)
+
+
+def _sql_lines(document: Document, requirement: Requirement) -> list[str]:
+    """The same measure expressed as SQL, directly beneath its DAX.
+
+    Placed inline rather than gathered into an appendix so that a chunk of this
+    document -- which is how it gets read once it is handed to a retrieval
+    system -- carries the requirement, the DAX and the SQL together. An
+    appendix would chunk into queries with nothing saying what they are for.
+    """
+    translation = document.sql.get(measure_of(requirement))
+    if translation is None:
+        return []
+
+    lines: list[str] = []
+    sql = getattr(translation, "sql", "")
+    if sql:
+        lines.append(f"*Equivalent SQL* ({document.sql_dialect}):")
+        lines.append("")
+        lines.append("```sql")
+        lines.append(sql)
+        lines.append("```")
+    else:
+        # Stated, not omitted. A reader who finds SQL under fifteen measures
+        # and nothing under the sixteenth would reasonably assume it was
+        # missed; the reason is the point.
+        # The reason is a sentence fragment ("X shifts the date filter
+        # context"), so it is punctuated here rather than at its source, where
+        # it is also read aloud by the interface without a trailing stop.
+        reason = (getattr(translation, "reason", "") or "").rstrip(".")
+        lines.append(
+            f"*No SQL equivalent:* {reason}. This is a property of the "
+            "expression rather than a gap in the translation — its value "
+            "depends on filter context that a query cannot fix."
+        )
+    lines.append("")
+    return lines
 
 
 def _plain(text: str) -> str:

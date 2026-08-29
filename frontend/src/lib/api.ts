@@ -482,9 +482,20 @@ export const api = {
    *
    * Not available from a snapshot, which has no server to render one.
    */
-  documentUrl: (kind: "business" | "functional", format: "md" | "docx"): string => {
+  documentUrl: (
+    kind: "business" | "functional",
+    format: "md" | "docx",
+    sql?: { grain: string[]; dialect: string },
+  ): string => {
     const params = new URLSearchParams({ kind, format });
     if (activeModel) params.set("model", activeModel);
+    if (sql) {
+      // `sql` alone is what asks for the section; the grain may legitimately be
+      // empty, which means the whole-model figure rather than "no SQL".
+      params.set("sql", "1");
+      for (const g of sql.grain) params.append("grain", g);
+      params.set("dialect", sql.dialect);
+    }
     return `/api/document?${params}`;
   },
 
