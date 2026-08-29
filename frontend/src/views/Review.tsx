@@ -155,13 +155,30 @@ export function Review() {
         />
       )}
 
+      {/* Two reasons the queue can be read-only, and they need different
+          sentences. Telling someone to restart with --decisions when the
+          server already has it -- because the model in front of them is one
+          they uploaded -- sends them to fix a flag that is already set. */}
       {data.count > 0 && !data.can_decide && (
         <p className="max-w-prose rounded border border-hairline bg-ground px-3.5 py-2.5 text-xs text-muted">
-          This queue is read-only: the server was started without somewhere to write
-          decisions. Restart it with{" "}
-          <code className="font-mono text-ink">--decisions concordance-decisions.jsonl</code>{" "}
-          to answer these here, with each decision bound to the definition it was made
-          against.
+          {data.uploaded ? (
+            <>
+              This queue is read-only because this model was uploaded to this
+              browser session. A decision is bound to the definition it was made
+              against and outlives the sitting it was made in — an uploaded model
+              does not, so there is nowhere honest to file one. Open it with{" "}
+              <code className="font-mono text-ink">concordance serve</code> to review
+              it for real.
+            </>
+          ) : (
+            <>
+              This queue is read-only: the server was started without somewhere to write
+              decisions. Restart it with{" "}
+              <code className="font-mono text-ink">--decisions concordance-decisions.jsonl</code>{" "}
+              to answer these here, with each decision bound to the definition it was made
+              against.
+            </>
+          )}
         </p>
       )}
 

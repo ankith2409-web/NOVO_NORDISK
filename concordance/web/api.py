@@ -67,6 +67,13 @@ class ApiContext:
     compare_label: str = ""
     warehouse: Path | None = None
     warehouse_schema: str = "main"
+    #: True for a model a visitor uploaded through the browser rather than one
+    #: an operator loaded at startup. It changes nothing about how the model is
+    #: read -- every route treats the two identically, which is the point -- and
+    #: exists so the interface can say which is which, and so the two
+    #: capabilities that need a second file can explain that an uploaded model
+    #: arrived without one.
+    uploaded: bool = False
     #: Where review decisions are written. Absent means the queue is read-only,
     #: which the interface says rather than showing controls that do nothing.
     decisions: Path | None = None
@@ -107,6 +114,23 @@ class ModelRegistry:
         name = context.graph.model.name
         return cls(contexts={name: context}, default=name)
 
+    def plus(self, extra: dict[str, ApiContext]) -> ModelRegistry:
+        """This registry with some more models visible, for one request only.
+
+        What makes uploads possible without touching a single route. A model a
+        visitor uploaded is not in the registry the server started with -- it
+        must not be, or it would be visible to every other visitor -- so it is
+        layered on for the duration of the request that asked, and every
+        endpoint resolves it exactly as it resolves a configured one.
+
+        The default is unchanged: an upload becomes available, never automatic.
+        Somebody opening the page in another tab still lands on the model this
+        server was started for.
+        """
+        if not extra:
+            return self
+        return ModelRegistry(contexts={**self.contexts, **extra}, default=self.default)
+
     def resolve(self, params: Params) -> ApiContext:
         requested = (params.get("model") or [""])[0].strip()
         if not requested:
@@ -136,6 +160,7 @@ class ModelRegistry:
                         "drift": context.compare_to is not None,
                         "reconcile": context.warehouse is not None,
                     },
+                    "uploaded": context.uploaded,
                 }
                 for name, context in sorted(self.contexts.items())
             ],
@@ -317,6 +342,11 @@ def review(context: ApiContext, params: Params) -> dict[str, Any]:
         "decided": count("decided"),
         "stale": count("stale"),
         "can_decide": context.decisions is not None,
+        # So the view can say *why* the queue is read-only. An uploaded model
+        # has no log by design rather than by omission, and telling someone to
+        # restart with --decisions would send them to fix a flag that is
+        # already set.
+        "uploaded": context.uploaded,
         "pending": pending,
     }
 
@@ -380,9 +410,19 @@ def decide(
     from concordance.review.decisions import DecisionLog, Verdict
 
     if context.decisions is None:
+        # Two different reasons, and telling someone the wrong one sends them
+        # to fix a flag that is already set. An uploaded model has no log
+        # because it has no future: it lives in one browser session, its
+        # requirement ids are unique only within itself, and a signature
+        # recorded against it would outlive the thing it was about.
         raise ApiError(
             HTTPStatus.NOT_IMPLEMENTED,
-            "this server was started without a decision log; "
+            "an uploaded model cannot be signed off: it is held for this "
+            "browser session only, so a decision recorded against it would "
+            "outlast the model it was about. Load it with `concordance serve` "
+            "to review it for real."
+            if context.uploaded
+            else "this server was started without a decision log; "
             "restart with --decisions <path.jsonl> to record review outcomes",
         )
 

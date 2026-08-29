@@ -45,7 +45,9 @@ const TONE = {
   renamed: "accent",
 } as const;
 
-export function Drift({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
+export function Drift(
+  { alsoOn = [], uploaded = false }: { alsoOn?: string[]; uploaded?: boolean } = {},
+) {
   const { data, error, retrying, reload } = useLoad<DriftPayload>(() => api.drift(), []);
   const [only, setOnly] = useState<DriftChange["kind"] | null>(null);
 
@@ -63,6 +65,7 @@ export function Drift({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
         example="<earlier .pbix or TMDL folder>"
         yields="Every added, removed, changed and renamed object, with the fingerprint on both sides — and separately, the requirements that need re-validating versus the ones where only a name they cite has moved."
         alsoOn={alsoOn}
+        uploaded={uploaded}
       />
     );
   if (error)

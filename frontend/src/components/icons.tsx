@@ -106,6 +106,28 @@ export function DownloadIcon(props: IconProps) {
   );
 }
 
+/** Arrow out of a tray: the download glyph inverted, as the convention runs. */
+export function UploadIcon(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <path d="M12 16V4" />
+      <path d="m7 9 5-5 5 5" />
+      <path d="M4 20h16" />
+    </Glyph>
+  );
+}
+
+/** Remove. A bin rather than a cross, which already means "close" here. */
+export function TrashIcon(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <path d="M3 6h18" />
+      <path d="M8 6V4h8v2" />
+      <path d="M6 6l1 14h10l1-14" />
+    </Glyph>
+  );
+}
+
 /**
  * The three review verdicts.
  *

@@ -645,6 +645,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         access_token=token or "",
         users=users,
         auth0=auth0,
+        accepts_uploads=not args.no_upload,
     )
     return 0
 
@@ -1164,6 +1165,16 @@ def main(argv: list[str] | None = None) -> int:
         "bound to the fingerprints of what it was made about, so it stops "
         "applying by itself when that logic changes. Pass the flag alone for "
         "concordance-decisions.jsonl in the current directory.",
+    )
+    p.add_argument(
+        "--no-upload",
+        action="store_true",
+        help="refuse models uploaded through the browser. By default a visitor "
+        "may drop in their own .pbix, or a .zip of a .pbip / .SemanticModel "
+        "folder, and it is read for their browser session alone -- never "
+        "written to disk, never visible to anyone else, and gone when they "
+        "leave. Pass this on a server that should read only the models it was "
+        "started with.",
     )
     p.add_argument(
         "--users",

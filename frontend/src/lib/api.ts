@@ -39,6 +39,20 @@ export interface LoadedModel {
   measures: number;
   tables: number;
   capabilities: { drift: boolean; reconcile: boolean };
+  /** True for a model this browser uploaded rather than one the server holds. */
+  uploaded: boolean;
+}
+
+/** What the server answers when it has read an uploaded file. */
+export interface Uploaded {
+  name: string;
+  source_format: string;
+  measures: number;
+  tables: number;
+  relationships: number;
+  /** The model this upload pushed out of the per-session allowance, if any. */
+  replaced: string;
+  held: number;
 }
 
 export interface ModelsPayload {
@@ -105,6 +119,9 @@ export interface ReviewPayload {
    *  the queue is read-only and the interface says so rather than showing
    *  controls that would store nothing. */
   can_decide: boolean;
+  /** True when this model was uploaded, which is the *other* reason
+   *  `can_decide` can be false -- and a different thing to tell the reader. */
+  uploaded: boolean;
   pending: (Requirement & { standing: Standing })[];
 }
 
@@ -517,6 +534,7 @@ export const api = {
               measures,
               tables: user_tables,
               capabilities,
+              uploaded: false,
             },
           ],
         },
@@ -524,6 +542,81 @@ export const api = {
     }
     return get<ModelsPayload>("/models");
   },
+
+  /**
+   * Send a Power BI file to be read for this browser session.
+   *
+   * The file is the whole body. A multipart form would be the conventional
+   * choice and is the wrong one here: it would mean the server parsing an
+   * envelope to recover exactly the bytes `fetch` already sends on its own,
+   * and the only other field -- the name -- fits in the query string. Fewer
+   * moving parts on the side of the wire that has to distrust the input.
+   *
+   * `onProgress` is fed by XMLHttpRequest rather than fetch, which still
+   * cannot report upload progress. A 60MB .pbix over a conference wifi is
+   * tens of seconds of nothing, and a spinner that cannot say how far along it
+   * is reads as a hang.
+   */
+  upload: (
+    file: File,
+    onProgress?: (fraction: number) => void,
+  ): Promise<Result<Uploaded>> => {
+    if (SNAPSHOT_MODE) {
+      return Promise.resolve({
+        ok: false,
+        status: 501,
+        message:
+          "A snapshot has no server to read a file with. Run `concordance serve <model>` " +
+          "and open it there to upload your own.",
+      });
+    }
+    return new Promise((resolve) => {
+      const request = new XMLHttpRequest();
+      request.open("POST", `/api/upload?filename=${encodeURIComponent(file.name)}`);
+      request.withCredentials = true;
+      request.setRequestHeader("Content-Type", "application/octet-stream");
+      request.upload.addEventListener("progress", (event) => {
+        if (event.lengthComputable) onProgress?.(event.loaded / event.total);
+      });
+      request.addEventListener("load", () => {
+        let parsed: { error?: string; hint?: string } & Partial<Uploaded> = {};
+        try {
+          parsed = JSON.parse(request.responseText);
+        } catch {
+          /* handled by the status check below */
+        }
+        if (request.status >= 200 && request.status < 300) {
+          resolve({ ok: true, data: parsed as Uploaded });
+          return;
+        }
+        resolve({
+          ok: false,
+          status: request.status,
+          // The hint is the half that says what to do next, so it is joined on
+          // rather than dropped -- the alternative is "no .tmdl files inside
+          // it" with no indication that zipping the folder is the answer.
+          message:
+            [parsed.error, parsed.hint]
+              .filter(Boolean)
+              // Ended before joining: the server's `problem` is a fragment
+              // ("no .tmdl files inside it") and the hint is a sentence, so
+              // concatenating them raw runs the two together mid-thought.
+              .map((part) => (/[.!?]$/.test(part!) ? part : `${part}.`))
+              .join(" ") || `The server answered ${request.status}.`,
+        });
+      });
+      request.addEventListener("error", () =>
+        resolve({ ok: false, status: 0, message: "Cannot reach the Concordance server." }),
+      );
+      request.addEventListener("abort", () =>
+        resolve({ ok: false, status: 0, message: "Upload cancelled." }),
+      );
+      request.send(file);
+    });
+  },
+
+  /** Drop one uploaded model. Only ever this browser's own. */
+  forget: (model: string) => post<{ forgotten: string }>("/forget", { model }),
 
   whoami: () => get<WhoAmI>("/whoami"),
   overview: () => get<Overview>("/overview"),

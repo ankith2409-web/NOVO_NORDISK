@@ -38,7 +38,9 @@ const HEADING: Record<Verdict, string> = {
 
 const ORDER: Verdict[] = ["divergent", "review", "consistent"];
 
-export function Reconcile({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
+export function Reconcile(
+  { alsoOn = [], uploaded = false }: { alsoOn?: string[]; uploaded?: boolean } = {},
+) {
   const { data, error, retrying, reload } = useLoad<ReconcilePayload>(() => api.reconcile(), []);
   const [showConsistent, setShowConsistent] = useState(false);
 
@@ -54,6 +56,7 @@ export function Reconcile({ alsoOn = [] }: { alsoOn?: string[] } = {}) {
         example="path/to/warehouse.duckdb"
         yields="Each metric matched to its warehouse counterpart, with the tables, columns and aggregations each side reads shown next to one another and the differing ones marked."
         alsoOn={alsoOn}
+        uploaded={uploaded}
       />
     );
   if (error)

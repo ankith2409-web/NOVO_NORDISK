@@ -10,15 +10,18 @@
  * shown broken: the overview reports which capabilities exist, and the rail
  * renders accordingly.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   api,
   SNAPSHOT_MODE,
   type LoadedModel,
   type Overview as OverviewData,
+  type Uploaded,
   type WhoAmI,
 } from "@/lib/api";
 import { Button } from "@/components/primitives";
+import { UploadDialog } from "@/components/UploadDialog";
+import { UploadIcon } from "@/components/icons";
 import { Copilot } from "@/components/Copilot";
 import { Intro } from "@/components/Intro";
 import { FAVICON_SVG, Wordmark } from "@/components/Logo";
@@ -89,6 +92,10 @@ export default function App() {
   // the switch.
   const [loaded, setLoaded] = useState<LoadedModel[]>([]);
   const [active, setActive] = useState("");
+  // The model this server was started on, kept so removing an uploaded model
+  // has somewhere to land. A ref rather than state: nothing renders from it,
+  // and it is written once.
+  const defaultModel = useRef("");
   // Which model to ask about is only known after /api/models answers. Rendering
   // the views before then would fire every view's fetch against the default and
   // again against the restored model, and briefly show one model's figures
@@ -186,11 +193,52 @@ export default function App() {
       // against different servers, and a remembered name this one never heard
       // of would point every request at nothing.
       const names = result.data.models.map((entry) => entry.name);
+      defaultModel.current = result.data.default;
       const restored = recallOneOf("model", names) ?? result.data.default;
       api.use(restored);
       setActive(restored);
     })();
   }, []);
+
+  const [uploading, setUploading] = useState(false);
+
+  /**
+   * Adopt a model the server has just read, and move to it.
+   *
+   * Switching immediately is the whole point: somebody who uploads a file wants
+   * to look at it, and leaving them on the model they started with -- with a
+   * new name quietly added to a dropdown -- would read as the upload having
+   * failed.
+   */
+  function adopt(result: Uploaded) {
+    setLoaded((held) => [
+      // Filtered first so re-uploading under a name that was evicted and
+      // reissued cannot leave two rows claiming the same model.
+      ...held.filter((entry) => entry.name !== result.name && entry.name !== result.replaced),
+      {
+        name: result.name,
+        source_format: result.source_format,
+        measures: result.measures,
+        tables: result.tables,
+        // Neither is configurable for an upload: drift needs a second version
+        // of this model and reconciliation needs a warehouse built for it.
+        capabilities: { drift: false, reconcile: false },
+        uploaded: true,
+      },
+    ]);
+    setUploading(false);
+    switchTo(result.name);
+  }
+
+  async function forget(name: string) {
+    const result = await api.forget(name);
+    if (!result.ok) return;
+    setLoaded((held) => held.filter((entry) => entry.name !== name));
+    // Only when the model being dropped is the one on screen. Leaving the
+    // views mounted against a model the server has just forgotten would show
+    // its figures under a name that no longer resolves.
+    if (name === active) switchTo(defaultModel.current);
+  }
 
   function switchTo(name: string) {
     if (name === active) return;
@@ -216,7 +264,9 @@ export default function App() {
   // for as long as the fetch took, then silently dropped it to `off`. The
   // registry answers once, covers every model at the same time, and is never
   // nulled, so the rail can be right from the first paint.
-  const activeCapabilities = loaded.find((entry) => entry.name === active)?.capabilities;
+  const activeEntry = loaded.find((entry) => entry.name === active);
+  const activeCapabilities = activeEntry?.capabilities;
+  const activeIsUploaded = activeEntry?.uploaded ?? false;
 
   function configured(entry: (typeof VIEWS)[number]): boolean {
     if (!entry.needs) return true;
@@ -265,6 +315,12 @@ export default function App() {
             >
               {loaded.map((entry) => (
                 <option key={entry.name} value={entry.name}>
+                  {/* Marked, because the two are not interchangeable: an
+                      uploaded model has no warehouse, no baseline to compare
+                      against, and no signable review queue. Someone who cannot
+                      tell which kind they are looking at reads those absences
+                      as the tool being broken. */}
+                  {entry.uploaded ? "yours: " : ""}
                   {entry.name} · {entry.measures}m · {entry.tables}t
                 </option>
               ))}
@@ -274,6 +330,15 @@ export default function App() {
           <span className="truncate font-mono text-xs text-muted">
             {overview?.model ?? "connecting…"}
           </span>
+        )}
+        {/* Beside the switcher rather than in a menu: this is the answer to
+            "does it work on my model", which is the first question anyone
+            has, and burying it would mean it is never asked. */}
+        {!SNAPSHOT_MODE && (
+          <Button onClick={() => setUploading(true)} title="Read a .pbix or .pbip of your own">
+            <UploadIcon size={11} className="flex-none" />
+            your model
+          </Button>
         )}
         <div className="ml-auto flex items-center gap-2">
           {overview && (
@@ -327,8 +392,23 @@ export default function App() {
           case rather than claiming an inertness the layout does not provide. */}
       {intro && <Intro overview={overview} onClose={closeIntro} />}
 
+      {uploading && (
+        <UploadDialog
+          loaded={loaded}
+          onClose={() => setUploading(false)}
+          onLoaded={adopt}
+          onForgotten={(name) => void forget(name)}
+        />
+      )}
+
       <div className="relative flex min-h-0 flex-1">
-        <nav className="flex w-36 flex-none flex-col gap-0.5 border-r border-hairline bg-ground p-2">
+        {/* w-44, not w-36. An uploaded model has neither optional capability,
+            so it is the first state where an "off" badge sits beside the
+            longest label -- and the badge takes exactly enough room that
+            "What changed" needed 102px and had 101, truncating to "What
+            chang…". Measured rather than eyeballed, and set wide enough to
+            leave headroom instead of landing on the next one-pixel margin. */}
+        <nav className="flex w-44 flex-none flex-col gap-0.5 border-r border-hairline bg-ground p-2">
           {VIEWS.map((entry) => (
             <button
               key={entry.id}
@@ -370,9 +450,11 @@ export default function App() {
           {resolved && view === "model" && <Model />}
           {resolved && view === "dataset" && <Dataset />}
           {resolved && view === "requirements" && <Requirements />}
-          {resolved && view === "drift" && <Drift alsoOn={othersWith("drift")} />}
+          {resolved && view === "drift" && (
+            <Drift alsoOn={othersWith("drift")} uploaded={activeIsUploaded} />
+          )}
           {resolved && view === "reconcile" && (
-            <Reconcile alsoOn={othersWith("reconcile")} />
+            <Reconcile alsoOn={othersWith("reconcile")} uploaded={activeIsUploaded} />
           )}
           {resolved && view === "review" && <Review />}
         </main>

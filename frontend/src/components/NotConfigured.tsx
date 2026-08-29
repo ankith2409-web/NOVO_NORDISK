@@ -28,6 +28,7 @@ export function NotConfigured({
   example,
   yields,
   alsoOn = [],
+  uploaded = false,
 }: {
   /** The feature's own name, matching the rail. */
   title: string;
@@ -52,9 +53,22 @@ export function NotConfigured({
    * page says which model to switch to instead.
    */
   alsoOn?: string[];
+  /**
+   * True when the open model is one this browser uploaded.
+   *
+   * A third reason for the same absence, and the only one no flag can fix.
+   * Drift needs a second *version* of this model and reconciliation needs a
+   * warehouse built for its tables; an uploaded file is one model with neither,
+   * and the configured model's warehouse is emphatically not a substitute --
+   * it would compare somebody's measures against a stranger's schema and
+   * report a pile of confident nonsense. Telling that reader to restart with a
+   * flag is advice they cannot act on: the model only exists inside their
+   * browser session, so there is no path to pass.
+   */
+  uploaded?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
-  const elsewhere = alsoOn.length > 0;
+  const elsewhere = alsoOn.length > 0 && !uploaded;
 
   async function copy() {
     try {
@@ -72,7 +86,11 @@ export function NotConfigured({
       <header>
         <h1 className="font-serif text-2xl leading-tight font-semibold">{title}</h1>
         <p className="mt-1 font-mono text-xs text-faint">
-          {elsewhere ? "not configured for this model" : "not configured on this server"}
+          {uploaded
+            ? "not available for an uploaded model"
+            : elsewhere
+              ? "not configured for this model"
+              : "not configured on this server"}
         </p>
       </header>
 
@@ -82,7 +100,15 @@ export function NotConfigured({
         </p>
 
         <div className="flex flex-col gap-3 px-3.5 py-3">
-          {elsewhere ? (
+          {uploaded ? (
+            <p className="text-sm text-muted">
+              It needs {needs}. You uploaded this model to your own browser session,
+              which is one file and no second source — and the ones this server holds
+              belong to its own models, so reading them here would compare your
+              measures against a schema they were never written for. Everything else
+              in this interface works on your model exactly as it does on any other.
+            </p>
+          ) : elsewhere ? (
             <p className="text-sm text-muted">
               It needs {needs}, which was not given for this model. It is
               configured for{" "}
@@ -102,16 +128,26 @@ export function NotConfigured({
             </p>
           )}
 
-          <div className="flex items-center gap-2 rounded border border-hairline bg-raised px-2.5 py-2">
-            <code className="min-w-0 flex-1 truncate font-mono text-xs text-ink">
-              {flag} {example}
-            </code>
-            <Button onClick={copy} tone={copied ? "ok" : "quiet"} className="flex-none">
-              {copied ? "copied" : "copy"}
-            </Button>
-          </div>
+          {/* Hidden for an upload rather than shown greyed out: a flag that
+              cannot be applied to a model held in a browser session is not a
+              next step, and offering a copy button for it invites someone to
+              paste a command that cannot work. */}
+          {!uploaded && (
+            <div className="flex items-center gap-2 rounded border border-hairline bg-raised px-2.5 py-2">
+              <code className="min-w-0 flex-1 truncate font-mono text-xs text-ink">
+                {flag} {example}
+              </code>
+              <Button onClick={copy} tone={copied ? "ok" : "quiet"} className="flex-none">
+                {copied ? "copied" : "copy"}
+              </Button>
+            </div>
+          )}
 
-          <p className="text-xs text-muted">{yields}</p>
+          <p className="text-xs text-muted">
+            {uploaded
+              ? `Load your model with \`concordance serve\` and pass ${flag} to get this: ${yields}`
+              : yields}
+          </p>
         </div>
       </div>
     </div>

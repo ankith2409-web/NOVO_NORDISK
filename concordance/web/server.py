@@ -27,12 +27,13 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, urlparse
 
+from concordance.adapters.base import SourceError
 from concordance.agent.chat import ModelChat
 from concordance.generate import document
 from concordance.graph.csg import SemanticGraph
 from concordance.llm.base import LlmError, LlmProvider
 from concordance.review.auth0 import Auth0Error
-from concordance.web import api
+from concordance.web import api, upload
 from concordance.web.signin import _wants_html, sign_in_page
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -148,6 +149,13 @@ MAX_SESSIONS = 200
 _ASK_LIMIT = 20
 _ASK_WINDOW_SECONDS = 60.0
 
+#: The same idea for uploads, over a longer window. An upload costs no API
+#: credit, but it does cost a file parse and a temporary directory, and the
+#: honest number for a person is low: uploading six models in five minutes is
+#: not something anyone does by hand.
+_UPLOAD_LIMIT = 6
+_UPLOAD_WINDOW_SECONDS = 300.0
+
 
 class RateLimiter:
     """A fixed-window limiter, keyed by client.
@@ -258,6 +266,152 @@ class SessionStore:
         return len(self._sessions)
 
 
+#: How many uploaded models one browser session may hold at once, and how many
+#: this server keeps across every session.
+#:
+#: The per-session cap is small because uploading a fourth model is almost
+#: always replacing the third, not collecting them; the global one bounds a
+#: public deployment, where every visitor gets an allowance and nothing else
+#: would stop a hundred of them from being held at once. A graph is a few
+#: megabytes, so the ceiling is memory, not correctness.
+MAX_UPLOADS_PER_SESSION = 3
+MAX_UPLOADS = 24
+
+
+class UploadStore:
+    """Models visitors uploaded, held in memory and owned by one session each.
+
+    The invariant this exists to keep: an uploaded model is visible to the
+    browser session that uploaded it and to nobody else. Configured models are
+    shared because an operator chose to share them; an upload is somebody's
+    proprietary Power BI file arriving at a URL, and a demo server that quietly
+    showed it to the next visitor would be the single worst bug this project
+    could have.
+
+    Names are unique across the whole server even though visibility is not.
+    That is what lets the chat find a graph from a model name alone, without
+    threading a session id through ``SessionStore``'s factory -- and it is safe
+    because a name is only ever *resolvable* through ``for_session``, which
+    hands back one session's models and no other's. Uniqueness makes the lookup
+    unambiguous; ownership is what makes it private.
+
+    Bounded twice, per session and in total, and least-recently-used in both
+    directions. An evicted model is not an error: its owner is told which one
+    went, and can upload it again.
+    """
+
+    def __init__(
+        self,
+        reserved: set[str],
+        max_per_session: int = MAX_UPLOADS_PER_SESSION,
+        max_total: int = MAX_UPLOADS,
+    ) -> None:
+        #: Names this server was started with. An upload never shadows one --
+        #: it would make `?model=QualityControl` mean different models for
+        #: different people, and silently hide a configured model from whoever
+        #: uploaded something similarly named.
+        self._reserved = set(reserved)
+        self._max_per_session = max_per_session
+        self._max_total = max_total
+        self._held: OrderedDict[str, tuple[str, api.ApiContext]] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def add(
+        self, session_id: str, context: api.ApiContext, name: str
+    ) -> tuple[str, str]:
+        """Hold ``context`` for ``session_id``. Returns its name and any evicted.
+
+        The returned name may not be the one asked for: a model called the same
+        as one already here is given a suffix rather than allowed to replace it,
+        so uploading a second version of something never makes the first
+        unreachable.
+
+        **Takes ownership of ``context`` and the graph inside it**, which it
+        renames to match the name it settles on. The caller must not keep using
+        the graph afterwards. That is a fair contract here -- the only caller
+        hands over a graph it parsed moments earlier from an upload, which
+        nothing else has a reference to -- and it is what lets the rename happen
+        under the same lock that chose the name, with no window where the model
+        is reachable under a name it does not carry.
+        """
+        with self._lock:
+            chosen = self._free_name(name)
+            # The model is renamed to match the key it is filed under, so the
+            # switcher and the page it opens agree. Without this a disambiguated
+            # upload appears as "QualityControl (2)" in the header and
+            # "QualityControl" on every page inside it -- two names for one
+            # thing, next to the original it was disambiguated from.
+            #
+            # Safe to do after the graph is built: node ids are keyed on table
+            # and object name, and requirement ids deliberately exclude the
+            # model's name so a renamed file does not invalidate every decision
+            # recorded against it.
+            context.graph.model.name = chosen
+            self._held[chosen] = (session_id, context)
+
+            evicted = ""
+            mine = [held for held, (owner, _) in self._held.items() if owner == session_id]
+            while len(mine) > self._max_per_session:
+                evicted = mine.pop(0)
+                del self._held[evicted]
+
+            while len(self._held) > self._max_total:
+                # Oldest overall, which by construction belongs to whoever has
+                # been away longest.
+                self._held.popitem(last=False)
+            return chosen, evicted
+
+    def _free_name(self, name: str) -> str:
+        base = name or "uploaded model"
+        if base not in self._reserved and base not in self._held:
+            return base
+        for attempt in range(2, 100):
+            candidate = f"{base} ({attempt})"
+            if candidate not in self._reserved and candidate not in self._held:
+                return candidate
+        return f"{base} ({secrets.token_hex(3)})"
+
+    def for_session(self, session_id: str | None) -> dict[str, api.ApiContext]:
+        """Everything ``session_id`` uploaded, for layering onto the registry."""
+        if not session_id:
+            return {}
+        with self._lock:
+            found = {
+                name: context
+                for name, (owner, context) in self._held.items()
+                if owner == session_id
+            }
+            # Touched so a session actively using its uploads is not the one
+            # evicted when the server fills up.
+            for name in found:
+                self._held.move_to_end(name)
+            return found
+
+    def graph_of(self, name: str) -> SemanticGraph | None:
+        """The graph behind an uploaded name, for the chat.
+
+        Deliberately not access-controlled, and deliberately only called after
+        the request has already resolved that name through ``for_session``.
+        Both halves matter: this is the lookup, not the permission check, and
+        putting the check here as well would imply the caller need not do it.
+        """
+        with self._lock:
+            held = self._held.get(name)
+            return held[1].graph if held else None
+
+    def forget(self, session_id: str, name: str) -> bool:
+        """Drop one of ``session_id``'s uploads. False if it is not theirs."""
+        with self._lock:
+            held = self._held.get(name)
+            if not held or held[0] != session_id:
+                return False
+            del self._held[name]
+            return True
+
+    def __len__(self) -> int:
+        return len(self._held)
+
+
 def make_handler(
     graph: SemanticGraph,
     provider: LlmProvider,
@@ -265,6 +419,7 @@ def make_handler(
     access_token: str = "",
     users=None,
     auth0=None,
+    accepts_uploads: bool = True,
 ) -> tuple[type[BaseHTTPRequestHandler], SessionStore]:
     """Build the request handler class for one model and provider.
 
@@ -291,6 +446,14 @@ def make_handler(
     anybody's. Supplying it also implies access control: there is no sense in
     identifying reviewers on a server that lets an unidentified one in.
 
+    ``accepts_uploads`` is on by default and is what lets a visitor read their
+    own model without a shell. It is a flag rather than a constant because the
+    two deployments want opposite answers: on a laptop, or on the demo server
+    this project ships, the whole point is that somebody can drop their .pbix in
+    and see it documented; on a server pointed at one audited model, an endpoint
+    that parses arbitrary uploaded files is surface nobody asked for. Turning it
+    off removes the route, not just the button.
+
     ``auth0`` is an ``Auth0Verifier`` and is the same idea reached for at a
     larger scale: it answers offboarding, password policy and "is this person
     still employed", which a JSON file cannot, and brings signup and Google
@@ -302,12 +465,25 @@ def make_handler(
     if not isinstance(registry, api.ModelRegistry):
         registry = api.ModelRegistry.of(registry)
 
+    uploads = UploadStore(reserved=set(registry.contexts))
+
     def _chat_for(model: str) -> ModelChat:
         chosen = registry.contexts.get(model or registry.default)
-        return ModelChat(chosen.graph if chosen else graph, provider)
+        if chosen is not None:
+            return ModelChat(chosen.graph, provider)
+        # An uploaded model. Reached only after the request has resolved the
+        # name against the asking session's own registry, so this is a lookup
+        # of something already known to belong to them.
+        uploaded = uploads.graph_of(model)
+        return ModelChat(uploaded if uploaded is not None else graph, provider)
 
     sessions = SessionStore(_chat_for)
     ask_limiter = RateLimiter()
+    # Uploads are bounded but not free: each one parses a file this server did
+    # not choose. The chat's limiter counts questions, so a second one counts
+    # uploads rather than letting them share an allowance -- exhausting the
+    # upload budget must not stop somebody asking a question.
+    upload_limiter = RateLimiter(limit=_UPLOAD_LIMIT, window=_UPLOAD_WINDOW_SECONDS)
     page_bytes = _page_for(graph.model.name)
     # Rendered once: it depends only on how the server was started.
     sign_in_bytes = sign_in_page(
@@ -435,6 +611,10 @@ def make_handler(
                 self._handle_session()
             elif parsed.path == "/api/decide":
                 self._handle_decide(parse_qs(parsed.query))
+            elif parsed.path == "/api/upload":
+                self._handle_upload(parse_qs(parsed.query))
+            elif parsed.path == "/api/forget":
+                self._handle_forget()
             else:
                 self._not_found()
 
@@ -492,9 +672,25 @@ def make_handler(
             self.end_headers()
             self.wfile.write(sign_in_bytes)
 
+        def _registry(self) -> api.ModelRegistry:
+            """What this request may address: the server's models plus its own.
+
+            The one place uploads enter the read path, and the reason no route
+            needed changing to support them. Built per request rather than held,
+            because "its own" is a property of the caller: two browsers hitting
+            the same endpoint at the same moment must not be able to see each
+            other's models, and a shared registry could not express that.
+            """
+            return registry.plus(uploads.for_session(self._session_cookie()))
+
         def _serve_api(self, path: str, params: dict[str, list[str]]) -> None:
-            """Read-only endpoints: no session, since the graph never changes."""
-            status, payload = api.handle(registry, path, params)
+            """Read-only endpoints: no session, since the graph never changes.
+
+            The graph still never changes -- an upload adds one rather than
+            mutating any -- so this remains free of session state beyond
+            reading the cookie to know which models to offer.
+            """
+            status, payload = api.handle(self._registry(), path, params)
             self._json(status, payload)
 
         def _serve_document(self, params: dict[str, list[str]]) -> None:
@@ -529,7 +725,7 @@ def make_handler(
                 return
 
             try:
-                context = registry.resolve(params)
+                context = self._registry().resolve(params)
             except api.ApiError as error:
                 self._json(error.status, error.payload())
                 return
@@ -607,7 +803,13 @@ def make_handler(
                 return
 
             model = str(payload.get("model", "") or "").strip()
-            if model and model not in registry.contexts:
+            # This session's registry, not the server's: a model this person
+            # uploaded is one they can ask about. It is also the access check
+            # that `UploadStore.graph_of` deliberately does not perform -- a
+            # name belonging to somebody else's session is not in here, so it
+            # is refused below before any lookup happens.
+            addressable = self._registry().contexts
+            if model and model not in addressable:
                 # Answering out of the default model instead would produce a
                 # confident answer about the wrong model, which is worse than
                 # a refusal.
@@ -615,7 +817,7 @@ def make_handler(
                     HTTPStatus.NOT_FOUND,
                     {
                         "error": "that model is not loaded on this server",
-                        "loaded": sorted(registry.contexts),
+                        "loaded": sorted(addressable),
                     },
                 )
                 return
@@ -703,7 +905,7 @@ def make_handler(
             if payload is None:
                 return
             try:
-                context = registry.resolve(params)
+                context = self._registry().resolve(params)
                 # The name comes from the token this request presented, never
                 # from its body. A caller who could name the author could sign
                 # off as a colleague, which would make the trail worthless.
@@ -712,6 +914,176 @@ def make_handler(
                 self._json(HTTPStatus(error.status), error.payload())
                 return
             self._json(HTTPStatus.OK, result)
+
+        def _handle_upload(self, params: dict[str, list[str]]) -> None:
+            """Read a Power BI file out of the request body and hold it.
+
+            The one endpoint on this server that takes a path-shaped thing from
+            a caller, and it deliberately does not: the *name* arrives as
+            ``?filename=``, and it is used for the extension, for the model's
+            name, and for nothing else -- ``upload.safe_stem`` rebuilds it from
+            a whitelist before it becomes a path. The bytes go to a temporary
+            directory this server chose, are parsed, and the directory is
+            removed. Nothing the caller sends decides where anything is read
+            from or written to.
+
+            The body is raw file bytes rather than a multipart form. Multipart
+            would mean parsing an attacker-controlled envelope with `cgi` --
+            removed in 3.13 -- or hand-writing a boundary parser, to obtain
+            exactly what `fetch(url, {body: file})` already sends on its own.
+            The filename is the only other field, and a query parameter carries
+            it without a parser.
+            """
+            if not accepts_uploads:
+                self._json(
+                    HTTPStatus.NOT_IMPLEMENTED,
+                    {
+                        "error": (
+                            "This server was started with --no-upload, so it "
+                            "reads only the models it was given."
+                        )
+                    },
+                )
+                return
+
+            allowed, retry_after = upload_limiter.check(self._client_key())
+            if not allowed:
+                self.send_response(HTTPStatus.TOO_MANY_REQUESTS)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Retry-After", str(retry_after))
+                body = json.dumps(
+                    {"error": f"Too many uploads in a short period. Try again in {retry_after}s."}
+                ).encode("utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self._cors_headers()
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            filename = (params.get("filename") or [""])[0].strip()
+            if not filename:
+                self._json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": "the upload needs ?filename= so its format can be read"},
+                )
+                return
+
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            if length <= 0:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "that upload was empty"})
+                return
+            if length > upload.MAX_UPLOAD_BYTES:
+                # Refused before a byte is read, so an oversized upload costs
+                # this server the header and nothing else. The socket is closed
+                # rather than drained: reading 2GB in order to reject it is the
+                # denial of service, not the defence against it.
+                self._json(
+                    HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                    {
+                        "error": (
+                            f"That file is larger than the "
+                            f"{upload.MAX_UPLOAD_BYTES // (1024 * 1024)}MB limit."
+                        )
+                    },
+                )
+                self.close_connection = True
+                return
+
+            # Minted before parsing, so the model is held against a session that
+            # certainly exists -- a first-time visitor uploading before anything
+            # else has no cookie yet, and holding their model against "" would
+            # hand it to every other cookieless request.
+            session_id, _ = sessions.get(self._session_cookie(), registry.default)
+
+            try:
+                uploaded = upload.read_model(self.rfile, filename, length)
+            except upload.UploadRefused as refused:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": str(refused), "refused": True})
+                return
+            except SourceError as error:
+                # 400 rather than 422: the file is the request. Its `render`
+                # carries the hint, which is the half that tells someone what
+                # to do next.
+                self._json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": error.problem, "hint": error.hint, "file": error.source},
+                )
+                return
+            except Exception as error:  # noqa: BLE001 -- last line before a 500
+                self._json(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "error": f"That file could not be read: {type(error).__name__}",
+                        "hint": "Re-save it from Power BI Desktop and try again.",
+                    },
+                )
+                return
+
+            name, evicted = uploads.add(
+                session_id,
+                api.ApiContext(
+                    graph=uploaded,
+                    # The chat and the AI summaries work on an uploaded model
+                    # exactly as they do on a configured one.
+                    provider=provider,
+                    # Both left unset, and both truthfully so. Drift needs a
+                    # second version of this model and reconciliation needs a
+                    # warehouse built for it; one uploaded file is neither, and
+                    # inheriting the configured model's would compare somebody's
+                    # model against a stranger's warehouse.
+                    compare_to=None,
+                    warehouse=None,
+                    # No decision log. Requirement ids are unique only within a
+                    # model, the model disappears when the session does, and on
+                    # a shared server this would let a passer-by write into the
+                    # operator's audit trail. The queue is readable; it is not
+                    # signable.
+                    decisions=None,
+                    uploaded=True,
+                ),
+                upload.safe_stem(filename) if uploaded.model.name in ("", None) else uploaded.model.name,
+            )
+
+            summary = uploaded.model.summary()
+            self._json(
+                HTTPStatus.OK,
+                {
+                    "name": name,
+                    "source_format": uploaded.model.source_type,
+                    "measures": summary["measures"],
+                    "tables": summary["user_tables"],
+                    "relationships": summary["relationships"],
+                    # Said out loud rather than left to be noticed. Somebody who
+                    # uploads a fourth model should find out that their first is
+                    # gone from the answer, not from the switcher.
+                    "replaced": evicted,
+                    "held": len(uploads.for_session(session_id)),
+                },
+                session_id=session_id,
+            )
+
+        def _handle_forget(self) -> None:
+            """Drop one of this session's uploaded models.
+
+            Worth having for the same reason the upload is per-session: someone
+            who puts a confidential model into a demo server should be able to
+            take it out again without closing the browser and hoping.
+            """
+            payload = self._read_json()
+            if payload is None:
+                return
+            name = str(payload.get("model", "") or "").strip()
+            session_id = self._session_cookie() or ""
+            if not name or not uploads.forget(session_id, name):
+                # One answer for "no such model" and "not yours". Distinguishing
+                # them would turn this into a way to ask whether a name exists
+                # in somebody else's session.
+                self._json(
+                    HTTPStatus.NOT_FOUND,
+                    {"error": "you have no uploaded model by that name"},
+                )
+                return
+            self._json(HTTPStatus.OK, {"forgotten": name})
 
         def _read_json(self) -> dict | None:
             """The request body, or None once an error has been answered."""
@@ -895,10 +1267,17 @@ def serve(
     access_token: str = "",
     users=None,
     auth0=None,
+    accepts_uploads: bool = True,
 ) -> None:
     """Run the chat server until interrupted."""
     handler, _ = make_handler(
-        graph, provider, context, access_token=access_token, users=users, auth0=auth0
+        graph,
+        provider,
+        context,
+        access_token=access_token,
+        users=users,
+        auth0=auth0,
+        accepts_uploads=accepts_uploads,
     )
     httpd = ThreadingHTTPServer((host, port), handler)
     base = f"http://{host}:{httpd.server_port}/"
@@ -926,6 +1305,15 @@ def serve(
             f"{', '.join(users.names)}"
         )
         print("  review decisions will record the authenticated name, not a claim")
+    if accepts_uploads:
+        # Named because it is on by default, and because "this server will
+        # parse files strangers post to it" is a thing an operator should learn
+        # from the banner rather than from a log line six weeks later.
+        print(
+            f"  visitors may upload a .pbix or a zipped .pbip "
+            f"(up to {upload.MAX_UPLOAD_BYTES // (1024 * 1024)}MB, "
+            f"held in memory for their own session only) — --no-upload turns this off"
+        )
     if access_token:
         print("  access token required — share the link above to grant access")
     elif users is None and host not in ("127.0.0.1", "localhost", "::1"):

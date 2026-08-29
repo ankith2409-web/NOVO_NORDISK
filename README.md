@@ -110,6 +110,8 @@ concordance document <model> --type brd # generate a BRD (--type frd, --format d
 concordance auditpack <model>            # evidence bundle: docs + fingerprint manifest
 concordance ask      <model> "question"  # ask about the model (omit for interactive)
 concordance serve    <model> [--port]    # web UI + JSON API at http://127.0.0.1:8000
+                                         #   visitors may upload their own model;
+                                         #   --no-upload turns that off
 concordance snapshot <model> --label v1  # record fingerprints for later comparison
 concordance drift    <before> <after>    # what changed, and which requirements are affected
 concordance reconcile <model> [--warehouse db]  # compare KPIs against a SQL warehouse
@@ -154,6 +156,8 @@ concordance serve data/models/ClinicalTrialSafety_v2.SemanticModel \
 | `GET /api/drift` | what moved against the configured comparison model |
 | `GET /api/reconcile` | whether the configured warehouse agrees, metric by metric |
 | `POST /api/ask` | the grounded chat — the one endpoint with session state |
+| `POST /api/upload` | read a model out of the request body, for this browser only |
+| `POST /api/forget` | drop one of this browser's uploaded models |
 
 ### The client never names a file
 
@@ -163,6 +167,13 @@ server into an arbitrary file reader. Both are instead configured at launch, so 
 request can only ask *whether* to compare, never *what against*. Endpoints that
 were not configured answer `501` naming the flag that would enable them, rather
 than pretending the feature does not exist.
+
+`POST /api/upload` does not weaken this, and is worth being precise about. It
+takes *bytes*, never a path: the file arrives as the raw request body, the
+`?filename=` alongside it is rebuilt from a character whitelist before it becomes
+anything, and the directory the bytes land in is one this server invented and
+deletes afterwards. Nothing a caller sends chooses where anything is read from or
+written to. What the browser can name is still only a key in a registry.
 
 ### Cross-origin requests are limited to loopback
 
@@ -198,6 +209,51 @@ one command anyone would naturally run showed the least of what the project does
 
 If the built file is ever missing, `serve` falls back to the chat-only page and
 says so at startup rather than failing.
+
+### Opening your own model, without a terminal
+
+Everything above documents whatever the server was started with, which is the
+right shape for a deployment and the wrong one for the first five minutes with
+the tool: the answer to *does this work on my model* should not be "clone the
+repo and install Python". The header has an **upload** button. Drop in a `.pbix`,
+a `.zip` of a `.pbip` or `.SemanticModel` folder, or a single `.tmdl`, and every
+view — measures, requirements, the SQL, the downloadable BRD and FRD, the
+copilot — answers for it.
+
+Four properties, because uploading a semantic model is uploading a company's
+business logic:
+
+- **Held in memory, never written to disk.** The bytes go to a temporary
+  directory, are parsed, and the directory is removed in a `finally`. What
+  survives is an in-memory graph.
+- **Visible to one browser session and no other.** Uploaded models are layered
+  onto the registry per request, so every existing route resolves them without
+  knowing they are special — and a second visitor's request has a different
+  session, so the name does not resolve at all. Probing for someone else's model
+  gets the same `404` as probing for one that never existed.
+- **Removable.** The upload dialog lists what this browser has open, with a
+  remove button that drops it from the server immediately.
+- **Not signable.** Review decisions cannot be recorded against an uploaded
+  model. A decision is bound to the definition it was made against and is meant
+  to outlive the sitting it was made in; an uploaded model does not, so there is
+  nowhere honest to file one. The queue is readable and says why.
+
+Drift and reconciliation are also unavailable for an uploaded model, and the
+views say so specifically rather than telling you to restart with a flag. One
+file is not a second version of itself, and the warehouse this server holds
+belongs to *its* models — reading it against your measures would compare them to
+a schema they were never written for.
+
+Bounded on purpose: 64MB per file, three models per browser, twenty-four across
+the server, six uploads per five minutes. Archives are refused rather than
+sanitised if they contain an absolute path, a `..`, a symlink, more than 20,000
+entries, or more than 256MB of contents — `extractall` would quietly rewrite a
+traversing path and carry on, which turns a hostile archive into one that merely
+looks odd afterwards.
+
+Pass `--no-upload` to remove the route entirely, for a server pointed at one
+audited model where an endpoint that parses arbitrary uploaded files is surface
+nobody asked for.
 
 ### Developing the interface
 
