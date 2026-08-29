@@ -283,3 +283,77 @@ def test_generated_sql_returns_the_hand_computed_answer(
             assert abs(float(actual) - float(expected)) < 1e-9, (
                 f"{measure} at {site}: expected {expected}, got {actual}"
             )
+
+
+# -- the endpoint that serves the whole dataset --------------------------------
+
+def _dataset(model, **params):
+    from concordance.graph.csg import SemanticGraph
+    from concordance.web import api
+
+    registry = api.ModelRegistry.of(api.ApiContext(graph=SemanticGraph(model)))
+    return api.handle(registry, "/api/dataset", params)
+
+
+def test_the_dataset_endpoint_returns_every_measure(model):
+    status, payload = _dataset(model, grain=["Site[SiteName]"])
+    assert status == 200
+    assert payload["counts"]["measures"] == len(model.measures)
+    assert len(payload["measures"]) == len(model.measures)
+
+
+def test_translated_and_blocked_counts_partition_the_measures(model):
+    _, payload = _dataset(model, grain=["Site[SiteName]"])
+    counts = payload["counts"]
+    assert counts["translated"] + counts["blocked"] == counts["measures"]
+
+
+def test_a_blocked_measure_carries_its_reason_not_an_empty_string(model):
+    """The reason is the useful content for a measure with no SQL. A blank
+    would leave a reader unable to tell "we cannot" from "we did not try"."""
+    _, payload = _dataset(model, grain=["Site[SiteName]"])
+    for row in payload["measures"]:
+        if row["status"] != "exact":
+            assert row["sql"] == ""
+            assert row["reason"]
+            assert row["blocked_by"]
+
+
+def test_grain_options_offer_dimensions_not_facts(model):
+    """Batch is pointed at by TestResult but also points at Product, Site and
+    Calendar, which makes it a fact table. Grouping by one of its own numbers
+    is legal SQL and never the question."""
+    _, payload = _dataset(model)
+    tables = {o["table"] for o in payload["grain_options"]}
+    assert "Batch" not in tables
+    assert {"Site", "Calendar", "Product"} <= tables
+
+
+def test_a_join_key_is_not_offered_as_a_grain(model):
+    """Grouping by an opaque id tells the reader nothing they came for."""
+    _, payload = _dataset(model)
+    assert "Site[SiteID]" not in {o["value"] for o in payload["grain_options"]}
+
+
+def test_the_dialect_reaches_the_generated_sql(model):
+    _, payload = _dataset(model, grain=["Site[SiteName]"], dialect=["snowflake"])
+    assert payload["dialect"] == "snowflake"
+    sql = " ".join(r["sql"] for r in payload["measures"] if r["sql"])
+    assert "COUNT_IF" in sql
+
+
+def test_an_unknown_dialect_is_refused_rather_than_ignored(model):
+    """Silently serving DuckDB syntax to someone who asked for Snowflake would
+    hand them a query that fails on their warehouse with no clue why."""
+    status, payload = _dataset(model, dialect=["oracle"])
+    assert status == 400
+    assert "oracle" in payload["error"]
+
+
+def test_no_grain_is_a_valid_request(model):
+    """The whole-model figure is one row, not an error."""
+    status, payload = _dataset(model)
+    assert status == 200
+    assert payload["grain"] == []
+    served = [r for r in payload["measures"] if r["sql"]]
+    assert served and all("GROUP BY" not in r["sql"] for r in served)

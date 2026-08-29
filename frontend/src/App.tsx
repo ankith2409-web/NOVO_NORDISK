@@ -24,6 +24,7 @@ import { Intro } from "@/components/Intro";
 import { FAVICON_SVG, Wordmark } from "@/components/Logo";
 import { Overview } from "@/views/Overview";
 import { Model } from "@/views/Model";
+import { Dataset } from "@/views/Dataset";
 import { Requirements } from "@/views/Requirements";
 import { Drift } from "@/views/Drift";
 import { Reconcile } from "@/views/Reconcile";
@@ -31,11 +32,21 @@ import { Review } from "@/views/Review";
 import { cx } from "@/lib/cx";
 import { recall, recallOneOf, remember } from "@/lib/remember";
 
-type ViewId = "overview" | "model" | "requirements" | "drift" | "reconcile" | "review";
+type ViewId =
+  | "overview"
+  | "model"
+  | "dataset"
+  | "requirements"
+  | "drift"
+  | "reconcile"
+  | "review";
 
 const VIEWS: { id: ViewId; label: string; needs?: "drift" | "reconcile" }[] = [
   { id: "overview", label: "Overview" },
   { id: "model", label: "Model" },
+  // Sits next to Model because it answers the same question at a different
+  // altitude: Model is one object in depth, Dataset is every measure at once.
+  { id: "dataset", label: "Dataset + SQL" },
   { id: "requirements", label: "Requirements" },
   { id: "drift", label: "Drift", needs: "drift" },
   { id: "reconcile", label: "Reconcile", needs: "reconcile" },
@@ -351,6 +362,7 @@ export default function App() {
           {!resolved && <p className="p-4 font-mono text-xs text-faint">Connecting…</p>}
           {resolved && view === "overview" && <Overview overview={overview} />}
           {resolved && view === "model" && <Model />}
+          {resolved && view === "dataset" && <Dataset />}
           {resolved && view === "requirements" && <Requirements />}
           {resolved && view === "drift" && <Drift alsoOn={othersWith("drift")} />}
           {resolved && view === "reconcile" && (

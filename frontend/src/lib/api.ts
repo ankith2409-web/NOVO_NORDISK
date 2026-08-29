@@ -164,6 +164,31 @@ export interface Summary {
   disclaimer?: string;
 }
 
+/** One measure, as it is written in the model and as it would be written in SQL. */
+export interface DatasetMeasure {
+  measure: string;
+  table: string;
+  folder: string;
+  description: string;
+  dax: string;
+  /** Empty when `status` is not "exact"; never a partial query. */
+  sql: string;
+  status: "exact" | "blocked" | "unsupported";
+  reason: string;
+  blocked_by: string;
+  reads_tables: string[];
+}
+
+export interface DatasetPayload {
+  model: string;
+  grain: string[];
+  dialect: string;
+  grain_options: { value: string; table: string; column: string }[];
+  dialects: string[];
+  counts: { measures: number; translated: number; blocked: number };
+  measures: DatasetMeasure[];
+}
+
 export interface ReconcilePayload {
   model: string;
   warehouse: string;
@@ -321,10 +346,34 @@ function withModel(params?: Record<string, string>): Record<string, string> | un
   return { ...(params ?? {}), model: activeModel };
 }
 
-async function get<T>(path: string, params?: Record<string, string>): Promise<Result<T>> {
-  if (SNAPSHOT_MODE) return fromSnapshot<T>(path, params);
-  params = withModel(params);
-  const query = params ? `?${new URLSearchParams(params)}` : "";
+/**
+ * `params` may be a plain object or `URLSearchParams`.
+ *
+ * The second form exists because a grain is a list: `?grain=A&grain=B` cannot
+ * be expressed as an object, and joining the values with a separator would
+ * break on the first column name that contains it.
+ */
+async function get<T>(
+  path: string,
+  params?: Record<string, string> | URLSearchParams,
+): Promise<Result<T>> {
+  const repeated = params instanceof URLSearchParams;
+  if (SNAPSHOT_MODE) {
+    // A snapshot is keyed by URL, so it is looked up with the flattened form.
+    const flat: Record<string, string> = {};
+    if (repeated) params.forEach((value, key) => (flat[key] = value));
+    return fromSnapshot<T>(path, repeated ? flat : params);
+  }
+
+  let query = "";
+  if (repeated) {
+    const merged = new URLSearchParams(params);
+    if (activeModel) merged.set("model", activeModel);
+    query = `?${merged}`;
+  } else {
+    const withIt = withModel(params);
+    query = withIt ? `?${new URLSearchParams(withIt)}` : "";
+  }
   let response: Response;
   try {
     response = await fetch(`/api${path}${query}`, { credentials: "same-origin" });
@@ -487,6 +536,19 @@ export const api = {
     }),
   drift: () => get<DriftPayload>("/drift"),
   reconcile: () => get<ReconcilePayload>("/reconcile"),
+
+  /**
+   * Every measure at one grain, with its SQL.
+   *
+   * `grain` repeats rather than joining with a separator, because a column
+   * name may legally contain whichever separator would have been chosen.
+   */
+  dataset: (grain: string[], dialect: string) => {
+    const params = new URLSearchParams();
+    for (const g of grain) params.append("grain", g);
+    if (dialect) params.set("dialect", dialect);
+    return get<DatasetPayload>("/dataset", params);
+  },
   // Separate calls, not a flag on the calls above: a summary is a second,
   // slower request the caller opts into deliberately, on data it has already
   // rendered -- not something every drift/reconcile load should wait on.

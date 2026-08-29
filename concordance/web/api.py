@@ -612,6 +612,98 @@ def _record(record: Any) -> dict[str, Any] | None:
     }
 
 
+def dataset(context: ApiContext, params: Params) -> dict[str, Any]:
+    """Every measure in one model, with its DAX and its SQL side by side.
+
+    Exists because reading a model one measure at a time is the wrong shape for
+    the question people actually arrive with -- "what does this dataset
+    compute, and how would I get the same numbers myself". Answering that used
+    to mean opening each measure in turn and copying it out.
+
+    ``grain`` is the SQL side's filter context, written down. Passing none asks
+    for the whole-model figure, which is a single row.
+    """
+    from concordance.generate.sql import DIALECTS, Status, to_dialect, translate_all
+
+    model = context.graph.model
+    grain = tuple(g for g in (params.get("grain") or []) if g.strip())
+    dialect = _one(params, "dialect", required=False).lower() or "duckdb"
+    if dialect not in DIALECTS:
+        raise ApiError(
+            HTTPStatus.BAD_REQUEST,
+            f"unknown dialect {dialect!r}; choose one of "
+            + ", ".join(sorted(DIALECTS)),
+        )
+
+    rows: list[dict[str, Any]] = []
+    for translation in translate_all(model, grain):
+        measure = next(
+            (m for m in model.measures if m.name == translation.measure), None
+        )
+        rows.append(
+            {
+                "measure": translation.measure,
+                "table": getattr(measure, "table", ""),
+                "folder": getattr(measure, "display_folder", "") or "",
+                "description": getattr(measure, "description", "") or "",
+                "dax": getattr(measure, "expression", ""),
+                "sql": to_dialect(translation.sql, dialect) if translation.sql else "",
+                "status": translation.status.value,
+                "reason": translation.reason,
+                "blocked_by": translation.blocked_by,
+                "reads_tables": sorted(translation.reads_tables),
+            }
+        )
+
+    translated = sum(1 for r in rows if r["status"] == Status.EXACT.value)
+    return {
+        "model": model.name,
+        "grain": list(grain),
+        "dialect": dialect,
+        "grain_options": _grain_options(model),
+        "dialects": sorted(DIALECTS),
+        "counts": {
+            "measures": len(rows),
+            "translated": translated,
+            "blocked": len(rows) - translated,
+        },
+        "measures": rows,
+    }
+
+
+def _grain_options(model) -> list[dict[str, str]]:
+    """Columns worth grouping by, so the caller need not know the schema.
+
+    Offered from dimension tables only: the ones other tables point at, which
+    point at nothing themselves. That leaf test is what separates Site and
+    Calendar from Batch -- Batch is pointed at by TestResult but also points at
+    Product, Site and Calendar, which makes it a fact table. Grouping a fact
+    table by one of its own measures-in-waiting ("yield per yield") is legal
+    SQL and never the question, and offering every column in the model would
+    bury the handful that are.
+    """
+    referenced = {r.to_table for r in model.relationships}
+    references = {r.from_table for r in model.relationships}
+    dimensions = referenced - references
+    keys = {(r.to_table, r.to_column) for r in model.relationships}
+    options: list[dict[str, str]] = []
+    for column in model.columns:
+        if column.table not in dimensions:
+            continue
+        if (column.table, column.name) in keys:
+            continue  # a join key groups by an opaque id
+        if (getattr(column, "expression", "") or "").strip():
+            continue  # calculated, so not present in the source
+        options.append(
+            {
+                "value": f"{column.table}[{column.name}]",
+                "table": column.table,
+                "column": column.name,
+            }
+        )
+    return sorted(options, key=lambda o: (o["table"], o["column"]))
+
+
 def _hint(result: dict[str, Any]) -> dict[str, Any]:
     """Carry a `did_you_mean` through to the error body when the tool offered one."""
     suggestions = result.get("did_you_mean")
@@ -631,6 +723,7 @@ ROUTES: dict[str, Callable[[ApiContext, Params], dict[str, Any]]] = {
     "/api/review": review,
     "/api/drift": drift,
     "/api/reconcile": reconcile,
+    "/api/dataset": dataset,
 }
 
 #: Answered outside `ROUTES` because neither is a pure function of a context:
