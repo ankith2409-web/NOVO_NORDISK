@@ -19,6 +19,7 @@ import {
   Button,
   Chip,
   controlClasses,
+  Empty,
   Failure,
   Loading,
   Stat,
@@ -185,23 +186,43 @@ export function Dataset() {
         </div>
       </div>
 
-      {data.grain_options.length === 0 && (
+      {data.grain_options.length === 0 && data.counts.measures > 0 && (
         <p className="text-xs text-faint">
           This model defines no relationships, so there is no dimension to group by.
           Every measure below is the whole-model figure.
         </p>
       )}
 
-      <div className="flex flex-col gap-3">
-        {shown.map((m) => (
-          <MeasureRow
-            key={m.measure}
-            measure={m}
-            copied={copied}
-            onCopy={copy}
-          />
-        ))}
-      </div>
+      {/* A model can genuinely have no measures -- uploading a single exported
+          table is now a supported thing to do, and one table is columns and no
+          DAX. Without this the page was three zeroes, a row of controls that
+          do nothing, and a note promising measures "below" that were not
+          there. */}
+      {data.counts.measures === 0 ? (
+        <Empty>
+          {data.model} defines no measures, so there is no DAX to translate. This
+          page shows what a model computes; a model that only holds tables and
+          columns computes nothing yet. The Model tab has its tables and
+          relationships.
+        </Empty>
+      ) : shown.length === 0 ? (
+        <Empty>
+          Every measure here depends on filter context a query cannot fix, so none
+          of them has SQL at any grain. Untick “only those with SQL” to see them
+          and the reason each one was refused.
+        </Empty>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {shown.map((m) => (
+            <MeasureRow
+              key={m.measure}
+              measure={m}
+              copied={copied}
+              onCopy={copy}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

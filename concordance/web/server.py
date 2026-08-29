@@ -314,6 +314,18 @@ class UploadStore:
         self._max_per_session = max_per_session
         self._max_total = max_total
         self._held: OrderedDict[str, tuple[str, api.ApiContext]] = OrderedDict()
+        #: Every name this store has *ever* issued, including ones since evicted
+        #: or forgotten.
+        #:
+        #: Disambiguating against what is currently held would let a name come
+        #: back. Upload five models and the fifth is issued the first's name,
+        #: because the first fell off the per-session cap and freed it -- so a
+        #: link, a second tab or a downloaded FRD that names "QualityControl
+        #: (2)" now resolves to a different model, under the name its reader
+        #: associates with the old one. That is one model's figures under
+        #: another's name, which is the single failure this project exists to
+        #: prevent, so a name is spent once and never reissued.
+        self._ever: set[str] = set()
         self._lock = threading.Lock()
 
     def add(
@@ -347,6 +359,7 @@ class UploadStore:
             # model's name so a renamed file does not invalidate every decision
             # recorded against it.
             context.graph.model.name = chosen
+            self._ever.add(chosen)
             self._held[chosen] = (session_id, context)
 
             evicted = ""
@@ -363,13 +376,16 @@ class UploadStore:
 
     def _free_name(self, name: str) -> str:
         base = name or "uploaded model"
-        if base not in self._reserved and base not in self._held:
+        if self._available(base):
             return base
-        for attempt in range(2, 100):
+        for attempt in range(2, 1000):
             candidate = f"{base} ({attempt})"
-            if candidate not in self._reserved and candidate not in self._held:
+            if self._available(candidate):
                 return candidate
         return f"{base} ({secrets.token_hex(3)})"
+
+    def _available(self, candidate: str) -> bool:
+        return candidate not in self._reserved and candidate not in self._ever
 
     def for_session(self, session_id: str | None) -> dict[str, api.ApiContext]:
         """Everything ``session_id`` uploaded, for layering onto the registry."""
@@ -935,36 +951,27 @@ def make_handler(
             it without a parser.
             """
             if not accepts_uploads:
-                self._json(
+                self._refuse_upload(
                     HTTPStatus.NOT_IMPLEMENTED,
-                    {
-                        "error": (
-                            "This server was started with --no-upload, so it "
-                            "reads only the models it was given."
-                        )
-                    },
+                    "This server was started with --no-upload, so it reads "
+                    "only the models it was given.",
                 )
                 return
 
             allowed, retry_after = upload_limiter.check(self._client_key())
             if not allowed:
-                self.send_response(HTTPStatus.TOO_MANY_REQUESTS)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Retry-After", str(retry_after))
-                body = json.dumps(
-                    {"error": f"Too many uploads in a short period. Try again in {retry_after}s."}
-                ).encode("utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self._cors_headers()
-                self.end_headers()
-                self.wfile.write(body)
+                self._refuse_upload(
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    f"Too many uploads in a short period. Try again in {retry_after}s.",
+                    retry_after=retry_after,
+                )
                 return
 
             filename = (params.get("filename") or [""])[0].strip()
             if not filename:
-                self._json(
+                self._refuse_upload(
                     HTTPStatus.BAD_REQUEST,
-                    {"error": "the upload needs ?filename= so its format can be read"},
+                    "the upload needs ?filename= so its format can be read",
                 )
                 return
 
@@ -974,19 +981,14 @@ def make_handler(
                 return
             if length > upload.MAX_UPLOAD_BYTES:
                 # Refused before a byte is read, so an oversized upload costs
-                # this server the header and nothing else. The socket is closed
-                # rather than drained: reading 2GB in order to reject it is the
-                # denial of service, not the defence against it.
-                self._json(
+                # this server the header and nothing else. Reading 2GB in order
+                # to reject it is the denial of service, not the defence
+                # against it.
+                self._refuse_upload(
                     HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
-                    {
-                        "error": (
-                            f"That file is larger than the "
-                            f"{upload.MAX_UPLOAD_BYTES // (1024 * 1024)}MB limit."
-                        )
-                    },
+                    f"That file is larger than the "
+                    f"{upload.MAX_UPLOAD_BYTES // (1024 * 1024)}MB limit.",
                 )
-                self.close_connection = True
                 return
 
             # Minted before parsing, so the model is held against a session that
@@ -1041,7 +1043,10 @@ def make_handler(
                     decisions=None,
                     uploaded=True,
                 ),
-                upload.safe_stem(filename) if uploaded.model.name in ("", None) else uploaded.model.name,
+                # The adapters always name a model, but the fallback is stated
+                # rather than assumed: an unnamed model would otherwise be
+                # filed under "" and disambiguated into "(2)", "(3)", ...
+                uploaded.model.name or upload.safe_stem(filename),
             )
 
             summary = uploaded.model.summary()
@@ -1061,6 +1066,36 @@ def make_handler(
                 },
                 session_id=session_id,
             )
+
+        def _refuse_upload(
+            self, status: HTTPStatus, message: str, retry_after: int = 0
+        ) -> None:
+            """Answer an upload without reading its body, and end the connection.
+
+            Every refusal here happens *before* the body is read -- that is the
+            point of them, since the cheapest way to survive a 2GB upload is not
+            to read it. But an unread body is still sitting in the socket, and
+            on a connection that gets reused it would be parsed as the next
+            request: the client would see a nonsense answer to a question it had
+            not finished asking.
+
+            ``http.server`` speaks HTTP/1.0 by default, so today every
+            connection is closed after one exchange anyway and this cannot
+            happen. That is a default, not a decision -- anyone setting
+            ``protocol_version = "HTTP/1.1"`` for keep-alive would turn four
+            polite refusals into a protocol desync -- so the close is stated
+            here rather than inherited.
+            """
+            body = json.dumps({"error": message}).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            if retry_after:
+                self.send_header("Retry-After", str(retry_after))
+            self.send_header("Content-Length", str(len(body)))
+            self._cors_headers()
+            self.end_headers()
+            self.wfile.write(body)
+            self.close_connection = True
 
         def _handle_forget(self) -> None:
             """Drop one of this session's uploaded models.

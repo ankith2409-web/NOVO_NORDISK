@@ -280,6 +280,23 @@ def test_a_corrupt_zip_is_a_readable_failure_not_a_traceback() -> None:
 # -- the filename is never trusted --------------------------------------------
 
 @pytest.mark.parametrize(
+    "given",
+    ["模型.zip", "Ventas España.pbix", "Модель.pbix", "Ürün Modeli.pbix"],
+)
+def test_a_non_english_model_keeps_its_name(given: str) -> None:
+    """An ASCII whitelist is not a security property, just an English-speaking
+    one: it erased every character of `模型.zip` and offered "uploaded-model".
+
+    The characters that matter to a filesystem -- separators, colons,
+    wildcards, control characters -- are punctuation and format categories, so
+    a Unicode-aware word class still excludes all of them.
+    """
+    stem = upload.safe_stem(given)
+    assert stem != "uploaded-model"
+    assert not any(bad in stem for bad in "/\\:*?\"<>|\0")
+
+
+@pytest.mark.parametrize(
     "given,expected",
     [
         ("../../etc/passwd.pbix", "passwd"),
@@ -394,6 +411,31 @@ def test_the_store_is_bounded_across_every_session() -> None:
     for index in range(10):
         store.add(f"session-{index}", _context(), f"Model {index}")
     assert len(store) == 3
+
+
+def test_a_name_is_never_reissued_after_its_model_is_gone() -> None:
+    """The bug this exists to stop, found by uploading five models in a row.
+
+    With disambiguation done against what is *currently* held, the fifth upload
+    is handed the first's name -- the first having fallen off the per-session
+    cap and freed it. A second tab, a saved link or a downloaded FRD naming
+    "QualityControl (2)" would then resolve to a different model under the name
+    its reader associates with the old one, which is one model's figures under
+    another's name.
+    """
+    store = UploadStore(reserved=set(), max_per_session=3)
+    issued = [store.add("alice", _context(), "Model")[0] for _ in range(5)]
+    assert len(set(issued)) == 5, f"a name came back: {issued}"
+
+
+def test_a_forgotten_name_is_not_handed_to_the_next_upload() -> None:
+    """Removing a model deliberately must not free its name either -- the
+    stale-reference problem is identical, and here the user asked for it."""
+    store = UploadStore(reserved=set())
+    first, _ = store.add("alice", _context(), "Model")
+    store.forget("alice", first)
+    second, _ = store.add("alice", _context(), "Model")
+    assert second != first
 
 
 def test_only_the_owner_can_forget_an_upload() -> None:

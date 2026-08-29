@@ -72,7 +72,15 @@ ACCEPTED = (".pbix", ".zip", ".tmdl")
 #: whitelist rather than escaped or trusted: a name is not permitted to contain
 #: a separator, a null, a leading dot, or anything else that means something to
 #: a filesystem.
-_NAME_SAFE = re.compile(r"[^A-Za-z0-9 ._-]+")
+#:
+#: ``\w`` rather than ``A-Za-z0-9``, because this doubles as the name a person
+#: reads. An ASCII-only whitelist erased every character of a model called
+#: ``模型.zip`` and offered them "uploaded-model" instead -- which is not a
+#: security property, just an English-speaking one. ``\w`` is Unicode-aware
+#: here and still excludes every character that means something to a path:
+#: separators, colons, wildcards and control characters are all punctuation or
+#: format categories, none of which it matches.
+_NAME_SAFE = re.compile(r"[^\w .-]+", re.UNICODE)
 
 
 def safe_stem(filename: str) -> str:
