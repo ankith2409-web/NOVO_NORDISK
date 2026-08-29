@@ -45,10 +45,46 @@ COLLECTION_ROUTES = (
     "/review",
     "/drift",
     "/reconcile",
+    # The whole-model figure, and the request the Dataset page makes on arrival.
+    "/dataset?dialect=duckdb",
 )
 
 #: Per-object routes are captured by name instead, one request per measure.
 BY_NAME_ROUTES = {"_measures": "/measure", "_impact": "/impact"}
+
+#: SQL dialects the Dataset page offers. Mirrors ``generate.sql.DIALECTS``, and
+#: is a literal rather than an import because this script talks to a server over
+#: HTTP and should not need the package it is capturing to be importable.
+DIALECTS = ("duckdb", "snowflake", "databricks", "redshift", "athena")
+
+
+def _dataset_routes(grains: list[str]) -> list[str]:
+    """Every Dataset request the offline build can make, in its own key format.
+
+    The Dataset page regenerates every query when the grain or the dialect
+    changes, so unlike the other views it is not one request but a small grid of
+    them. Capturing the grid is what makes those two selectors work offline
+    instead of answering "not part of this snapshot" on the second click.
+
+    The keys have to match what the client asks for *exactly*, since the offline
+    lookup is a dictionary hit on path-and-query. That is why this builds them
+    with ``urlencode`` in the client's own parameter order -- grain first, then
+    dialect -- rather than by writing the strings out.
+    """
+    routes = []
+    for dialect in DIALECTS:
+        routes.append("/dataset?" + urllib.parse.urlencode({"dialect": dialect}))
+    # The whole product, not one dialect per grain. Picking a grain and then
+    # asking for it in Snowflake is the obvious next click, and capturing only
+    # the diagonal meant that click answered "not part of this snapshot" -- the
+    # page going blank at exactly the moment it got interesting. About 10KB per
+    # entry, which is a cheap price for the two selectors actually working.
+    for grain in grains:
+        for dialect in DIALECTS:
+            routes.append(
+                "/dataset?" + urllib.parse.urlencode({"grain": grain, "dialect": dialect})
+            )
+    return routes
 
 
 def _opener() -> urllib.request.OpenerDirector:
@@ -76,6 +112,19 @@ def capture(base: str, out: Path) -> dict:
         payload = fetch(route)
         if payload is not None:
             snapshot[route] = payload
+
+    # Captured after the plain one, which is what reports the grains this model
+    # actually has -- they are its leaf dimensions, not a fixed list.
+    # Not named `base`: that is the server URL this function was handed, which
+    # `fetch` closes over, and shadowing it turned every later request into
+    # "unknown url type: {'model'".
+    whole = snapshot.get("/dataset?dialect=duckdb") or fetch("/dataset")
+    if whole:
+        grains = [option["value"] for option in whole.get("grain_options", [])]
+        for route in _dataset_routes(grains):
+            payload = fetch(route)
+            if payload is not None:
+                snapshot[route] = payload
 
     measures = snapshot.get("/measures", {}).get("measures", [])
     for key, route in BY_NAME_ROUTES.items():

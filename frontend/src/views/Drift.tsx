@@ -54,7 +54,12 @@ export function Drift(
   // 501 is the server saying a flag was not passed, which is not a failure and
   // must not be dressed as one. Anything else genuinely went wrong.
   if (error?.status === 501 && SNAPSHOT_MODE)
-    return <SnapshotGap title='Drift' why='Drift compares two versions of a model against each other as they are read, so there is no single capture that could hold it.' />;
+    return (
+      <SnapshotGap
+        title={FEATURE.drift.heading}
+        why="This compares two versions of a model against each other as they are read, so there is no single capture that could hold it."
+      />
+    );
   if (error?.status === 501)
     return (
       <NotConfigured
