@@ -49,8 +49,10 @@ def render(document: Document) -> WordDocument:
     _configure_styles(word)
 
     _title_block(word, document)
+    _front_matter(word, document)
     _review_queue(word, document)
     _requirements(word, document)
+    _glossary(word, document)
     _traceability_matrix(word, document)
     return word
 
@@ -150,7 +152,7 @@ def _requirements(word: WordDocument, document: Document) -> None:
             value.font.size = Pt(9.5)
             value.font.color.rgb = _CONFIDENCE_COLOUR[requirement.confidence]
 
-            _implementation(word, requirement)
+            _implementation(word, requirement, document)
             _sql(word, document, requirement)
 
 
@@ -195,8 +197,61 @@ def _sql(word: WordDocument, document: Document, requirement) -> None:
     run.font.color.rgb = _CONFIDENCE_COLOUR[Confidence.LOW]
 
 
-def _implementation(word: WordDocument, requirement) -> None:
-    """Show the DAX only where a single piece of evidence is the implementation."""
+def _front_matter(word: WordDocument, document: Document) -> None:
+    """Purpose, scope, constraints -- the sections a real BRD or FRD opens with.
+
+    Rendered from the same text the Markdown renderer uses, because two
+    renderers writing the same sections in their own words is two documents,
+    and the whole premise here is that the .docx and the .md are one document
+    in two formats.
+    """
+    from concordance.generate.document import front_matter_blocks
+
+    for heading, paragraphs, bullets in front_matter_blocks(document):
+        word.add_heading(heading, level=1)
+        for text in paragraphs:
+            word.add_paragraph(text)
+        for text in bullets:
+            word.add_paragraph(text, style="List Bullet")
+
+
+def _glossary(word: WordDocument, document: Document) -> None:
+    if not document.glossary:
+        return
+    word.add_heading("Glossary", level=1)
+    word.add_paragraph(
+        "Taken from the descriptions recorded in the model. Terms with no "
+        "description there do not appear here rather than being given one."
+    )
+    table = word.add_table(rows=1, cols=2)
+    table.style = "Light Grid Accent 1"
+    header = table.rows[0].cells
+    header[0].text = "Term"
+    header[1].text = "Meaning"
+    for term, meaning in document.glossary:
+        row = table.add_row().cells
+        row[0].text = term
+        row[1].text = meaning
+
+
+def _implementation(word: WordDocument, requirement, document: Document) -> None:
+    """Show the DAX only where a single piece of evidence is the implementation.
+
+    And only in the FRD: the reviewer's own split is that a BRD is business
+    information in plain English and the FRD is where the detail lives.
+    """
+    from concordance.generate.requirements import Kind
+
+    if document.kind is not Kind.FUNCTIONAL:
+        if len(requirement.evidence) > 1:
+            note = word.add_paragraph()
+            run = note.add_run(
+                f"Bound to {len(requirement.evidence)} objects — see the "
+                f"traceability matrix."
+            )
+            run.italic = True
+            run.font.size = Pt(9.5)
+        return
     if len(requirement.evidence) == 1 and requirement.evidence[0].detail:
         caption = word.add_paragraph()
         run = caption.add_run("Implementation")

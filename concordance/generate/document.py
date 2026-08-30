@@ -55,6 +55,17 @@ class Document:
     #: without it: the same measure at a different grain is a different query.
     sql_grain: tuple[str, ...] = ()
     sql_dialect: str = "duckdb"
+    #: Subject areas the document covers, for the scope section every real BRD
+    #: and FRD opens with.
+    subject_areas: tuple[str, ...] = ()
+    #: What the extractor could not read, as (feature, count, reason). These are
+    #: the document's constraints, and they are real ones: a template's
+    #: "Assumptions and Constraints" section is usually filled with generalities,
+    #: and this one is filled with the specific things this document does not
+    #: know about the model it describes.
+    limits: tuple[tuple[str, int, str], ...] = ()
+    #: Business terms and what they mean, from the model's own descriptions.
+    glossary: tuple[tuple[str, str], ...] = ()
 
     @property
     def requirements(self) -> tuple[Requirement, ...]:
@@ -148,7 +159,31 @@ def build(
         else {},
         sql_grain=tuple(sql_grain or ()),
         sql_dialect=sql_dialect,
+        subject_areas=tuple(sorted(t.name for t in graph.model.user_tables())),
+        limits=tuple(
+            (gap.feature, gap.count, gap.reason) for gap in graph.model.coverage_gaps
+        ),
+        glossary=_glossary(graph),
     )
+
+
+def _glossary(graph: SemanticGraph) -> tuple[tuple[str, str], ...]:
+    """Terms the model itself defines, for the glossary every template has.
+
+    Taken from descriptions the modeller wrote, never invented. A glossary of
+    terms this document made up would be worse than no glossary, and an empty
+    one is an honest signal that the model carries no descriptions -- which is
+    itself worth knowing about a model.
+    """
+    terms: dict[str, str] = {}
+    for measure in graph.model.measures:
+        if measure.description:
+            terms[measure.name] = measure.description
+    for table in graph.model.user_tables():
+        description = getattr(table, "description", "")
+        if description:
+            terms[table.name] = description
+    return tuple(sorted(terms.items()))
 
 
 def _translations(graph: SemanticGraph, grain, dialect: str) -> dict[str, object]:
@@ -233,6 +268,8 @@ def to_markdown(document: Document) -> str:
     )
     lines.append("")
 
+    lines.extend(_front_matter(document))
+
     if document.review_queue:
         lines.append("## Awaiting human confirmation")
         lines.append("")
@@ -261,7 +298,18 @@ def to_markdown(document: Document) -> str:
             # Show the implementation only when a single piece of evidence *is*
             # the implementation. For a requirement spanning many objects, one
             # arbitrary detail line would misrepresent what it is bound to.
-            if len(requirement.evidence) == 1 and requirement.evidence[0].detail:
+            #
+            # And only in the FRD. The reviewer drew the line herself: "BRD is
+            # basically the complete business information ... very plain English,
+            # that is it, and FRD is where you get into the details." A BRD
+            # carrying thirty lines of DAX is not a business document, and the
+            # person it is written for cannot read it. The statement and the
+            # rationale say the same thing in words; the traceability matrix
+            # still binds each one to the object it came from, so nothing is
+            # lost -- it moves.
+            if document.kind is not Kind.FUNCTIONAL:
+                pass
+            elif len(requirement.evidence) == 1 and requirement.evidence[0].detail:
                 detail = requirement.evidence[0].detail
                 if "\n" in detail:
                     lines.append("*Implementation:*")
@@ -272,7 +320,7 @@ def to_markdown(document: Document) -> str:
                 else:
                     lines.append(f"*Implementation:* `{detail}`")
                 lines.append("")
-            elif len(requirement.evidence) > 1:
+            if len(requirement.evidence) > 1:
                 lines.append(
                     f"*Bound to {len(requirement.evidence)} objects — see the "
                     f"traceability matrix.*"
@@ -282,6 +330,8 @@ def to_markdown(document: Document) -> str:
             # After the implementation, so the DAX and the SQL read as one pair.
             lines.extend(_sql_lines(document, requirement))
             lines.append("")
+
+    lines.extend(_glossary_lines(document))
 
     lines.append("## Traceability matrix")
     lines.append("")
@@ -303,6 +353,144 @@ def to_markdown(document: Document) -> str:
     lines.append("")
 
     return "\n".join(lines)
+
+
+#: What a BRD is expected to carry that no semantic model contains.
+#:
+#: Every published BRD template opens with objectives, stakeholders and a
+#: cost-benefit case. None of the three is anywhere in a .pbix -- a model
+#: records what is computed, never who asked for it or what it was worth. The
+#: honest move is to name them as the document's own gaps rather than either
+#: omitting them silently, which makes the document look complete when it is
+#: not, or inventing them, which is the exact failure this whole project
+#: exists to prevent.
+_NOT_IN_A_MODEL = (
+    (
+        "Business objectives and success measures",
+        "why this reporting exists and what it is expected to change",
+    ),
+    (
+        "Stakeholders and approvers",
+        "who owns each metric and who signs this document off",
+    ),
+    (
+        "Cost, benefit and delivery schedule",
+        "the commercial case and the dates it is judged against",
+    ),
+)
+
+
+def front_matter_blocks(
+    document: Document,
+) -> list[tuple[str, list[str], list[str]]]:
+    """The opening sections as (heading, paragraphs, bullets).
+
+    Structured rather than pre-rendered because two renderers need it: Markdown
+    wants strings with emphasis markers, Word wants paragraphs and list items.
+    Letting each write its own wording would produce two documents that differ
+    in the first thing anybody reads.
+    """
+    business = document.kind is not Kind.FUNCTIONAL
+    blocks: list[tuple[str, list[str], list[str]]] = []
+
+    if business:
+        purpose = (
+            f"This document states, in business terms, what the {document.model_name} "
+            f"reporting solution is required to deliver: the subject areas it covers "
+            f"and the metrics it is expected to report. It is written for the people "
+            f"who own and approve that reporting, and it deliberately carries no "
+            f"formulas — the Functional Requirements Document is where each metric's "
+            f"implementation is specified."
+        )
+    else:
+        purpose = (
+            f"This document specifies how the {document.model_name} semantic model "
+            f"satisfies the business requirements: the tables it reads, how those "
+            f"tables join, and the definition behind every metric, in DAX as "
+            f"implemented and in SQL as it would be written against a warehouse. It is "
+            f"written for whoever has to verify or rebuild the logic, and everything "
+            f"needed to do that is in this one document by design."
+        )
+    blocks.append(("Purpose", [purpose], []))
+
+    blocks.append((
+        "Scope of this document",
+        [
+            "Everything below is derived from the semantic model. The subject areas in "
+            "scope are stated as a requirement of their own, and bound to the tables "
+            "that satisfy it.",
+            "Out of scope: report-page layout, visual formatting and usage, which sit "
+            "outside the semantic model and cannot be read from it.",
+        ],
+        [],
+    ))
+
+    constraints = [
+        "This document was generated from the model itself, so it describes what is "
+        "implemented rather than what was intended. Where the two differ, the model is "
+        "what this reports."
+    ]
+    bullets: list[str] = []
+    if document.limits:
+        constraints.append(
+            "The following were present in the source and could not be read, so no "
+            "requirement below covers them:"
+        )
+        bullets = [f"{f} ({n}) — {why}" for f, n, why in document.limits]
+    else:
+        constraints.append(
+            "Everything the extractor understands was read from this model, and no "
+            "feature it recognises was skipped."
+        )
+    blocks.append(("Assumptions and constraints", constraints, bullets))
+
+    if business:
+        blocks.append((
+            "To be supplied by the business",
+            [
+                "A semantic model records what is calculated. It does not record why "
+                "anyone wanted it, who owns it, or what it was worth. These sections "
+                "belong in a complete BRD and cannot be derived from the model, so they "
+                "are named here rather than left out or invented:"
+            ],
+            [f"{heading} — {what}." for heading, what in _NOT_IN_A_MODEL],
+        ))
+
+    return blocks
+
+
+def _front_matter(document: Document) -> list[str]:
+    """The shared opening blocks, as Markdown."""
+    lines: list[str] = []
+    for heading, paragraphs, bullets in front_matter_blocks(document):
+        lines.append(f"## {heading}")
+        lines.append("")
+        for text in paragraphs:
+            lines.append(text)
+            lines.append("")
+        for text in bullets:
+            lines.append(f"- {text}")
+        if bullets:
+            lines.append("")
+    return lines
+
+
+def _glossary_lines(document: Document) -> list[str]:
+    """Terms the modeller described, rendered as the glossary a template ends with."""
+    if not document.glossary:
+        return []
+    lines = ["## Glossary", ""]
+    lines.append(
+        "Taken from the descriptions recorded in the model. Terms with no description "
+        "there do not appear here rather than being given one."
+    )
+    lines.append("")
+    lines.append("| Term | Meaning |")
+    lines.append("|---|---|")
+    for term, meaning in document.glossary:
+        lines.append(f"| **{term}** | {_plain(meaning)} |")
+    lines.append("")
+    return lines
 
 
 def _sql_lines(document: Document, requirement: Requirement) -> list[str]:
