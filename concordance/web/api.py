@@ -77,6 +77,16 @@ class ApiContext:
     #: Where review decisions are written. Absent means the queue is read-only,
     #: which the interface says rather than showing controls that do nothing.
     decisions: Path | None = None
+    #: True when that file does not survive a restart -- a container with no
+    #: mounted volume, which is what the hosted demo runs on.
+    #:
+    #: Declared by whoever starts the server, because nothing here can work it
+    #: out: a path looks identical whether or not the filesystem under it is
+    #: persistent. It exists because the alternative is silence, and silence
+    #: here means somebody signs a statement off believing it was recorded.
+    #: Under ALCOA+ a record has to be *enduring*; when it is not, the person
+    #: making it is the one who needs to know.
+    decisions_reset: bool = False
     #: The provider the chat already uses. Reused, not reconfigured, for the
     #: optional AI summary on drift and reconcile -- absent means that summary
     #: is unavailable, the same way an absent warehouse means reconcile is.
@@ -342,6 +352,9 @@ def review(context: ApiContext, params: Params) -> dict[str, Any]:
         "decided": count("decided"),
         "stale": count("stale"),
         "can_decide": context.decisions is not None,
+        # Only meaningful when the queue is writable at all; the view reads it
+        # alongside can_decide rather than on its own.
+        "decisions_reset": context.decisions_reset,
         # So the view can say *why* the queue is read-only. An uploaded model
         # has no log by design rather than by omission, and telling someone to
         # restart with --decisions would send them to fix a flag that is

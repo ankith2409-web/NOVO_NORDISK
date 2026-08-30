@@ -532,6 +532,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
             ),
             warehouse=warehouse if loaded.model.name == warehouse_owner else None,
             warehouse_schema=args.schema,
+            decisions_reset=args.decisions_reset_on_restart,
             # One log per model. Sharing a file between models would let a
             # decision recorded against one model's requirement id collide
             # with another's, and requirement ids are only unique within a
@@ -647,6 +648,39 @@ def cmd_serve(args: argparse.Namespace) -> int:
         auth0=auth0,
         accepts_uploads=not args.no_upload,
     )
+    return 0
+
+
+def cmd_lineage(args: argparse.Namespace) -> int:
+    """Emit the model's lineage as OpenLineage DatasetEvents."""
+    from concordance.generate import openlineage
+
+    graph = _load(args.source)
+    emitted = openlineage.emit(graph, namespace=args.namespace)
+
+    out = Path(args.out) if args.out else None
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(emitted.to_json(), encoding="utf-8")
+        print(f"{graph.model.name}  ->  {out}")
+        print(f"  {len(emitted.events)} dataset events")
+    else:
+        print(emitted.to_json())
+        return 0
+
+    # Said out loud rather than left to be discovered by comparing counts. A
+    # catalog fed lineage that quietly omits measures shows a model simpler
+    # than the real one.
+    if emitted.omitted:
+        print(f"  {len(emitted.omitted)} measures carry no column lineage:")
+        for measure, why in emitted.omitted[:5]:
+            print(f"    {measure} — {why}")
+        if len(emitted.omitted) > 5:
+            print(f"    ... and {len(emitted.omitted) - 5} more")
+        print(
+            "  These depend on filter context, so which columns they read is "
+            "not fixed. Guessing would be worse than the gap."
+        )
     return 0
 
 
@@ -1106,6 +1140,22 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("-o", "--out", help="output directory")
     p.set_defaults(func=cmd_auditpack)
 
+    p = sub.add_parser(
+        "lineage",
+        help="emit the model's lineage as OpenLineage, for a data catalog",
+    )
+    p.add_argument("source", help="path to a .pbix file or TMDL model folder")
+    p.add_argument(
+        "--namespace",
+        default="powerbi",
+        help="the OpenLineage namespace these datasets live in. OpenLineage's "
+        "naming spec registers no scheme for a Power BI semantic model, so this "
+        "one is a choice rather than a standard -- set it to whatever your "
+        "catalog already uses.",
+    )
+    p.add_argument("-o", "--out", help="output path; prints to stdout when omitted")
+    p.set_defaults(func=cmd_lineage)
+
     p = sub.add_parser("snapshot", help="record a model's fingerprints for later comparison")
     p.add_argument("source", help="path to a .pbix file or TMDL model folder")
     p.add_argument("--label", help="name for this snapshot, e.g. v1 or 2026-08-07")
@@ -1165,6 +1215,15 @@ def main(argv: list[str] | None = None) -> int:
         "bound to the fingerprints of what it was made about, so it stops "
         "applying by itself when that logic changes. Pass the flag alone for "
         "concordance-decisions.jsonl in the current directory.",
+    )
+    p.add_argument(
+        "--decisions-reset-on-restart",
+        action="store_true",
+        help="declare that the --decisions file does not survive a restart, so "
+        "the review queue says so before anyone signs anything off. Set it when "
+        "the log sits on a container with no mounted volume: nothing can detect "
+        "that from a path, and a reviewer who is not told assumes their decision "
+        "was kept.",
     )
     p.add_argument(
         "--no-upload",

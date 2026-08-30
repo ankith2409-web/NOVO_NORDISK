@@ -51,5 +51,6 @@ exec concordance serve $MODELS \
     --compare-to ClinicalTrialSafety=data/models/ClinicalTrialSafety_v2.SemanticModel \
     --warehouse QualityControl=data/warehouse/quality_control.duckdb \
     --decisions /app/state/decisions.jsonl \
+    --decisions-reset-on-restart \
     --host 0.0.0.0 \
     --port "${PORT:-8000}"

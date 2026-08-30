@@ -155,6 +155,26 @@ export function Review() {
         />
       )}
 
+      {/* Said before anyone decides anything, not after.
+          A decision here is meant to outlive the sitting it was made in --
+          that is the whole point of binding it to a fingerprint. On a
+          container with no mounted volume it does not, and the person
+          clicking "accept" is the one who needs to know that. */}
+      {data.can_decide && data.decisions_reset && (
+        <p className="max-w-prose rounded border border-review/40 bg-review-soft px-3.5 py-2.5 text-xs text-review">
+          <strong className="font-medium">
+            Decisions recorded here are lost when this server restarts.
+          </strong>{" "}
+          This deployment writes them to the container&rsquo;s own disk, which is
+          replaced on every redeploy. They are real while it runs — bound to the
+          definitions they were made against, and shown as stale if those change
+          — but nothing here is a permanent record yet. Run{" "}
+          <code className="font-mono text-ink">concordance serve</code> with{" "}
+          <code className="font-mono text-ink">--decisions</code> pointed at
+          storage that persists to keep them.
+        </p>
+      )}
+
       {/* Two reasons the queue can be read-only, and they need different
           sentences. Telling someone to restart with --decisions when the
           server already has it -- because the model in front of them is one

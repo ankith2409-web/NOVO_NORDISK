@@ -109,6 +109,7 @@ concordance verify   <model> <measure>  # prove the fingerprint on real model co
 concordance document <model> --type brd # generate a BRD (--type frd, --format docx)
 concordance auditpack <model>            # evidence bundle: docs + fingerprint manifest
 concordance ask      <model> "question"  # ask about the model (omit for interactive)
+concordance lineage  <model> [-o]        # OpenLineage DatasetEvents for a data catalog
 concordance serve    <model> [--port]    # web UI + JSON API at http://127.0.0.1:8000
                                          #   visitors may upload their own model;
                                          #   --no-upload turns that off
@@ -209,6 +210,33 @@ one command anyone would naturally run showed the least of what the project does
 
 If the built file is ever missing, `serve` falls back to the chat-only page and
 says so at startup rather than failing.
+
+### Handing the lineage to a data catalog
+
+`concordance lineage <model>` writes the model's lineage as
+[OpenLineage](https://openlineage.io) — one `DatasetEvent` per table, carrying a
+`schema` facet and a `columnLineage` facet. A company that already runs Marquez,
+DataHub, Atlan or Collibra has somewhere to put lineage and no way to get Power
+BI's into it; this is the analysis already done, written in the format the rest
+of that ecosystem reads.
+
+Three things it deliberately does not do:
+
+- **No `RunEvent`.** OpenLineage's usual shape is a job running and producing a
+  dataset. A semantic model is not a run — it is a standing description, true
+  until someone edits it — so this emits `DatasetEvent`, which the spec defines
+  as unable to carry a `job` or a `run`. A run id we invented would be a claim
+  about an execution that never happened.
+- **No guessed columns.** A measure's lineage is resolved by the same compiler
+  that writes its SQL, so `OOS Rate` reports `TestResult.ResultStatus` rather
+  than the measures it is defined over. A measure whose columns depend on filter
+  context has no fixed answer, so it gets no lineage entry — and the command
+  prints which ones and why, because a catalog fed a model with a quarter of its
+  measures missing, and no note saying so, shows something simpler than the truth.
+- **No claim about the namespace.** OpenLineage's naming specification registers
+  schemes for warehouses and object stores and has none for a Power BI semantic
+  model. `--namespace` defaults to `powerbi` and exists so you can set whatever
+  your catalog already uses.
 
 ### Opening your own model, without a terminal
 

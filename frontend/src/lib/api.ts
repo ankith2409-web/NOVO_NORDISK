@@ -122,6 +122,9 @@ export interface ReviewPayload {
   /** True when this model was uploaded, which is the *other* reason
    *  `can_decide` can be false -- and a different thing to tell the reader. */
   uploaded: boolean;
+  /** True when the decision log does not survive a restart. Read alongside
+   *  `can_decide`: the queue is writable, and what it writes is temporary. */
+  decisions_reset: boolean;
   pending: (Requirement & { standing: Standing })[];
 }
 

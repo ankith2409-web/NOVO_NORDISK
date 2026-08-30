@@ -384,3 +384,26 @@ def test_a_later_decision_never_obscures_an_earlier_one(tmp_path) -> None:
     assert [d.verdict for d in history] == [Verdict.REJECTED, Verdict.ACCEPTED]
     assert history[0].note == "wrong", "the superseded entry lost its reason"
     assert path.read_text().count("\n") == 2, "an entry was rewritten rather than appended"
+
+
+def test_a_queue_whose_log_is_temporary_says_so(tmp_path) -> None:
+    """ALCOA+ requires a record to be *enduring*. When it is not, the person
+    making it is the one who needs to know -- before they decide, not after.
+
+    The server cannot detect this: a path looks identical whether or not the
+    filesystem under it survives a restart. So the operator declares it, and
+    the flag reaches the queue.
+    """
+    from concordance.cli import _load
+    from concordance.web import api
+
+    graph = _load("data/models/QualityControl.SemanticModel")
+    ephemeral = api.ApiContext(
+        graph=graph, decisions=tmp_path / "d.jsonl", decisions_reset=True
+    )
+    durable = api.ApiContext(graph=graph, decisions=tmp_path / "d.jsonl")
+
+    assert api.review(ephemeral, {})["decisions_reset"] is True
+    assert api.review(durable, {})["decisions_reset"] is False
+    # It never contradicts can_decide: the queue is writable either way.
+    assert api.review(ephemeral, {})["can_decide"] is True
