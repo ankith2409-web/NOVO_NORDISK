@@ -39,6 +39,17 @@ import { FEATURE } from "@/lib/naming";
 /** The whole-model figure, which is a single row rather than an absence. */
 const WHOLE_MODEL = "__whole__";
 
+/** Power BI's cardinality notation, said out loud for the hover. */
+function cardinalityInWords(cardinality: string): string {
+  const said: Record<string, string> = {
+    "M:1": "Many rows on the left match one row on the right",
+    "1:M": "One row on the left matches many rows on the right",
+    "1:1": "One row on each side matches exactly one on the other",
+    "M:M": "Many rows on each side can match many on the other",
+  };
+  return said[cardinality] ?? cardinality;
+}
+
 export function Dataset() {
   const [grain, setGrain] = useState<string>(WHOLE_MODEL);
   const [dialect, setDialect] = useState("duckdb");
@@ -91,8 +102,8 @@ export function Dataset() {
       <header className="flex flex-col gap-1">
         <h1 className="font-serif text-2xl font-bold">{FEATURE.dataset.heading}</h1>
         <p className="text-sm text-muted">
-          Every measure in {data.model}, as it is written in Power BI and as it would
-          be written in SQL.
+          Everything {data.model} calculates: the tables it holds, how they join, and
+          each number as it is written in Power BI and as it would be written in SQL.
         </p>
       </header>
 
@@ -103,7 +114,7 @@ export function Dataset() {
           label="no SQL possible"
           value={data.counts.blocked}
           tone={data.counts.blocked ? "review" : "neutral"}
-          hint="Constructs that depend on filter context the query cannot fix."
+          hint="Measures whose answer depends on what the report is showing, so no single query can stand for them."
         />
       </div>
 
@@ -126,7 +137,7 @@ export function Dataset() {
             onChange={(e) => setGrain(e.target.value)}
             className="min-h-8 rounded border border-hairline bg-ground px-2 py-1 text-sm"
           >
-            <option value={WHOLE_MODEL}>the whole model</option>
+            <option value={WHOLE_MODEL}>everything, as one total</option>
             {data.grain_options.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.table} · {o.column}
@@ -201,8 +212,8 @@ export function Dataset() {
 
       {data.grain_options.length === 0 && data.counts.measures > 0 && (
         <p className="text-xs text-faint">
-          This model defines no relationships, so there is no dimension to group by.
-          Every measure below is the whole-model figure.
+          This model has no relationships, so there is nothing to break the numbers
+          down by. Every measure below is a single total across everything.
         </p>
       )}
 
@@ -220,9 +231,9 @@ export function Dataset() {
         </Empty>
       ) : shown.length === 0 ? (
         <Empty>
-          Every measure here depends on filter context a query cannot fix, so none
-          of them has SQL at any grain. Untick “only those with SQL” to see them
-          and the reason each one was refused.
+          Every measure here changes its answer with what the report is showing, so
+          none of them can be written as a single query. Untick “only those with
+          SQL” to see them and the reason for each.
         </Empty>
       ) : (
         <div className="flex flex-col gap-3">
@@ -343,7 +354,15 @@ function Structure({
                       <span className="font-mono text-[12px]">
                         {join.to_table}[{join.to_column}]
                       </span>
-                      <span className="font-mono text-[11px] text-faint">
+                      {/* "M:1" is Power BI's notation and means nothing to
+                          somebody reading a requirements document, so the
+                          hover says it in words. Kept short on screen because
+                          the pattern repeats down the list and the long form
+                          would drown the table names. */}
+                      <span
+                        className="font-mono text-[11px] text-faint"
+                        title={cardinalityInWords(join.cardinality)}
+                      >
                         {join.cardinality}
                       </span>
                       {/* Marked, not hidden. An inactive relationship only
@@ -427,12 +446,13 @@ function MeasureRow({
           // from "we did not try".
           <div className="flex flex-col gap-1.5 rounded border border-review/40 bg-review-soft px-3 py-2.5">
             <span className="font-mono text-[10px] tracking-[0.08em] text-review uppercase">
-              no SQL at any grain
+              no single query can do this
             </span>
             <p className="text-sm text-review">{measure.reason}</p>
             <p className="text-xs text-muted">
-              This is a property of the expression, not a gap in the translation:
-              the value depends on filter context that a query cannot fix.
+              This is about the measure, not a gap in the tool. Its answer changes
+              with what the report is filtered to, and a query has to be written
+              for one fixed set of filters.
             </p>
           </div>
         )}

@@ -332,7 +332,10 @@ function Detail({
         {measure && (
           <Panel title={`Reads (${measure.depends_on.length})`}>
             {measure.depends_on.length === 0 ? (
-              <p className="p-3 text-xs text-muted">Nothing — this is a leaf definition.</p>
+              <p className="p-3 text-xs text-muted">
+            Nothing — this one is calculated directly from columns, not from other
+            measures.
+          </p>
             ) : (
               <ul className="divide-y divide-hairline">
                 {measure.depends_on.map((id) => (

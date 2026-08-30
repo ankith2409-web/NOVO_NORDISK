@@ -48,33 +48,40 @@ _AGGREGATES: dict[str, str] = {
 
 #: Constructs that remain undecidable after the grain is fixed, and the reason.
 #: Kept as data so the message a reader sees is the same one the tests assert.
+#:
+#: Written for the person the document is for, not for the person who wrote the
+#: DAX. A reviewer asked us twice to keep the language simple, and "removes
+#: filter context" fails that test completely: it is exact, it is the correct
+#: term, and it explains nothing to the analyst who has to decide whether this
+#: measure matters to them. Each reason below says what would go wrong in terms
+#: of the report, because that is the thing a reader has actually seen.
 _BLOCKERS: dict[str, str] = {
-    "PREVIOUSMONTH": "shifts the date filter context rather than reading it",
-    "PREVIOUSYEAR": "shifts the date filter context rather than reading it",
-    "PREVIOUSQUARTER": "shifts the date filter context rather than reading it",
-    "PREVIOUSDAY": "shifts the date filter context rather than reading it",
-    "SAMEPERIODLASTYEAR": "shifts the date filter context rather than reading it",
-    "DATEADD": "shifts the date filter context rather than reading it",
-    "PARALLELPERIOD": "shifts the date filter context rather than reading it",
-    "TOTALYTD": "accumulates over a date range the query does not fix",
-    "TOTALQTD": "accumulates over a date range the query does not fix",
-    "TOTALMTD": "accumulates over a date range the query does not fix",
-    "DATESYTD": "accumulates over a date range the query does not fix",
-    "DATESBETWEEN": "accumulates over a date range the query does not fix",
-    "DATESINPERIOD": "accumulates over a date range the query does not fix",
-    "RANKX": "ranks over a set the surrounding visual chooses, not the query",
-    "TOPN": "ranks over a set the surrounding visual chooses, not the query",
-    "ALL": "removes filter context, so the result depends on what was filtered",
-    "ALLEXCEPT": "removes filter context, so the result depends on what was filtered",
-    "ALLSELECTED": "removes filter context, so the result depends on what was filtered",
-    "REMOVEFILTERS": "removes filter context, so the result depends on what was filtered",
-    "USERELATIONSHIP": "evaluates against a different join than the model's active one",
-    "CROSSFILTER": "changes the direction filters travel between tables",
-    "ISINSCOPE": "reports differently depending on the level being viewed",
-    "HASONEVALUE": "reports differently depending on the level being viewed",
-    "SELECTEDVALUE": "reports differently depending on the level being viewed",
-    "ISFILTERED": "reports differently depending on the level being viewed",
-    "EARLIER": "refers to an outer row context with no SQL counterpart",
+    "PREVIOUSMONTH": "compares against an earlier period, so its answer depends on which period the report is showing",
+    "PREVIOUSYEAR": "compares against an earlier period, so its answer depends on which period the report is showing",
+    "PREVIOUSQUARTER": "compares against an earlier period, so its answer depends on which period the report is showing",
+    "PREVIOUSDAY": "compares against an earlier period, so its answer depends on which period the report is showing",
+    "SAMEPERIODLASTYEAR": "compares against an earlier period, so its answer depends on which period the report is showing",
+    "DATEADD": "compares against an earlier period, so its answer depends on which period the report is showing",
+    "PARALLELPERIOD": "compares against an earlier period, so its answer depends on which period the report is showing",
+    "TOTALYTD": "adds up from the start of a period, and which period that is comes from the report rather than from this measure",
+    "TOTALQTD": "adds up from the start of a period, and which period that is comes from the report rather than from this measure",
+    "TOTALMTD": "adds up from the start of a period, and which period that is comes from the report rather than from this measure",
+    "DATESYTD": "adds up from the start of a period, and which period that is comes from the report rather than from this measure",
+    "DATESBETWEEN": "adds up over a date range the report chooses, not this measure",
+    "DATESINPERIOD": "adds up over a date range the report chooses, not this measure",
+    "RANKX": "ranks rows against each other, and which rows it ranks against depends on what the report is showing",
+    "TOPN": "picks the top few rows, and which rows it picks from depends on what the report is showing",
+    "ALL": "deliberately ignores what the user filtered the report to, so its answer changes with every click and no single query can stand for it",
+    "ALLEXCEPT": "deliberately ignores what the user filtered the report to, so its answer changes with every click and no single query can stand for it",
+    "ALLSELECTED": "deliberately ignores what the user filtered the report to, so its answer changes with every click and no single query can stand for it",
+    "REMOVEFILTERS": "deliberately ignores what the user filtered the report to, so its answer changes with every click and no single query can stand for it",
+    "USERELATIONSHIP": "uses a different join than the one the model normally uses, and only while this measure is running",
+    "CROSSFILTER": "changes which way filters travel between tables while this measure is running",
+    "ISINSCOPE": "answers differently depending on how far the user has drilled down in the report",
+    "HASONEVALUE": "answers differently depending on how far the user has drilled down in the report",
+    "SELECTEDVALUE": "answers differently depending on what the user has selected in the report",
+    "ISFILTERED": "answers differently depending on what the user has filtered in the report",
+    "EARLIER": "refers back to a row being worked through elsewhere in the same calculation, which a query has no way to point at",
 }
 
 

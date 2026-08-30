@@ -406,7 +406,14 @@ def test_a_measure_with_no_sql_says_why_in_the_document(model):
     from concordance.generate.document import to_markdown
 
     text = to_markdown(_frd(model, sql_grain=SITE))
-    assert "PREVIOUSMONTH shifts the date filter context rather than reading it." in text
+    # The construct that stopped it, and a reason -- but not one exact sentence.
+    # Pinning the prose made this test fail the moment the reasons were rewritten
+    # in plainer language, which is a change it should not have had an opinion
+    # about: what matters is that the reader is told *what* stopped it and that
+    # the stopping is about the measure rather than about the tool.
+    from concordance.generate.sql import _BLOCKERS
+
+    assert f"PREVIOUSMONTH {_BLOCKERS['PREVIOUSMONTH']}" in text
     assert "property of the expression rather than a gap in the translation" in text
 
 
