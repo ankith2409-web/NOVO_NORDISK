@@ -9,10 +9,20 @@ dist/
 # Generated graphs — reproducible from data/models via `concordance extract`
 data/out/
 
-# Sample .pbix models (~16MB of binaries). Kept out of version control; place
-# them in data/models/ locally. Tests skip cleanly when they are absent.
+# Sample .pbix models are binaries and are kept out of version control by
+# default -- with two exceptions, un-ignored below. Tests skip cleanly when an
+# ignored one is absent.
+#
+# The exceptions are there because the deployed demo serves them, and a
+# gitignored file is simply not present in a fresh clone: the container would
+# have exited on boot with "no such file or folder", taking the whole demo down
+# on a Sunday. They are also the point of the demo now -- a reviewer asked to
+# see this run against a Power BI file nobody here authored, and a sample that
+# only exists on one laptop cannot answer that.
 # Only the binaries are excluded -- TMDL models are text and belong in git.
 data/models/*.pbix
+!data/models/Supply_Chain_Sample.pbix
+!data/models/Sales_Returns_Sample.pbix
 
 .env
 .DS_Store

@@ -454,3 +454,106 @@ def test_word_renders_sql_as_real_line_breaks(model):
 
     query = next(p for p in paragraphs if p.text.startswith("SELECT"))
     assert query._p.xml.count("<w:br/>") >= 3
+
+
+# -- against Power BI files this project did not write -------------------------
+#
+# Everything above tests the three models authored for this project, which is
+# a fair test of the compiler and no test at all of its coverage: they were
+# written by the same people who wrote the translator, in the DAX it happens to
+# read. A reviewer made exactly that point, and running the translator over
+# Microsoft's own published samples proved it -- seventeen measures came back
+# "not a function this translator reads yet", including seven for CONCATENATE
+# and four for a plain parse failure on Power BI's automatic date hierarchies.
+#
+# These tests pin the distinction that survived. Coverage on somebody else's
+# model is genuinely lower and that is honest; what must not happen is a refusal
+# that blames the DAX for a gap in the reader.
+
+REAL_MODELS = [
+    Path("data/models/Supply_Chain_Sample.pbix"),
+    Path("data/models/Sales_Returns_Sample.pbix"),
+    Path("data/models/AdventureWorks_Sales.pbix"),
+]
+
+
+def _real(path: Path):
+    if not path.exists():
+        pytest.skip(f"sample not present: {path}")
+    from concordance.adapters.pbix import PbixAdapter
+
+    return PbixAdapter().extract(str(path))
+
+
+@pytest.mark.parametrize("path", REAL_MODELS, ids=lambda p: p.stem)
+def test_a_real_power_bi_file_leaves_no_translator_gap(path: Path) -> None:
+    """Every refusal on a real model must be a fact about the DAX.
+
+    UNSUPPORTED means "we have not built this yet" and BLOCKED means "this
+    cannot be done". The two read completely differently to someone deciding
+    whether to wait for a fix, so a gap dressed as a limit is a lie and a limit
+    dressed as a gap is a promise that will never be kept.
+    """
+    gaps = [
+        f"{t.measure}: {t.reason}"
+        for t in translate_all(_real(path))
+        if t.status is Status.UNSUPPORTED
+    ]
+    assert not gaps, "translator gaps on a real Power BI file:\n  " + "\n  ".join(gaps)
+
+
+@pytest.mark.parametrize("path", REAL_MODELS, ids=lambda p: p.stem)
+def test_every_query_from_a_real_model_is_valid_sql(path: Path) -> None:
+    """Parsed with sqlglot rather than eyeballed, and in three dialects.
+
+    A translator that emits confident nonsense is worse than one that refuses,
+    so "it produced something" is not the assertion -- "a SQL engine agrees it
+    is SQL" is.
+    """
+    import sqlglot
+
+    for translation in translate_all(_real(path)):
+        if translation.status is not Status.EXACT:
+            continue
+        sqlglot.parse_one(translation.sql, read="duckdb")
+        for dialect in ("snowflake", "databricks"):
+            assert to_dialect(translation.sql, dialect)
+
+
+def test_the_hard_real_model_still_translates_something() -> None:
+    """Sales & Returns is the honest hard case: 58 measures, most of them
+    time-intelligence or ALL(), and six that come out exactly.
+
+    Pinned so a change that quietly drops coverage to zero is caught. The
+    number is low on purpose and is not a target to inflate -- the other test
+    in this pair is what stops it being inflated dishonestly.
+    """
+    got = translate_all(_real(Path("data/models/Sales_Returns_Sample.pbix")))
+    assert sum(1 for t in got if t.status is Status.EXACT) >= 6
+
+
+def test_a_measure_can_be_referenced_with_its_table_in_front() -> None:
+    """`'% Return Rate'[% Return Rate Value]` is a measure, written qualified.
+
+    Valid DAX, and indistinguishable from a column reference until the column
+    lookup misses. Two measures in a real sample were refused as "not a column
+    in this model", which is wrong twice over: the thing exists, and the reader
+    could have found it.
+    """
+    got = {t.measure: t for t in translate_all(_real(REAL_MODELS[1]))}
+    for name in ("WIF Adjusted Units Returned", "WIF Adjusted Net Sales"):
+        assert "is not a column in this model" not in got[name].reason
+
+
+def test_an_automatic_date_hierarchy_parses_and_is_refused_for_a_real_reason() -> None:
+    """`ALL('Calendar'[Date].[Month])` used to fail as "expected ')'".
+
+    Power BI generates that hierarchy for every date column, so this is not an
+    exotic corner -- and reporting a parse error made the model look malformed
+    when the reader was simply not reading it.
+    """
+    got = {t.measure: t for t in translate_all(_real(REAL_MODELS[1]))}
+    for name in ("WIF Sales", "Total Return Rate"):
+        assert got[name].status is Status.BLOCKED
+        assert "expected" not in got[name].reason
+        assert "ALL" in got[name].reason

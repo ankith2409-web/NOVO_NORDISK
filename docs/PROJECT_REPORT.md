@@ -1,6 +1,6 @@
 # Concordance — Project Report
 
-**Novo Nordisk GBS Hackathon 2026 — Problem Statement 5**
+**Novo Nordisk GBS Hackathon 2026 — Problem Statement 21**
 *An AI agent with a chatbot interface that automates BRD/FRD creation, extracts the Power
 BI semantic layer, and documents tables, joins, KPIs, measures and DAX logic.*
 
@@ -76,6 +76,35 @@ and SQL never produce the same hash even when they compute the same number, the 
 instead looks at what each definition structurally reads — which tables, which columns,
 which aggregation — and reports whether the two are consistent, divergent, or need human
 review.
+
+### 3.5a DAX to SQL, at a stated grain
+Translates a Power BI measure into a query that can be run against a warehouse. DAX has no
+single SQL equivalent because a measure's value depends on the filter context the report
+supplies; naming a grain is what closes that gap, since `GROUP BY` *is* the filter context
+written down. Every query therefore travels with the grain it was written for.
+
+Coverage, measured rather than estimated:
+
+| Model | Measures | Translated | Notes |
+|---|---|---|---|
+| QualityControl | 20 | 16 | authored for this project |
+| ClinicalTrialSafety | 24 | 18 | authored for this project |
+| DiabetesCare | 12 | 11 | authored for this project |
+| Supply Chain (Microsoft sample) | 4 | 4 | not authored here |
+| Sales & Returns (Microsoft sample) | 58 | 6 | not authored here |
+
+The last row is the important one and is not a typo. On models written for this project
+the translator handles 80%; on a Power BI file nobody here authored it handles 10%. The
+difference is not a defect being hidden — it is what the first three numbers were always
+worth. Sales & Returns leans on time intelligence (`PREVIOUSMONTH`), `ALL`, `ALLSELECTED`
+and `ISINSCOPE`, all of which change or remove the filter context rather than reading it,
+and none of which a single query at a fixed grain can express.
+
+What matters more than the ratio is what happens to the other 52. Each is refused with the
+construct that stopped it and why, rather than being emitted as SQL that parses and quietly
+computes a different number. A wrong query is worse than an absent one: the absent one gets
+asked about. Automated tests assert that no refusal on a real Power BI file is ever a gap
+in the translator dressed up as a limit of the DAX.
 
 ### 3.6 Lineage graph
 Traces a number visually from the file or warehouse it was loaded from, through the
@@ -172,11 +201,19 @@ unrunnable for anyone without a paid account.
 
 ## 5. Verification
 
-- **741 automated Python tests, 60 automated frontend tests**, all passing.
+- Built with **Claude Code** (Anthropic's coding agent) driving the implementation, with
+  every design decision, test and refusal reviewed and accepted by the team. The reasoning
+  behind each non-obvious choice is written into the source as comments rather than left
+  in a chat log, which is why the modules read as arguments rather than as instructions.
+- **865 automated Python tests, 60 automated frontend tests**, all passing.
 - Tests for the load-bearing claims were deliberately broken once and confirmed to fail,
   to prove they actually catch the problems they claim to — including the one asserting a
   reviewer cannot sign off under another reviewer's name.
-- Every major feature was also checked by hand against real models and a real warehouse —
+- Reconciliation was checked against a real DuckDB warehouse holding real metric
+  definitions. Its base tables are deliberately empty: the comparison is structural — which
+  tables, columns and aggregations each side reads — so it needs the SQL, not the rows. No
+  figure in this report is a row count from that warehouse.
+- Every major feature was also checked by hand against real models —
   not just unit tests — which is how several real defects were found and fixed during this
   project: a crash on a corrupted database file, a routing bug that served the wrong page,
   a metric-pairing rule that produced far too many false suggestions, a table declared
@@ -193,7 +230,12 @@ These are **test fixtures**, not a built-in library of industry dashboards — C
 does not ship pre-built content for any domain. Pointed at any other real Power BI model,
 it extracts and documents that model with the same behavior.
 
-Six of the seven are synthetic, authored to mirror real structure. The diabetes model is
+Four of the seven were authored for this project. The other three are Power BI sample
+workbooks published by Microsoft, used unmodified — they are the only honest test of how
+this behaves on DAX nobody here chose, and section 3.5a reports what that test showed.
+
+Of the four authored here, three are synthetic, written to mirror real structure. The
+diabetes model is
 different: it is built directly on a real, public dataset — the Pima Indians Diabetes
 Dataset (National Institute of Diabetes and Digestive and Kidney Diseases), 768 real
 patient records — kept including its known missing-value encoding rather than cleaned, so

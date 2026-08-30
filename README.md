@@ -1,6 +1,6 @@
 # Concordance
 
-**Novo Nordisk GBS Hackathon 2026 — Problem Statement 5**
+**Novo Nordisk GBS Hackathon 2026 — Problem Statement 21**
 An AI agent with a chatbot interface that automates BRD/FRD creation, extracts Power BI
 semantic layer details, and documents tables, joins, KPIs, measures and DAX logic.
 

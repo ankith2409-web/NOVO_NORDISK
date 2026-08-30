@@ -135,6 +135,11 @@ class Bool:
 class ColumnRef:
     table: str
     column: str
+    #: A hierarchy level addressed off the column, as in ``[Date].[Month]``.
+    #: Carried rather than discarded so the compiler can refuse a level it
+    #: cannot express, instead of silently returning the whole date where the
+    #: model asked for the month.
+    level: str = ""
 
 
 @dataclass(frozen=True)
@@ -182,6 +187,22 @@ class Unsupported(Exception):
         super().__init__(why)
         self.construct = construct
         self.why = why
+
+
+class Blocked(Unsupported):
+    """A refusal that is a fact about the DAX, not a gap in this translator.
+
+    The distinction is the whole honesty of this module, and it was previously
+    carried only by a name lookup: a construct whose name appears in
+    ``_BLOCKERS`` is blocked, anything else is a gap. That works for
+    ``ALL`` and ``PREVIOUSMONTH``, and cannot work at all for a refusal whose
+    subject is not a function -- a measure that reads no column is a constant,
+    and its "construct" is the measure's own name, which no list can enumerate.
+
+    Raising this says so directly. It matters because the two read completely
+    differently to someone deciding whether to wait for a fix: a gap is a
+    promise, and a block is an answer.
+    """
 
 
 class Parser:
@@ -345,12 +366,35 @@ class Parser:
         raise Unsupported(tok.raw, "not something this translator reads")
 
     def _after_table_name(self, name: str) -> object:
-        """A table name, optionally followed by [Column]."""
+        """A table name, optionally followed by [Column] and a hierarchy level.
+
+        The trailing ``.[Month]`` is Power BI's auto date hierarchy:
+        ``'Calendar'[Date].[Month]`` addresses a level of the hierarchy Power BI
+        generates for every date column. It is extremely common in models people
+        actually build -- and it was a parse error here, which reported "expected
+        ')'" for four measures in a real Microsoft sample. That is the worst kind
+        of refusal: it blames the DAX for a gap in the reader.
+
+        The level is consumed and dropped rather than translated. Every one of
+        these seen so far sits inside ``ALL()``, which is refused for a real
+        reason, and dropping the level lets that real reason be the one reported.
+        A level that ever reaches the compiler on its own would need a date part
+        in the SQL, and would be wrong to silently ignore -- so it is recorded on
+        the reference rather than thrown away.
+        """
         if name.casefold() in self.vars:
             return VarRef(name)
         tok = self.peek()
         if tok is not None and tok.kind is Kind.BRACKET_REF:
-            return ColumnRef(name, self.next().value)
+            column = self.next().value
+            level = ""
+            while self.at_op("."):
+                self.next()
+                after = self.peek()
+                if after is None or after.kind is not Kind.BRACKET_REF:
+                    break
+                level = self.next().value
+            return ColumnRef(name, column, level)
         return TableRef(name)
 
     def _call(self, name: str) -> object:
@@ -506,6 +550,16 @@ class Compiler:
         raise Unsupported(type(node).__name__, "not something this translator compiles")
 
     def _column(self, node: ColumnRef) -> _Fragment:
+        if node.level:
+            # Reached only when a level is used outside the ALL()/ALLSELECTED()
+            # calls that account for every one seen so far. Refused rather than
+            # flattened: returning the date where the model asked for its month
+            # is a wrong number, which is the one thing worse than no number.
+            raise Blocked(
+                f"{node.table}[{node.column}].[{node.level}]",
+                "addresses a level of Power BI's automatic date hierarchy, "
+                "which has no column in the warehouse to read",
+            )
         key = (node.table.casefold(), node.column.casefold())
         if key in self.calculated:
             label = f"{node.table}[{node.column}]"
@@ -520,6 +574,15 @@ class Compiler:
             finally:
                 self._seen.pop()
         if key not in self.columns:
+            # `'% Return Rate'[% Return Rate Value]` is a *measure*, written with
+            # its table in front. Valid DAX, and indistinguishable from a column
+            # reference until the lookup misses -- so the miss is where it is
+            # handled. Without this, two measures in a real Microsoft sample were
+            # refused as "not a column in this model", which is both wrong and
+            # unactionable: the thing exists, it is just not a column.
+            qualified = self.measures.get(node.column.casefold())
+            if qualified is not None:
+                return self._measure(MeasureRef(node.column), ())
             raise Unsupported(f"{node.table}[{node.column}]", "is not a column in this model")
         table, column = self.columns[key]
         return _Fragment(self.col(table, column), {table}, {(table, column)})
@@ -629,11 +692,29 @@ class Compiler:
         if name == "IN":
             return self._in(node, where)
         if name == "COALESCE":
-            frags = [self.compile(a, where) for a in node.args]
+            return self._passthrough("COALESCE", node, where)
+        # Scalar functions that mean the same thing in DAX and in SQL, and are
+        # spelled the same. Added after running the translator over real
+        # Microsoft sample models rather than only the three written for this
+        # project: CONCATENATE alone accounted for seven refusals reading "not a
+        # function this translator reads yet", which is a gap in the reader
+        # dressed up as a property of the DAX.
+        if name in ("ROUND", "ABS", "CEILING", "FLOOR", "SQRT", "POWER", "EXP", "LN", "LOG10"):
+            return self._passthrough(name, node, where)
+        if name == "CONCATENATE":
+            # DAX takes exactly two arguments; SQL's CONCAT takes any number, so
+            # the arity is checked here rather than left to the warehouse.
+            if len(node.args) != 2:
+                raise Unsupported("CONCATENATE", "takes exactly two arguments in DAX")
+            return self._passthrough("CONCAT", node, where)
+        if name == "VALUE":
+            # Text to number. CAST rather than a warehouse-specific TO_NUMBER,
+            # so sqlglot can transpile it to each dialect's own spelling.
+            if len(node.args) != 1:
+                raise Unsupported("VALUE", "takes one argument")
+            arg = self.compile(node.args[0], where)
             return _Fragment(
-                f"COALESCE({', '.join(f.sql for f in frags)})",
-                set().union(*[f.tables for f in frags]) if frags else set(),
-                set().union(*[f.columns for f in frags]) if frags else set(),
+                f"CAST({arg.sql} AS DOUBLE)", arg.tables, arg.columns
             )
         if name == "MEDIAN":
             if len(node.args) != 1:
@@ -647,6 +728,18 @@ class Compiler:
                 ),
                 arg.tables,
                 arg.columns,
+            )
+        if name == "FORMAT":
+            # Blocked rather than unsupported: FORMAT turns a number into a
+            # display string using Power BI's own format-string vocabulary
+            # ("#,0.0%,,", "dd mmm yyyy"), which has no portable SQL equivalent
+            # and is a presentation choice rather than a calculation. The number
+            # underneath it is what a warehouse would compute.
+            raise Blocked(
+                "FORMAT",
+                "renders a number as display text using Power BI's format "
+                "strings, which are a presentation concern with no warehouse "
+                "equivalent -- translate the measure it wraps instead",
             )
         if name in ("IF", "SWITCH"):
             return self._conditional(node, where)
@@ -694,6 +787,20 @@ class Compiler:
         cols = set(left.columns).union(*[f.columns for f in frags])
         tabs = set(left.tables).union(*[f.tables for f in frags])
         return _Fragment(f"({left.sql} IN ({values}))", tabs, cols)
+
+    def _passthrough(self, sql_name: str, node: Call, where: tuple[str, ...]) -> _Fragment:
+        """A function whose SQL spelling and meaning match the DAX one.
+
+        Argument order and count are DAX's; nothing is reordered or defaulted.
+        Anything needing either -- DIVIDE's third argument, DATEDIFF's unit --
+        has its own branch rather than being squeezed through here.
+        """
+        frags = [self.compile(argument, where) for argument in node.args]
+        return _Fragment(
+            f"{sql_name}({', '.join(f.sql for f in frags)})",
+            set().union(*[f.tables for f in frags]) if frags else set(),
+            set().union(*[f.columns for f in frags]) if frags else set(),
+        )
 
     def _filtered(self, inner: str, where: tuple[str, ...]) -> str:
         """Apply CALCULATE's filters to one aggregate, not the whole query."""
@@ -832,7 +939,16 @@ def translate(model, measure, grain: tuple[str, ...] = (), quote: str = '"') -> 
 
         needed = set(body.tables) | {t for t, _ in grain_cols}
         if not needed:
-            raise Unsupported(measure.name, "reads no table, so it has no query")
+            # Blocked, not unsupported. A measure that reads no column is a
+            # constant -- a label, a tooltip, a hard-coded target -- and there
+            # is nothing to select it FROM. That is a fact about the measure,
+            # and filing it under "the translator has not learned this yet"
+            # promises a fix that will never come.
+            raise Blocked(
+                measure.name,
+                "is a constant: it reads no column, so there is no table to "
+                "query and nothing a warehouse could compute",
+            )
 
         # The base is whichever table the measure itself reads; the grain is
         # joined onto it, never the other way round. Starting from the grain
@@ -872,7 +988,7 @@ def translate(model, measure, grain: tuple[str, ...] = (), quote: str = '"') -> 
         )
 
     except Unsupported as stop:
-        blocked = stop.construct.upper() in _BLOCKERS
+        blocked = isinstance(stop, Blocked) or stop.construct.upper() in _BLOCKERS
         return Translation(
             measure=measure.name,
             grain=grain,

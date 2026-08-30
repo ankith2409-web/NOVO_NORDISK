@@ -1,9 +1,24 @@
 # Real public datasets used as sample data
 
-Everything else under `data/models/` is a synthetic model authored for this
-project. `diabetes_patients.csv` here is different: it is real, public data,
-kept as its own folder rather than mixed into `data/models/` so that
-distinction stays visible.
+## What under `data/models/` was written here, and what was not
+
+Worth separating, because "we wrote the model *and* the tool that reads it" is
+a weak demonstration and should not be able to hide behind a word like
+"sample".
+
+**Authored for this project** (synthetic, written to mirror real structure):
+`ClinicalTrialSafety`, `ClinicalTrialSafety_v2`, `QualityControl`,
+`DiabetesCare`. The last of these is built on real public data -- see below.
+
+**Not authored here**: the `.pbix` files. These are Power BI sample workbooks
+distributed by Microsoft (`Sales_Returns_Sample`, `Supply_Chain_Sample`,
+`AdventureWorks_Sales`), used unmodified. They matter precisely because nobody
+on this project chose their DAX: running the translator over them is the only
+honest measure of its coverage, and doing so dropped the figure from 80% on the
+models above to 10% on Sales & Returns. That number is in the report.
+
+`diabetes_patients.csv` here is real, public data, kept as its own folder
+rather than mixed into `data/models/` so that distinction stays visible.
 
 ## `diabetes_patients.csv` — Pima Indians Diabetes Dataset
 
