@@ -302,7 +302,14 @@ export default function App() {
         </div>
       )}
 
-      <header className="flex items-center gap-3 border-b border-hairline bg-ground px-3 py-2">
+      {/* `flex-wrap`, because this row cannot shrink below its contents: the
+          action group on the right is five controls with fixed labels, and at
+          720px it ran 39px past the viewport, scrolling every tab sideways.
+          Hiding controls was the alternative and the worse one -- they are all
+          reachable features, and a narrow window is not a reason to remove
+          them. Wrapping to a second line costs one row of height and nothing
+          else. */}
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-hairline bg-ground px-3 py-2">
         <Wordmark />
         <span className="h-4 w-px bg-hairline" />
         {loaded.length > 1 ? (
@@ -333,14 +340,22 @@ export default function App() {
         )}
         {/* Beside the switcher rather than in a menu: this is the answer to
             "does it work on my model", which is the first question anyone
-            has, and burying it would mean it is never asked. */}
+            has, and burying it would mean it is never asked.
+
+            Labelled "Open your model" rather than "your model" for two
+            reasons, the second of which bites: a control should say what it
+            does, and a bare noun phrase does not; and "your model" contains
+            the nav tab "Model" as a substring, so anything matching a control
+            by name -- voice control, a screen reader's element list, a test --
+            can land on this button while aiming at that tab. Found exactly
+            that way, by a sweep that clicked "Model" and got this dialog. */}
         {!SNAPSHOT_MODE && (
           <Button onClick={() => setUploading(true)} title="Read a .pbix or .pbip of your own">
             <UploadIcon size={11} className="flex-none" />
-            your model
+            Open your model
           </Button>
         )}
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center gap-x-2 gap-y-1.5">
           {overview && (
             <span className="hidden font-mono text-[11px] text-faint sm:inline">
               {overview.measures} measures · {overview.relationships} joins
