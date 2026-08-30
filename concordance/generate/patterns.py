@@ -53,8 +53,8 @@ PATTERNS: tuple[Pattern, ...] = (
     Pattern(
         "time_intelligence",
         "period-over-period comparison",
-        "evaluates the metric over a shifted or cumulative date range, so results "
-        "can be compared against a previous period or accumulated to date",
+        "evaluates the metric over a shifted or cumulative date range, comparing it "
+        "against an earlier period or accumulating it to date",
     ),
     Pattern(
         "ranking",
@@ -69,7 +69,7 @@ PATTERNS: tuple[Pattern, ...] = (
     Pattern(
         "context_removal",
         "total-relative calculation",
-        "deliberately ignores part of the active filter context, typically to "
+        "deliberately ignores part of the active filter context in order to "
         "compare a member against an overall total",
     ),
     Pattern(

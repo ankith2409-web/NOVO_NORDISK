@@ -927,10 +927,10 @@ class RequirementDeriver:
                 )
             if reshaping:
                 statement += (
-                    f" Because {_join(f'**{s.name}**' for s in reshaping)} can change "
+                    f" Because {_join(f'**{s.name}**' for s in reshaping)} changes "
                     f"how many rows survive, this table is not a row-for-row copy of "
-                    f"its source and figures reconciled directly against that source "
-                    f"may legitimately differ."
+                    f"its source, and figures reconciled directly against that source "
+                    f"are not required to match."
                 )
 
             out.append(

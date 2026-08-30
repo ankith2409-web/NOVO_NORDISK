@@ -54,8 +54,8 @@ _AGGREGATION_VERBS: dict[str, str] = {
 _BEHAVIOUR_CLAUSES: dict[str, str] = {
     "time_intelligence": (
         "shall evaluate its result over the shifted or cumulative date range its "
-        "expression defines, so the figure can be compared against an earlier "
-        "period or accumulated to date"
+        "expression defines, yielding a figure comparable with an earlier period "
+        "or accumulated to date"
     ),
     "ranking": (
         "shall order members by value to produce the ranking its expression "

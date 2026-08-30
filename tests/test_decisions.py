@@ -286,3 +286,101 @@ def test_an_oversized_note_is_refused_rather_than_stored(tmp_path: Path) -> None
             context,
             {"requirement_id": item["id"], "verdict": "accepted", "note": "x" * 5000},
         )
+
+
+# -- what an audit trail is required to carry ---------------------------------
+#
+# This log exists inside a pharmaceutical company, which puts it under 21 CFR
+# Part 11: a secure, computer-generated, time-stamped trail recording who did
+# what, when, and why, where a change never obscures what it replaced. Checked
+# against that rather than against what seemed sufficient.
+
+def test_a_rejection_must_say_why(tmp_path) -> None:
+    """Part 11's fourth field, and the one that was missing.
+
+    The interface demanded a reason and the API did not, so a decision recorded
+    any other way went into the trail with an empty note -- and the reason is
+    exactly what the next reader needs to avoid starting the investigation
+    again.
+    """
+    from concordance.cli import _load
+    from concordance.generate.requirements import Kind, RequirementDeriver
+    from concordance.web import api
+
+    graph = _load("data/models/QualityControl.SemanticModel")
+    context = api.ApiContext(graph=graph, decisions=tmp_path / "d.jsonl")
+    rid = next(
+        r.id for r in RequirementDeriver(graph).derive() if r.kind is Kind.BUSINESS
+    )
+    for verdict in ("rejected", "corrected"):
+        with pytest.raises(api.ApiError) as raised:
+            api.decide(context, {"requirement_id": rid, "verdict": verdict})
+        assert raised.value.status == 400
+        assert "why" in raised.value.message
+
+
+def test_an_acceptance_needs_no_prose(tmp_path) -> None:
+    """"The statement stands as written" is the reason.
+
+    Demanding a sentence for it would train reviewers to type "ok", which is
+    worse than an empty note: it looks like a reason and carries none.
+    """
+    from concordance.cli import _load
+    from concordance.generate.requirements import Kind, RequirementDeriver
+    from concordance.web import api
+
+    graph = _load("data/models/QualityControl.SemanticModel")
+    context = api.ApiContext(graph=graph, decisions=tmp_path / "d.jsonl")
+    rid = next(
+        r.id for r in RequirementDeriver(graph).derive() if r.kind is Kind.BUSINESS
+    )
+    out = api.decide(context, {"requirement_id": rid, "verdict": "accepted"})
+    assert out["standing"]["verdict"] == "accepted"
+
+
+def test_the_trail_records_who_what_when_and_why(tmp_path) -> None:
+    """All four fields Part 11 names, in one entry."""
+    log = DecisionLog.open(tmp_path / "d.jsonl")
+    entry = log.record(
+        requirement_id="REQ-B-1",
+        verdict=Verdict.REJECTED,
+        bound_fingerprints=("abc",),
+        note="The relationship is inactive, so this is not how the number is computed.",
+        author="Anna",
+        author_verified=True,
+    )
+    assert entry.author == "Anna" and entry.author_verified  # who, and whether it is a fact
+    assert entry.verdict is Verdict.REJECTED  # what
+    assert entry.at.endswith("+00:00")  # when, server-generated and in UTC
+    assert entry.note  # why
+
+
+def test_the_timestamp_cannot_come_from_the_caller(tmp_path) -> None:
+    """"Computer-generated" is the phrase in the rule.
+
+    A trail whose times are supplied by whoever is being audited is not a trail.
+    """
+    log = DecisionLog.open(tmp_path / "d.jsonl")
+    first = log.record("REQ-B-1", Verdict.ACCEPTED, ("abc",), author="Anna")
+    assert "at" not in DecisionLog.record.__code__.co_varnames, (
+        "record() accepts a timestamp from its caller"
+    )
+    assert first.at
+
+
+def test_a_later_decision_never_obscures_an_earlier_one(tmp_path) -> None:
+    """Part 11: "record changes shall not obscure previously recorded information".
+
+    An append-only file gives this, and the history is what the interface shows
+    -- so a reviewer sees that a statement was rejected before it was accepted,
+    not merely that it is accepted now.
+    """
+    path = tmp_path / "d.jsonl"
+    log = DecisionLog.open(path)
+    log.record("REQ-B-1", Verdict.REJECTED, ("abc",), note="wrong", author="Anna")
+    log.record("REQ-B-1", Verdict.ACCEPTED, ("abc",), author="Bob")
+
+    history = DecisionLog.open(path).history_for("REQ-B-1")
+    assert [d.verdict for d in history] == [Verdict.REJECTED, Verdict.ACCEPTED]
+    assert history[0].note == "wrong", "the superseded entry lost its reason"
+    assert path.read_text().count("\n") == 2, "an entry was rewritten rather than appended"

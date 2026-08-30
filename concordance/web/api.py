@@ -438,6 +438,29 @@ def decide(
             "verdict must be one of: " + ", ".join(v.value for v in Verdict),
         ) from None
 
+    # A rejection or a correction is a change to the record, and a change to a
+    # record has to say why. 21 CFR Part 11 -- which is the rule this log exists
+    # under, in a pharmaceutical company -- requires an audit trail to capture
+    # who, what, when *and why*. The interface already insisted on a reason; the
+    # API did not, so a decision recorded any other way went in with an empty
+    # note and the trail lost the one field a later reader most needs.
+    #
+    # Not required for an acceptance: "the statement stands as written" is the
+    # reason, and demanding prose for it would train reviewers to type "ok".
+    note = str(payload.get("note", "") or "").strip()
+    if len(note) > _MAX_NOTE:
+        raise ApiError(
+            HTTPStatus.BAD_REQUEST, f"note must be under {_MAX_NOTE} characters"
+        )
+    if verdict in (Verdict.REJECTED, Verdict.CORRECTED) and not note:
+        raise ApiError(
+            HTTPStatus.BAD_REQUEST,
+            f"a {verdict.value} decision must say why: the audit trail records "
+            f"who decided, what they decided, when, and the reason, and the "
+            f"reason is the part the next person reads instead of starting the "
+            f"investigation again",
+        )
+
     found = next(
         (
             r
@@ -450,12 +473,6 @@ def decide(
     if found is None:
         raise ApiError(
             HTTPStatus.NOT_FOUND, "no requirement with that id in this model"
-        )
-
-    note = str(payload.get("note", ""))
-    if len(note) > _MAX_NOTE:
-        raise ApiError(
-            HTTPStatus.BAD_REQUEST, f"note must be under {_MAX_NOTE} characters"
         )
 
     log = DecisionLog.open(context.decisions)

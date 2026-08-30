@@ -8,6 +8,7 @@ what the model states from what was inferred.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -237,3 +238,79 @@ def test_documents_generate_for_every_sample_model(name: str) -> None:
         markdown = doc.to_markdown(built)
         assert built.requirements, f"{name} produced no {kind.value} requirements"
         assert markdown.startswith("# ")
+
+
+# -- conformance to how requirements are actually written ----------------------
+#
+# Checked against ISO/IEC/IEEE 29148, which is the standard these documents are
+# judged by, rather than against our own taste. It lists nine characteristics of
+# a good requirement; three of them can be checked mechanically on generated
+# prose, and those three are what the tools a reviewer might run actually look
+# for.
+
+_SMELLS = re.compile(
+    r"\b(should|may|might|could|can be|will be able|as appropriate|adequate|"
+    r"user-friendly|as needed|if necessary|etc\.|and/or|TBD|reasonable|"
+    r"sufficient|robust|flexible|as far as possible|where applicable|"
+    r"if practical|normally|generally|typically|best|optimal|state of the art)\b",
+    re.I,
+)
+
+_CONFORMANCE_MODELS = [
+    Path("data/models/QualityControl.SemanticModel"),
+    Path("data/models/ClinicalTrialSafety.SemanticModel"),
+    Path("data/models/DiabetesCare.SemanticModel"),
+    Path("data/models/Sales_Returns_Sample.pbix"),
+    Path("data/models/Supply_Chain_Sample.pbix"),
+]
+
+
+def _every_requirement():
+    from concordance.cli import _load
+
+    for path in _CONFORMANCE_MODELS:
+        if not path.exists():
+            continue
+        for requirement in RequirementDeriver(_load(str(path))).derive():
+            yield path.stem, requirement
+
+
+def test_no_requirement_uses_a_word_that_makes_it_unverifiable() -> None:
+    """29148 calls a requirement *unambiguous* and *verifiable*.
+
+    "should", "typically" and "can be" defeat both: nobody can test whether a
+    system typically did something. Ours had 27 of them, every one inside an
+    explanatory clause rather than the "shall" itself — which is how they
+    survived review, and is no help at all to a reviewer running a conformance
+    check that does not read clauses.
+    """
+    flagged = [
+        (model, r.id, _SMELLS.search(r.statement).group(0))
+        for model, r in _every_requirement()
+        if _SMELLS.search(r.statement)
+    ]
+    assert not flagged, f"unverifiable wording in {len(flagged)}: {flagged[:5]}"
+
+
+def test_every_requirement_states_an_obligation() -> None:
+    """*Conforming*: one approved template, which for a requirement is "shall"."""
+    missing = [
+        (model, r.id, r.statement[:60])
+        for model, r in _every_requirement()
+        if " shall " not in r.statement
+    ]
+    assert not missing, f"no obligation stated in {len(missing)}: {missing[:5]}"
+
+
+def test_every_requirement_states_exactly_one_obligation() -> None:
+    """*Singular*: one requirement, one aspect of the system.
+
+    Two "shall" clauses in one statement is two requirements sharing an id, and
+    a reviewer can only accept or reject both together.
+    """
+    compound = [
+        (model, r.id)
+        for model, r in _every_requirement()
+        if r.statement.count(" shall ") > 1
+    ]
+    assert not compound, f"compound requirements: {compound[:5]}"
