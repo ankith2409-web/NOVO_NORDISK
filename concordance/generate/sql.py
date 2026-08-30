@@ -998,6 +998,69 @@ def translate(model, measure, grain: tuple[str, ...] = (), quote: str = '"') -> 
         )
 
 
+@dataclass(frozen=True)
+class Join:
+    """One relationship, as both a sentence and the SQL it becomes."""
+
+    from_table: str
+    from_column: str
+    to_table: str
+    to_column: str
+    cardinality: str
+    cross_filter: str
+    active: bool
+    #: ``FROM "Batch" JOIN "Site" ON "Batch"."SiteID" = "Site"."SiteID"``, in
+    #: the requested dialect.
+    sql: str
+
+
+def joins(model, dialect: str = "duckdb", quote: str = '"') -> list[Join]:
+    """Every relationship in the model, with the SQL join it corresponds to.
+
+    A reviewer asked for "what are the data sets and how it is joined with each
+    other and what are the SQL" as one answer rather than three. The measures
+    and their SQL were already together; this is the middle third, and it has to
+    be the *same* join the queries actually use or the page would explain one
+    thing and generate another.
+
+    So it is built from ``Compiler``'s own quoting and column helpers rather
+    than by formatting strings here, and it is transpiled through the same
+    ``to_dialect`` the measures go through -- which is why Databricks gets
+    backticks in this section too, without this function knowing that.
+
+    Inactive relationships are included and marked. They are exactly what the
+    confirmation queue is about, and leaving them out would make a model look
+    more connected than it is.
+    """
+    compiler = Compiler(model, quote)
+    out: list[Join] = []
+    for rel in model.relationships:
+        statement = (
+            f"SELECT 1 FROM {compiler.q(rel.from_table)} "
+            f"JOIN {compiler.q(rel.to_table)} "
+            f"ON {compiler.col(rel.from_table, rel.from_column)} = "
+            f"{compiler.col(rel.to_table, rel.to_column)}"
+        )
+        rendered = to_dialect(statement, dialect)
+        # Everything from FROM onward, on one line: the SELECT is scaffolding
+        # this function invented to have something transpilable, and showing it
+        # would invite someone to run a query that counts nothing.
+        clause = " ".join(rendered[rendered.index("FROM"):].split())
+        out.append(
+            Join(
+                from_table=rel.from_table,
+                from_column=rel.from_column,
+                to_table=rel.to_table,
+                to_column=rel.to_column,
+                cardinality=rel.cardinality,
+                cross_filter=rel.cross_filter,
+                active=rel.is_active,
+                sql=clause,
+            )
+        )
+    return out
+
+
 def translate_all(model, grain: tuple[str, ...] = (), quote: str = '"') -> list[Translation]:
     """Every measure in the model, at one grain, in model order."""
     return [translate(model, m, grain, quote) for m in model.measures]

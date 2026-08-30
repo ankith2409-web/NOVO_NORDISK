@@ -12,6 +12,8 @@ looks complete but silently is not is worse than one that admits its edges.
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field, replace
 from datetime import date
 
@@ -44,6 +46,11 @@ class Document:
     #: grain. Held here rather than looked up while rendering so that both
     #: renderers agree, and so a document can be inspected without a model.
     sql: dict[str, object] = field(default_factory=dict)
+    #: The SQL join for each relationship, keyed by ``From[Col]->To[Col]``.
+    #: Alongside the measure SQL because a retrieval system handed this document
+    #: needs both: a query that joins two tables is unusable to an agent that
+    #: was never told how those tables relate.
+    joins: dict[str, str] = field(default_factory=dict)
     #: The grain those translations were rendered at. Meaningless to show SQL
     #: without it: the same measure at a different grain is a different query.
     sql_grain: tuple[str, ...] = ()
@@ -136,6 +143,9 @@ def build(
         sql=_translations(graph, sql_grain, sql_dialect)
         if sql_grain is not None and kind is Kind.FUNCTIONAL
         else {},
+        joins=_joins(graph, sql_dialect)
+        if sql_grain is not None and kind is Kind.FUNCTIONAL
+        else {},
         sql_grain=tuple(sql_grain or ()),
         sql_dialect=sql_dialect,
     )
@@ -153,6 +163,31 @@ def _translations(graph: SemanticGraph, grain, dialect: str) -> dict[str, object
             else replace(translation, sql=to_dialect(translation.sql, dialect))
         )
     return out
+
+
+def _joins(graph: SemanticGraph, dialect: str) -> dict[str, str]:
+    """Each relationship's SQL join, keyed the way a requirement names it."""
+    from concordance.generate.sql import joins as sql_joins
+
+    return {
+        f"{j.from_table}[{j.from_column}]->{j.to_table}[{j.to_column}]": j.sql
+        for j in sql_joins(graph.model, dialect)
+    }
+
+
+def join_of(requirement: Requirement) -> str:
+    """The relationship key a requirement is about, or "".
+
+    Relationship requirements carry their two tables as evidence rather than a
+    single node id, so the key is rebuilt from the statement's own
+    ``Table[Column]`` pair -- which is the same pair the requirement was
+    generated from.
+    """
+    found = re.findall(r"`([^`\[]+)\[([^\]]+)\]`", requirement.statement)
+    if len(found) != 2 or "relationship shall join" not in requirement.statement:
+        return ""
+    (lt, lc), (rt, rc) = found
+    return f"{lt}[{lc}]->{rt}[{rc}]"
 
 
 def measure_of(requirement: Requirement) -> str:
@@ -278,6 +313,21 @@ def _sql_lines(document: Document, requirement: Requirement) -> list[str]:
     system -- carries the requirement, the DAX and the SQL together. An
     appendix would chunk into queries with nothing saying what they are for.
     """
+    join = document.joins.get(join_of(requirement))
+    if join:
+        # A relationship requirement states the join in words; this states it in
+        # the language the queries beside it are written in. Both, because the
+        # document has two readers -- a person deciding whether the join is
+        # right, and a retrieval system that needs it to answer with a query.
+        return [
+            f"*The same join in SQL* ({document.sql_dialect}):",
+            "",
+            "```sql",
+            join,
+            "```",
+            "",
+        ]
+
     translation = document.sql.get(measure_of(requirement))
     if translation is None:
         return []

@@ -14,7 +14,13 @@
  * top rather than beside any one measure.
  */
 import { useMemo, useState } from "react";
-import { api, type DatasetMeasure, type DatasetPayload } from "@/lib/api";
+import {
+  api,
+  type DatasetJoin,
+  type DatasetMeasure,
+  type DatasetPayload,
+  type DatasetTable,
+} from "@/lib/api";
 import {
   Button,
   Chip,
@@ -24,7 +30,7 @@ import {
   Loading,
   Stat,
 } from "@/components/primitives";
-import { CopyIcon, DownloadIcon } from "@/components/icons";
+import { ChevronIcon, CopyIcon, DownloadIcon } from "@/components/icons";
 import { SNAPSHOT_MODE } from "@/lib/api";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
@@ -100,6 +106,13 @@ export function Dataset() {
           hint="Constructs that depend on filter context the query cannot fix."
         />
       </div>
+
+      {/* The tables and how they join, above the measures rather than on
+          another tab. Asked for as one question -- "what are the data sets and
+          how it is joined with each other and what are the SQL" -- and it is
+          above rather than below because a JOIN in the SQL further down means
+          nothing until you know what it refers to. */}
+      <Structure tables={data.tables} joins={data.joins} />
 
       {/* Controls. The grain changes what the SQL means, so it is labelled as
           a question rather than as a filter. */}
@@ -224,6 +237,139 @@ export function Dataset() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The dataset itself: which tables it holds and how they are joined.
+ *
+ * Collapsed by default on purpose. Somebody arriving to read the SQL should not
+ * have to scroll past sixteen tables to reach it, and somebody asking what the
+ * dataset *is* wants this first -- so it opens with the counts on one line and
+ * expands to the detail, rather than choosing between the two audiences.
+ *
+ * Each join carries the actual SQL the queries below use. That is the point of
+ * showing it here rather than as a diagram: a relationship drawn as an arrow
+ * has to be trusted, and a relationship written as `ON a.x = b.y` can be
+ * checked against the query that follows it.
+ */
+function Structure({
+  tables,
+  joins,
+}: {
+  tables: DatasetTable[];
+  joins: DatasetJoin[];
+}) {
+  const [open, setOpen] = useState(false);
+  const inactive = joins.filter((j) => !j.active).length;
+
+  return (
+    <section className="rounded border border-hairline bg-ground">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left"
+      >
+        <ChevronIcon
+          size={13}
+          className={cx(
+            "flex-none text-faint transition-transform duration-(--duration-feedback)",
+            open && "rotate-90",
+          )}
+        />
+        <span className="font-medium">The dataset</span>
+        <span className="font-mono text-[11px] text-faint">
+          {tables.length} tables · {joins.length} joins
+          {inactive > 0 && ` · ${inactive} inactive`}
+        </span>
+        <span className="ml-auto font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
+          {open ? "hide" : "what it holds, and how it joins"}
+        </span>
+      </button>
+
+      {open && (
+        <div className="grid gap-4 border-t border-hairline p-3.5 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <span className="font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
+              tables
+            </span>
+            <ul className="flex flex-col gap-1">
+              {tables.map((table) => (
+                <li
+                  key={table.name}
+                  className="flex items-baseline gap-2 rounded border border-hairline bg-surface px-2.5 py-1.5"
+                >
+                  <span className="min-w-0 flex-1 truncate text-sm">{table.name}</span>
+                  {table.measures_only ? (
+                    <Chip tone="neutral" title="Holds measures only — a grouping, not a table of data">
+                      measures only
+                    </Chip>
+                  ) : (
+                    <span className="flex-none font-mono text-[11px] text-faint tabular-nums">
+                      {table.columns} cols
+                      {table.measures > 0 && ` · ${table.measures}fx`}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <span className="font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
+              joins
+            </span>
+            {joins.length === 0 ? (
+              <p className="text-sm text-muted">
+                This model defines no relationships, so its tables stand alone and
+                every measure below reads a single one.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-1.5">
+                {joins.map((join) => (
+                  <li
+                    key={`${join.from_table}.${join.from_column}-${join.to_table}.${join.to_column}`}
+                    className={cx(
+                      "flex flex-col gap-1 rounded border bg-surface px-2.5 py-2",
+                      join.active ? "border-hairline" : "border-review/40",
+                    )}
+                  >
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
+                      <span className="font-mono text-[12px]">
+                        {join.from_table}[{join.from_column}]
+                      </span>
+                      <span className="text-faint">→</span>
+                      <span className="font-mono text-[12px]">
+                        {join.to_table}[{join.to_column}]
+                      </span>
+                      <span className="font-mono text-[11px] text-faint">
+                        {join.cardinality}
+                      </span>
+                      {/* Marked, not hidden. An inactive relationship only
+                          applies where a calculation deliberately invokes it,
+                          so a reader who assumes it is live will expect a join
+                          the queries below never make. */}
+                      {!join.active && (
+                        <Chip
+                          tone="review"
+                          title="Only applies where a calculation activates it deliberately"
+                        >
+                          inactive
+                        </Chip>
+                      )}
+                    </div>
+                    <code className="overflow-x-auto font-mono text-[11px] text-muted">
+                      {join.sql}
+                    </code>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 

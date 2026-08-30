@@ -663,7 +663,13 @@ def dataset(context: ApiContext, params: Params) -> dict[str, Any]:
     ``grain`` is the SQL side's filter context, written down. Passing none asks
     for the whole-model figure, which is a single row.
     """
-    from concordance.generate.sql import DIALECTS, Status, to_dialect, translate_all
+    from concordance.generate.sql import (
+        DIALECTS,
+        Status,
+        joins,
+        to_dialect,
+        translate_all,
+    )
 
     model = context.graph.model
     grain = tuple(g for g in (params.get("grain") or []) if g.strip())
@@ -700,6 +706,37 @@ def dataset(context: ApiContext, params: Params) -> dict[str, Any]:
         "model": model.name,
         "grain": list(grain),
         "dialect": dialect,
+        # The tables and how they join, alongside the measures rather than on a
+        # separate page. Asked for as one question -- "what are the data sets
+        # and how it is joined with each other and what are the SQL" -- and
+        # answering it in three places is how someone ends up reading the
+        # measures without ever seeing what a JOIN in them refers to.
+        "tables": [
+            {
+                "name": t.name,
+                "columns": sum(1 for c in model.columns if c.table == t.name),
+                "measures": sum(1 for m in model.measures if m.table == t.name),
+                # A container holding only measures is a grouping, not a data
+                # entity -- "Analysis DAX" in the Microsoft sample holds 40
+                # measures and no columns. Saying so stops a reader looking for
+                # the table it joins to, which is none.
+                "measures_only": t.is_measure_only,
+            }
+            for t in sorted(model.user_tables(), key=lambda t: t.name)
+        ],
+        "joins": [
+            {
+                "from_table": j.from_table,
+                "from_column": j.from_column,
+                "to_table": j.to_table,
+                "to_column": j.to_column,
+                "cardinality": j.cardinality,
+                "cross_filter": j.cross_filter,
+                "active": j.active,
+                "sql": j.sql,
+            }
+            for j in joins(model, dialect)
+        ],
         "grain_options": _grain_options(model),
         "dialects": sorted(DIALECTS),
         "counts": {

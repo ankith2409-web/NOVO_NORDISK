@@ -196,10 +196,32 @@ export interface DatasetMeasure {
   reads_tables: string[];
 }
 
+export interface DatasetTable {
+  name: string;
+  columns: number;
+  measures: number;
+  /** A container holding only measures: a grouping, not a data entity. */
+  measures_only: boolean;
+}
+
+export interface DatasetJoin {
+  from_table: string;
+  from_column: string;
+  to_table: string;
+  to_column: string;
+  cardinality: string;
+  cross_filter: string;
+  active: boolean;
+  /** The same join the generated queries use, in the chosen dialect. */
+  sql: string;
+}
+
 export interface DatasetPayload {
   model: string;
   grain: string[];
   dialect: string;
+  tables: DatasetTable[];
+  joins: DatasetJoin[];
   grain_options: { value: string; table: string; column: string }[];
   dialects: string[];
   counts: { measures: number; translated: number; blocked: number };

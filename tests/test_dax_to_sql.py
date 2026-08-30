@@ -557,3 +557,74 @@ def test_an_automatic_date_hierarchy_parses_and_is_refused_for_a_real_reason() -
         assert got[name].status is Status.BLOCKED
         assert "expected" not in got[name].reason
         assert "ALL" in got[name].reason
+
+
+# -- the joins, as the dataset page and the FRD show them ----------------------
+
+def test_a_join_is_built_from_the_same_code_as_the_queries(model) -> None:
+    """The point of showing the join is that it is checkable against the query.
+
+    If this section were formatted independently it could say one thing while
+    the measures below it did another -- which is exactly the failure the whole
+    project exists to catch, committed by the tool itself.
+    """
+    from concordance.generate.sql import joins
+
+    on_page = {j.sql for j in joins(model)}
+    in_query = {
+        line.strip()
+        for t in translate_all(model, SITE)
+        if t.sql
+        for line in t.sql.splitlines()
+        if line.startswith("JOIN ")
+    }
+    for clause in in_query:
+        assert any(clause in page for page in on_page), f"{clause} is not shown"
+
+
+def test_inactive_relationships_are_listed_and_marked(model) -> None:
+    """Hiding them would make a model look more connected than it is, and they
+    are precisely what the confirmation queue exists to ask about."""
+    from concordance.generate.sql import joins
+
+    listed = joins(model)
+    assert any(not j.active for j in listed)
+    assert all(j.sql.startswith("FROM ") for j in listed)
+
+
+@pytest.mark.parametrize("dialect", ["duckdb", "snowflake", "databricks"])
+def test_a_join_is_quoted_for_the_dialect_it_is_shown_in(model, dialect: str) -> None:
+    """Databricks quotes with backticks. A join rendered with the measures'
+    dialect but not its quoting would be a query nobody could paste."""
+    from concordance.generate.sql import joins
+
+    sql = joins(model, dialect)[0].sql
+    assert ("`" in sql) == (dialect == "databricks")
+
+
+def test_the_frd_carries_the_join_sql_beneath_each_relationship() -> None:
+    """Asked for so the document works as a RAG source: an agent given a query
+    that joins two tables is stuck unless the same document says how they
+    relate."""
+    from concordance.generate import document
+
+    from concordance.graph.csg import SemanticGraph
+
+    graph = SemanticGraph(TmdlAdapter().extract(str(MODEL)))
+    built = document.build(
+        graph, document.Kind.FUNCTIONAL, sql_grain=(), sql_dialect="duckdb"
+    )
+    text = document.to_markdown(built)
+    assert "*The same join in SQL*" in text
+    assert 'FROM "Batch" JOIN "Site" ON "Batch"."SiteID" = "Site"."SiteID"' in text
+
+
+def test_a_brd_carries_no_join_sql() -> None:
+    """A BRD states what the business needs, not how a query expresses it."""
+    from concordance.generate import document
+
+    from concordance.graph.csg import SemanticGraph
+
+    graph = SemanticGraph(TmdlAdapter().extract(str(MODEL)))
+    built = document.build(graph, document.Kind.BUSINESS, sql_grain=())
+    assert "*The same join in SQL*" not in document.to_markdown(built)
