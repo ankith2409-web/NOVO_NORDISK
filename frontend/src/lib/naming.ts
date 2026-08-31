@@ -11,18 +11,26 @@
  * flag are contracts with the deployment and with anyone's saved links; only
  * the words a person reads are here.
  *
- * The names themselves answer a specific complaint. "Reconcile" and "Drift"
+ * The names themselves answer a specific complaint. "Reconcile" and "Review"
  * are the vocabulary of the people who built this, not of the people who read
- * it -- a reviewer asked what both meant, and having to explain a tab is a
+ * it -- a reviewer asked what they meant, and having to explain a tab is a
  * sign the tab is misnamed. Each label below says what the page does, in words
- * that need no gloss.
+ * that need no gloss. "Drift" survived that pass because it is already the
+ * word its readers use.
  */
 
 export const FEATURE = {
-  /** Was: "Drift". What moved between two versions of a model. */
+  /**
+   * What moved between two versions of a model.
+   *
+   * Kept as "Drift" -- the one name in this file that was not renamed. The
+   * others were jargon standing in for a plain description; this one is the
+   * word the people who read these documents already use for the thing, and
+   * "What changed" was longer, vaguer, and the widest label in the rail.
+   */
   drift: {
-    tab: "What changed",
-    heading: "What changed",
+    tab: "Drift",
+    heading: "Drift between versions",
     /** For a sentence: "... so <subject> cannot run". */
     subject: "the comparison between versions",
   },

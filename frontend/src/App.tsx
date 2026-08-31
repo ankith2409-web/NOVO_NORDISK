@@ -20,6 +20,7 @@ import {
   type WhoAmI,
 } from "@/lib/api";
 import { Button } from "@/components/primitives";
+import { ModelPicker } from "@/components/ModelPicker";
 import { UploadDialog } from "@/components/UploadDialog";
 import { UploadIcon } from "@/components/icons";
 import { Copilot } from "@/components/Copilot";
@@ -313,26 +314,14 @@ export default function App() {
         <Wordmark />
         <span className="h-4 w-px bg-hairline" />
         {loaded.length > 1 ? (
-          <label className="flex items-center gap-1.5">
-            <span className="sr-only">Model</span>
-            <select
-              value={active}
-              onChange={(event) => switchTo(event.target.value)}
-              className="max-w-[14rem] truncate rounded border border-hairline bg-ground px-1.5 py-0.5 font-mono text-xs text-ink"
-            >
-              {loaded.map((entry) => (
-                <option key={entry.name} value={entry.name}>
-                  {/* Marked, because the two are not interchangeable: an
-                      uploaded model has no warehouse, no baseline to compare
-                      against, and no signable review queue. Someone who cannot
-                      tell which kind they are looking at reads those absences
-                      as the tool being broken. */}
-                  {entry.uploaded ? "yours: " : ""}
-                  {entry.name} · {entry.measures}m · {entry.tables}t
-                </option>
-              ))}
-            </select>
-          </label>
+          <ModelPicker
+            loaded={loaded}
+            active={active}
+            onSwitch={switchTo}
+            // Absent in the snapshot build, which has no server to forget
+            // anything and one model to forget it from.
+            onForget={SNAPSHOT_MODE ? undefined : (name) => void forget(name)}
+          />
         ) : (
           <span className="truncate font-mono text-xs text-muted">
             {overview?.model ?? "connecting…"}
@@ -418,11 +407,11 @@ export default function App() {
 
       <div className="relative flex min-h-0 flex-1">
         {/* w-44, not w-36. An uploaded model has neither optional capability,
-            so it is the first state where an "off" badge sits beside the
-            longest label -- and the badge takes exactly enough room that
-            "What changed" needed 102px and had 101, truncating to "What
-            chang…". Measured rather than eyeballed, and set wide enough to
-            leave headroom instead of landing on the next one-pixel margin. */}
+            so it is the first state where an "off" badge sits beside a long
+            label -- and the badge takes exactly enough room that the widest of
+            them truncated at w-36. Measured rather than eyeballed, and set
+            wide enough to leave headroom instead of landing on the next
+            one-pixel margin. */}
         <nav className="flex w-44 flex-none flex-col gap-0.5 border-r border-hairline bg-ground p-2">
           {VIEWS.map((entry) => (
             <button
