@@ -286,11 +286,25 @@ def cmd_document(args: argparse.Namespace) -> int:
     graph = _load(args.source)
     kind = Kind.BUSINESS if args.type == "brd" else Kind.FUNCTIONAL
     grain = tuple(args.sql_grain or ())
+
+    drift = None
+    if getattr(args, "compare_to", None):
+        from concordance.drift import snapshot as snap
+        from concordance.drift.compare import compare
+
+        previous = _load(args.compare_to)
+        drift = compare(
+            snap.take(previous, label=Path(args.compare_to).stem),
+            snap.take(graph, label=graph.model.name),
+            after_graph=graph,
+        )
+
     built = doc.build(
         graph,
         kind,
         sql_grain=grain if (grain or args.sql) else None,
         sql_dialect=args.sql_dialect,
+        drift=drift,
     )
 
     suffix = "docx" if args.format == "docx" else "md"
@@ -1305,6 +1319,13 @@ def main(argv: list[str] | None = None) -> int:
         default="duckdb",
         choices=["duckdb", "snowflake", "databricks", "redshift", "athena"],
         help="which warehouse the generated SQL should be written for",
+    )
+    p.add_argument(
+        "--compare-to",
+        metavar="PATH",
+        help="a previous version of this model. Adds a 'What changed since' "
+             "section saying which definitions moved and what that means for "
+             "the requirements bound to them",
     )
     p.set_defaults(func=cmd_document)
 

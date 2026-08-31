@@ -81,8 +81,23 @@ export function Dataset() {
     ? data.measures.filter((m) => m.status === "exact")
     : data.measures;
 
-  /** Every query on the page, in one block, which is the point of the page. */
-  const everything = data.measures
+  /**
+   * Every measure's DAX in one block, and every measure's SQL in another.
+   *
+   * Both, not just the SQL, and both copyable whole. Asked for in exactly those
+   * words -- "the DAX in one place so she can copy it in one go, and the SQL in
+   * one place" -- and the reason is the job it is for: pasting a model's
+   * definitions into a review, a ticket or another tool is one action, and
+   * doing it a measure at a time down a list of sixty is not.
+   *
+   * Measures with no SQL are still named in the SQL block, as a comment saying
+   * why. A block that silently held 34 of 58 queries would be a wrong answer to
+   * "give me the SQL for this model".
+   */
+  const allDax = data.measures
+    .map((m) => `// ${m.measure}\n${m.dax}`)
+    .join("\n\n");
+  const allSql = data.measures
     .map((m) =>
       m.sql
         ? `-- ${m.measure}\n${m.sql};`
@@ -203,10 +218,6 @@ export function Dataset() {
               ))}
             </>
           )}
-          <Button tone="primary" onClick={() => copy(everything, "all")}>
-            <CopyIcon size={11} className="flex-none" />
-            {copied === "all" ? "copied" : "copy every query"}
-          </Button>
         </div>
       </div>
 
@@ -236,7 +247,18 @@ export function Dataset() {
           SQL” to see them and the reason for each.
         </Empty>
       ) : (
-        <div className="flex flex-col gap-3">
+        <>
+          <AllInOnePlace
+            dax={allDax}
+            sql={allSql}
+            model={data.model}
+            counts={data.counts}
+            dialect={dialect}
+            grain={grains}
+            copied={copied}
+            onCopy={copy}
+          />
+          <div className="flex flex-col gap-3">
           {shown.map((m) => (
             <MeasureRow
               key={m.measure}
@@ -245,9 +267,144 @@ export function Dataset() {
               onCopy={copy}
             />
           ))}
-        </div>
+          </div>
+        </>
       )}
     </div>
+  );
+}
+
+/**
+ * Every definition in one block, one for DAX and one for SQL.
+ *
+ * Collapsed by default and placed above the per-measure list: someone reading
+ * measure by measure should not have to scroll past a wall of sixty
+ * definitions, and someone who came to take the lot should not have to scroll
+ * to the bottom to find out they can.
+ */
+function AllInOnePlace({
+  dax,
+  sql,
+  model,
+  counts,
+  dialect,
+  grain,
+  copied,
+  onCopy,
+}: {
+  dax: string;
+  sql: string;
+  model: string;
+  counts: DatasetPayload["counts"];
+  dialect: string;
+  grain: string[];
+  copied: string;
+  onCopy: (text: string, token: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [showing, setShowing] = useState<"dax" | "sql">("dax");
+  const text = showing === "dax" ? dax : sql;
+
+  return (
+    <section className="rounded border border-hairline bg-ground">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-3.5 py-2.5">
+        <button
+          type="button"
+          onClick={() => setOpen((was) => !was)}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        >
+          <ChevronIcon
+            size={12}
+            className={cx(
+              "flex-none text-faint transition-transform duration-(--duration-feedback)",
+              open ? "rotate-90" : "",
+            )}
+          />
+          <span className="text-sm font-semibold">Everything in one place</span>
+          <span className="truncate font-mono text-[11px] text-faint">
+            all {counts.measures} definitions, to copy in one go
+          </span>
+        </button>
+        {/* On the header, not only inside: copying the lot is the reason to
+            come here, and needing to expand a panel first would put a click
+            in front of the one thing it exists for. */}
+        {(
+          [
+            { id: "dax", text: dax, label: "copy all DAX" },
+            { id: "sql", text: sql, label: "copy all SQL" },
+          ] as const
+        ).map((one) => (
+          <Button
+            key={one.id}
+            tone="primary"
+            onClick={() => {
+              setShowing(one.id);
+              onCopy(one.text, `all-${one.id}`);
+            }}
+          >
+            <CopyIcon size={11} className="flex-none" />
+            {copied === `all-${one.id}` ? "copied" : one.label}
+          </Button>
+        ))}
+      </div>
+
+      {open && (
+        <div className="flex flex-col gap-2 border-t border-hairline p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Two blocks rather than one interleaved: they go to different
+                places. The DAX goes to whoever owns the Power BI model; the
+                SQL goes into a warehouse. */}
+            {(
+              [
+                { id: "dax", label: "DAX", said: "as written in Power BI" },
+                { id: "sql", label: "SQL", said: `as ${dialect}` },
+              ] as const
+            ).map((tab) => (
+              <Button
+                key={tab.id}
+                tone={showing === tab.id ? "selected" : "quiet"}
+                onClick={() => setShowing(tab.id)}
+                aria-pressed={showing === tab.id}
+              >
+                {tab.label} <span className="text-faint">{tab.said}</span>
+              </Button>
+            ))}
+            {/* No copy button in here. The header already carries one for
+                each block, and a second control with the same accessible name
+                is how a name-based click -- a screen reader's element list, a
+                test, voice control -- lands on the wrong one. */}
+          </div>
+
+          <p className="text-xs text-muted">
+            {showing === "dax" ? (
+              <>
+                Every measure in {model}, exactly as it is written in the model, each
+                under its name.
+              </>
+            ) : (
+              <>
+                The same {counts.measures} measures written as {dialect}, at one row per{" "}
+                {grain.length ? grain.join(", ") : "the whole model"}.{" "}
+                {counts.blocked > 0 && (
+                  <>
+                    {counts.blocked} of them have no query — those appear as a comment
+                    saying why, rather than being left out.
+                  </>
+                )}
+              </>
+            )}
+          </p>
+
+          {/* `whitespace-pre-wrap`, matching every other code block here: the
+              "no SQL" lines are one long sentence each, and left unwrapped they
+              run out of the box and hide the reason. */}
+          <pre className="max-h-[28rem] overflow-auto rounded border border-hairline bg-surface px-3 py-2.5 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap">
+            {text}
+          </pre>
+        </div>
+      )}
+    </section>
   );
 }
 

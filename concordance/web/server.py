@@ -74,6 +74,20 @@ def served_routes() -> tuple[str, ...]:
 _FILENAME_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
+def _drift_report(context):
+    """The comparison for this model, or None if it was not given one."""
+    if context.compare_to is None:
+        return None
+    from concordance.drift import snapshot as snap
+    from concordance.drift.compare import compare
+
+    return compare(
+        snap.take(context.compare_to, label=context.compare_label or "the previous version"),
+        snap.take(context.graph, label=context.graph.model.name),
+        after_graph=context.graph,
+    )
+
+
 def _download_name(model_name: str, kind: str, fmt: str = "md") -> str:
     """A safe, descriptive filename for a generated document.
 
@@ -751,11 +765,17 @@ def make_handler(
             # query would express it.
             grain = tuple(g for g in params.get("grain", []) if g.strip())
             dialect = (params.get("dialect") or ["duckdb"])[0].strip() or "duckdb"
+            # The same comparison the Drift tab shows, carried into the
+            # document. Only when this model was started with a baseline --
+            # there is nothing to say otherwise, and an empty "What changed"
+            # section would read as "nothing changed", which is a different
+            # claim from "we were not told what to compare against".
             built = document.build(
                 context.graph,
                 kinds[requested],
                 sql_grain=grain if grain or "sql" in params else None,
                 sql_dialect=dialect,
+                drift=_drift_report(context),
             )
             if fmt == "docx":
                 from concordance.generate import word

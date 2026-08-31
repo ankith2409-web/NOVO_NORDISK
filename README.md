@@ -107,6 +107,8 @@ concordance extract  <model> [-o path]  # write the semantic graph as JSON
 concordance explain  <model> <measure>  # expression, canonical form, dependencies, impact
 concordance verify   <model> <measure>  # prove the fingerprint on real model content
 concordance document <model> --type brd # generate a BRD (--type frd, --format docx)
+                                         #   --compare-to <older model> adds a
+                                         #   "What changed since" section
 concordance auditpack <model>            # evidence bundle: docs + fingerprint manifest
 concordance ask      <model> "question"  # ask about the model (omit for interactive)
 concordance lineage  <model> [-o]        # OpenLineage DatasetEvents for a data catalog

@@ -33,6 +33,27 @@ class Section:
 
 
 @dataclass(frozen=True)
+class Changed:
+    """One difference from the previous version, in words rather than jargon.
+
+    Deliberately not the ``Change`` the drift engine produces. That one carries
+    fingerprints, node ids and an enum, which are exactly right on a screen
+    built for them and wrong in a document a business reader signs. This holds
+    the same fact said plainly, and is built from that one so there is no second
+    comparison to keep true.
+    """
+
+    #: "measure Adverse Event Rate" -- what the change is to.
+    what: str
+    #: added / removed / changed / renamed.
+    change: str
+    #: A sentence saying what it means for whoever reads this document.
+    means: str
+    #: The requirement ids this change lands on, if any.
+    affects: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Document:
     """A BRD or FRD, ready to render."""
 
@@ -66,6 +87,14 @@ class Document:
     limits: tuple[tuple[str, int, str], ...] = ()
     #: Business terms and what they mean, from the model's own descriptions.
     glossary: tuple[tuple[str, str], ...] = ()
+    #: What moved since the version this model was compared against, if one was
+    #: given. In the document as well as on the Drift tab, and for a reason a
+    #: reviewer gave plainly: the document is what gets sent to someone, and
+    #: "what changed" is the first thing they ask. A separate screen answers it
+    #: only for whoever is sitting in front of the tool.
+    changes: tuple[Changed, ...] = ()
+    #: The version this was compared against, named as the document says it.
+    changed_from: str = ""
 
     @property
     def requirements(self) -> tuple[Requirement, ...]:
@@ -115,6 +144,7 @@ def build(
     generated_on: str | None = None,
     sql_grain: tuple[str, ...] | None = None,
     sql_dialect: str = "duckdb",
+    drift=None,
 ) -> Document:
     """Assemble one document from a model's derived requirements.
 
@@ -122,6 +152,11 @@ def build(
     off by default because SQL without a stated grain would be a claim the
     document cannot support -- and because a BRD describes what the business
     needs, not how a query would express it.
+
+    Passing ``drift`` -- a ``DriftReport`` against the previous version -- adds
+    a "What changed since" section. Both documents carry it, unlike the SQL:
+    a BRD reader has no use for a query and every use for knowing that the
+    definition behind a number they signed off has moved.
     """
     requirements = [r for r in RequirementDeriver(graph).derive() if r.kind is kind]
     order = _BUSINESS_ORDER if kind is Kind.BUSINESS else _FUNCTIONAL_ORDER
@@ -164,7 +199,81 @@ def build(
             (gap.feature, gap.count, gap.reason) for gap in graph.model.coverage_gaps
         ),
         glossary=_glossary(graph),
+        # Filtered to the ids this document actually contains: a reader of the
+        # FRD following a reference to REQ-B-6f765c would be looking for a
+        # requirement that is not in the document in their hand.
+        changes=_changes(drift, {r.id for s in sections for r in s.requirements})
+        if drift is not None
+        else (),
+        changed_from=getattr(drift, "before_label", "") if drift is not None else "",
     )
+
+
+#: What each kind of change means for someone reading the document, rather than
+#: for someone reading a diff. Written as the consequence, because that is the
+#: only part a reader can act on: "changed" is not news, "the number this
+#: reports is not the number the last version reported" is.
+#:
+#: Said once per group rather than once per row. The same sentence repeated
+#: down a table column is the thing that makes generated documents unreadable,
+#: and it carries no more information the fourth time than the first.
+_MEANS = {
+    "changed": "Edited, so each of these can now report a different number than the "
+    "previous version reported. These are the ones to check against what was agreed.",
+    "removed": "In the previous version and gone from this one. Anything that relied on "
+    "these no longer has them.",
+    "added": "New in this version. Nothing in the previous document describes these.",
+    "renamed": "Only the name changed. These calculate exactly what they calculated "
+    "before -- the fingerprints prove it -- so nothing here needs re-checking, but "
+    "anything referring to the old name needs updating.",
+}
+
+#: The heading each group gets, and the order they appear in: what a reader has
+#: to act on first, the provably-harmless renames last.
+_CHANGE_GROUPS = (
+    ("changed", "Changed definitions"),
+    ("removed", "Removed"),
+    ("added", "Added"),
+    ("renamed", "Renamed only"),
+)
+
+
+def _changes(report, ours: set[str] | None = None) -> tuple[Changed, ...]:
+    """The drift report, said in words a business reader can act on."""
+    # Which requirements each change lands on. Built from the report's own
+    # mapping rather than recomputed: the binding from evidence to change is
+    # the whole basis of the claim, and a second derivation of it could differ.
+    lands_on: dict[str, list[str]] = {}
+    for affected in getattr(report, "affected", ()):
+        for change in affected.changes:
+            lands_on.setdefault(change.node_id, []).append(affected.id)
+
+    rows: list[Changed] = []
+    for change in getattr(report, "changes", ()):
+        name = change.node_id.split(":", 1)[-1]
+        kind = change.kind.value
+        what = f"{change.object_kind} {name}"
+        if kind == "renamed" and change.before is not None:
+            was = change.before.node_id.split(":", 1)[-1]
+            what = f"{change.object_kind} {name} (was {was})"
+        rows.append(
+            Changed(
+                what=what,
+                change=kind,
+                means=_MEANS.get(kind, ""),
+                affects=tuple(
+                    sorted(
+                        id_
+                        for id_ in set(lands_on.get(change.node_id, ()))
+                        if ours is None or id_ in ours
+                    )
+                ),
+            )
+        )
+    # Grouped by what the reader has to do about it: the ones that can have
+    # moved a number first, the provably-harmless renames last.
+    order = {"changed": 0, "removed": 1, "added": 2, "renamed": 3}
+    return tuple(sorted(rows, key=lambda r: (order.get(r.change, 9), r.what)))
 
 
 def _glossary(graph: SemanticGraph) -> tuple[tuple[str, str], ...]:
@@ -269,6 +378,10 @@ def to_markdown(document: Document) -> str:
     lines.append("")
 
     lines.extend(_front_matter(document))
+    # Before the requirements and after the front matter: someone re-reading a
+    # document they have already read wants this and nothing else, and should
+    # not have to scroll through 60 requirements to find out there are three.
+    lines.extend(_changes_lines(document))
 
     if document.review_queue:
         lines.append("## Awaiting human confirmation")
@@ -457,6 +570,96 @@ def front_matter_blocks(
         ))
 
     return blocks
+
+
+def changes_intro(document: Document) -> list[str]:
+    """The sentence or two that opens the "What changed" section.
+
+    Shared by both renderers for the same reason the front matter is: this is
+    the part a reader takes their impression from, and two renderers wording it
+    differently would be two documents.
+    """
+    if not document.changed_from:
+        return []
+    moved = [c for c in document.changes if c.change != "renamed"]
+    renames = len(document.changes) - len(moved)
+    if not document.changes:
+        return [
+            f"Nothing. This model calculates exactly what {document.changed_from} "
+            f"calculated. Formatting and comments were ignored when comparing, so this "
+            f"is a statement about the logic, not about the file."
+        ]
+
+    def things(n: int) -> str:
+        return "1 thing" if n == 1 else f"{n} things"
+
+    if moved and renames:
+        opening = (
+            f"{things(len(moved))} changed in a way that affects what this model "
+            f"contains or calculates, and {things(renames)} were renamed without their "
+            f"logic changing."
+        )
+    elif moved:
+        opening = (
+            f"{things(len(moved))} changed in a way that affects what this model "
+            f"contains or calculates."
+        )
+    else:
+        opening = (
+            f"{things(renames)} were renamed. Nothing calculates differently than it "
+            f"did before."
+        )
+    lines = [f"Compared with {document.changed_from}: {opening}"]
+    lines.append(
+        "Each group below states what that kind of change means, then lists what it "
+        "happened to and which requirements in this document it lands on."
+    )
+    return lines
+
+
+def changes_groups(
+    document: Document,
+) -> list[tuple[str, str, list[Changed]]]:
+    """The changes as (heading, what this group means, rows).
+
+    Grouped rather than tabulated. A table with a "what it means" column repeats
+    the same sentence on every row of the same kind, which is exactly the shape
+    that makes a generated document unreadable; saying it once above four
+    bullets says the same thing and can be skimmed.
+    """
+    groups = []
+    for kind, heading in _CHANGE_GROUPS:
+        rows = [c for c in document.changes if c.change == kind]
+        if rows:
+            groups.append((f"{heading} ({len(rows)})", _MEANS[kind], rows))
+    return groups
+
+
+def changes_line(row: Changed) -> str:
+    """One change as a single line of plain text, shared by both renderers."""
+    if row.affects:
+        return f"{row.what} — affects {', '.join(row.affects)}"
+    return row.what
+
+
+def _changes_lines(document: Document) -> list[str]:
+    """"What changed since the last version", as Markdown."""
+    intro = changes_intro(document)
+    if not intro:
+        return []
+    lines = [f"## What changed since {document.changed_from}", ""]
+    for text in intro:
+        lines.append(text)
+        lines.append("")
+    for heading, means, rows in changes_groups(document):
+        lines.append(f"**{heading}.** {means}")
+        lines.append("")
+        for row in rows:
+            lines.append(f"- `{row.what}`" + (
+                f" — affects {', '.join(row.affects)}" if row.affects else ""
+            ))
+        lines.append("")
+    return lines
 
 
 def _front_matter(document: Document) -> list[str]:

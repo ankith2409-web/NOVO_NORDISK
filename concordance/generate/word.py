@@ -50,6 +50,7 @@ def render(document: Document) -> WordDocument:
 
     _title_block(word, document)
     _front_matter(word, document)
+    _changes(word, document)
     _review_queue(word, document)
     _requirements(word, document)
     _glossary(word, document)
@@ -213,6 +214,23 @@ def _front_matter(word: WordDocument, document: Document) -> None:
             word.add_paragraph(text)
         for text in bullets:
             word.add_paragraph(text, style="List Bullet")
+
+
+def _changes(word: WordDocument, document: Document) -> None:
+    """What moved since the previous version, from the same text as the Markdown."""
+    from concordance.generate.document import changes_groups, changes_intro, changes_line
+
+    intro = changes_intro(document)
+    if not intro:
+        return
+    word.add_heading(f"What changed since {document.changed_from}", level=1)
+    for text in intro:
+        word.add_paragraph(text)
+    for heading, means, rows in changes_groups(document):
+        word.add_heading(heading, level=2)
+        word.add_paragraph(means)
+        for row in rows:
+            word.add_paragraph(changes_line(row), style="List Bullet")
 
 
 def _glossary(word: WordDocument, document: Document) -> None:
