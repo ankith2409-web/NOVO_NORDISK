@@ -872,12 +872,6 @@ get fingerprinted as if it were real DAX. None of the three sample models happen
 with a missing expression — pinned in `tests/test_nan_handling.py` with a synthetic row rather
 than waiting for a file that triggers it.
 
-## Next
-
-- **Week 2** — chatbot over the graph, retrieval grounding, first generated BRD/FRD with every
-  requirement fingerprint-bound
-- **Week 3** — drift detection across model versions; cross-platform metric reconciliation
-- **Week 4** — interface, review queue, submission deliverables
 
 ## Licence and attribution
 
