@@ -56,10 +56,6 @@ _AGGREGATES: dict[str, str] = {
 #: measure matters to them. Each reason below says what would go wrong in terms
 #: of the report, because that is the thing a reader has actually seen.
 _BLOCKERS: dict[str, str] = {
-    "PREVIOUSMONTH": "compares against an earlier period, so its answer depends on which period the report is showing",
-    "PREVIOUSYEAR": "compares against an earlier period, so its answer depends on which period the report is showing",
-    "PREVIOUSQUARTER": "compares against an earlier period, so its answer depends on which period the report is showing",
-    "PREVIOUSDAY": "compares against an earlier period, so its answer depends on which period the report is showing",
     "SAMEPERIODLASTYEAR": "compares against an earlier period, so its answer depends on which period the report is showing",
     "DATEADD": "compares against an earlier period, so its answer depends on which period the report is showing",
     "PARALLELPERIOD": "compares against an earlier period, so its answer depends on which period the report is showing",
@@ -82,6 +78,43 @@ _BLOCKERS: dict[str, str] = {
     "SELECTEDVALUE": "answers differently depending on what the user has selected in the report",
     "ISFILTERED": "answers differently depending on what the user has filtered in the report",
     "EARLIER": "refers back to a row being worked through elsewhere in the same calculation, which a query has no way to point at",
+}
+
+
+#: Time functions that shift by exactly one of their own period, and the period
+#: they shift by. These are translatable, and used to be refused.
+#:
+#: The refusal was defensible and too cautious. "Previous month" is undefined
+#: without knowing which month the report is showing -- but that is the same
+#: objection that applies to *every* measure, and this project already answers
+#: it: naming the grain is what makes a translation exist, because GROUP BY is
+#: the filter context written down. A measure comparing against the previous
+#: month simply names its own grain. It is meaningful at one row per month and
+#: at no other, so it is translated there, and the period joins the GROUP BY.
+#:
+#: A reviewer put it plainly: "these are basic measures... if the tool cannot
+#: populate previous month SQL queries, these are very basic things needed".
+#: He was right.
+#:
+#: Only the unambiguous shifts are here. ``DATEADD`` and ``PARALLELPERIOD``
+#: take an offset and a unit that need not match the grain, and
+#: ``SAMEPERIODLASTYEAR`` shifts a year while keeping the period -- each is a
+#: different translation, and guessing between them would put a wrong number
+#: on screen. They stay refused until they are done properly.
+_TIME_SHIFTS: dict[str, str] = {
+    "PREVIOUSDAY": "day",
+    "PREVIOUSMONTH": "month",
+    "PREVIOUSQUARTER": "quarter",
+    "PREVIOUSYEAR": "year",
+}
+
+#: One step back, per period. A quarter is three months because SQL has no
+#: quarter interval.
+_ONE_PERIOD_BACK: dict[str, str] = {
+    "day": "INTERVAL 1 DAY",
+    "month": "INTERVAL 1 MONTH",
+    "quarter": "INTERVAL 3 MONTH",
+    "year": "INTERVAL 1 YEAR",
 }
 
 
@@ -420,6 +453,9 @@ class Parser:
                 args.append(self.expression())
         self.eat_op(")")
 
+        # `_TIME_SHIFTS` deliberately not refused here: whether one is
+        # translatable depends on the grain, which the parser does not know and
+        # the compiler does.
         if upper in _BLOCKERS:
             raise Unsupported(upper, _BLOCKERS[upper])
         return Call(upper, tuple(args))
@@ -446,9 +482,17 @@ class _Fragment:
 class Compiler:
     """Compile one measure against one model, at one grain."""
 
-    def __init__(self, model, quote: str = '"') -> None:
+    def __init__(self, model, quote: str = '"', grain: tuple[tuple[str, str], ...] = ()) -> None:
         self.model = model
         self.quote = quote
+        #: The grain the caller asked for, as resolved (table, column) pairs.
+        #: Held because a time shift compiles into a window function that has to
+        #: be partitioned by it -- "the previous month **for this site**" is a
+        #: different number from "the previous month across all sites".
+        self.grain = tuple(grain)
+        #: Set when a time shift was compiled: (period, table, column). The
+        #: period becomes part of the query's grain, so `translate` needs it.
+        self.shift: tuple[str, str, str] | None = None
         self.measures = {m.name.casefold(): m for m in model.measures}
         self.tables = {t.name.casefold(): t.name for t in model.user_tables()}
         self.columns = {
@@ -858,7 +902,24 @@ class Compiler:
         extra: list[str] = []
         cols: set[tuple[str, str]] = set()
         tables: set[str] = set()
+        shift: tuple[str, str, str] | None = None
         for arg in node.args[1:]:
+            # A time shift is not a filter on rows; it moves the whole
+            # calculation to an earlier period, so it is taken out here and
+            # applied to the finished aggregate below.
+            period = self._time_shift(arg)
+            if period is not None:
+                if shift is not None and shift != period:
+                    raise Blocked(
+                        node.name,
+                        "shifts to two different earlier periods at once, which no "
+                        "single query can answer",
+                    )
+                shift = period
+                tables.add(period[1])
+                cols.add((period[1], period[2]))
+                continue
+
             comparison = isinstance(arg, Binary) and arg.op in (
                 "=", "<>", "<", ">", "<=", ">=",
             )
@@ -872,8 +933,76 @@ class Compiler:
             extra.append(frag.sql)
             cols |= frag.columns
             tables |= frag.tables
+
         inner = self.compile(node.args[0], where + tuple(extra))
-        return _Fragment(inner.sql, inner.tables | tables, inner.columns | cols)
+        sql = inner.sql
+        if shift is not None:
+            if self.shift is not None and self.shift != shift:
+                raise Blocked(
+                    node.name,
+                    "compares against two different earlier periods in one measure, "
+                    "which no single query can answer",
+                )
+            self.shift = shift
+            sql = self._lagged(inner.sql, shift)
+        return _Fragment(sql, inner.tables | tables, inner.columns | cols)
+
+    def _time_shift(self, arg: object) -> tuple[str, str, str] | None:
+        """Read ``PREVIOUSMONTH('Calendar'[Date])`` and friends.
+
+        Returns ``(period, table, column)``, or None when this argument is an
+        ordinary filter. Anything shaped like a time shift but not exactly this
+        -- a shift over something that is not a plain column -- is refused
+        rather than approximated.
+        """
+        if not isinstance(arg, Call) or arg.name not in _TIME_SHIFTS:
+            return None
+        if len(arg.args) != 1 or not isinstance(arg.args[0], ColumnRef):
+            raise Unsupported(
+                arg.name, "is only understood over a single date column here"
+            )
+        ref = arg.args[0]
+        key = (ref.table.casefold(), ref.column.casefold())
+        if key not in self.columns:
+            raise Unsupported(
+                f"{ref.table}[{ref.column}]", "is not a column in this model"
+            )
+        table, column = self.columns[key]
+        return (_TIME_SHIFTS[arg.name], table, column)
+
+    def period_expr(self, shift: tuple[str, str, str]) -> str:
+        """The period a shift is measured in, as a SQL expression."""
+        period, table, column = shift
+        return f"DATE_TRUNC('{period}', {self.col(table, column)})"
+
+    def _lagged(self, inner: str, shift: tuple[str, str, str]) -> str:
+        """The same aggregate, one period earlier.
+
+        ``LAG`` over the period ordering is what "the previous month" means once
+        the rows *are* months -- with two guards, both of which produce a wrong
+        number if left out.
+
+        Partitioned by the requested grain: the previous month for one site is
+        not the previous month across all sites.
+
+        And guarded against gaps. ``LAG`` returns the previous *row*, not the
+        previous *month*, so a month in which nothing happened is skipped and
+        the row after it silently reports the month before that. Checked
+        against real data: with January and March populated and February empty,
+        the bare window says March's previous month is January's figure. DAX
+        returns blank there, so the ``CASE`` returns NULL unless the preceding
+        row really is the preceding period.
+        """
+        period = self.period_expr(shift)
+        step = _ONE_PERIOD_BACK[shift[0]]
+        over = f"ORDER BY {period}"
+        if self.grain:
+            partition = ", ".join(self.col(t, c) for t, c in self.grain)
+            over = f"PARTITION BY {partition} {over}"
+        return (
+            f"CASE WHEN LAG({period}) OVER ({over}) = {period} - {step} "
+            f"THEN LAG({inner}) OVER ({over}) END"
+        )
 
 
 # -- the public entry point ----------------------------------------------------
@@ -937,14 +1066,26 @@ def translate(model, measure, grain: tuple[str, ...] = (), quote: str = '"') -> 
     whole model -- a single row, which is the honest reading of a measure with
     no filter context applied.
     """
-    compiler = Compiler(model, quote=quote)
-
     try:
         grain_cols = _grain_columns(model, grain)
+    except Unsupported as stop:
+        return Translation(
+            measure=measure.name,
+            grain=grain,
+            status=Status.UNSUPPORTED,
+            reason=stop.reason,
+            blocked_by=stop.construct,
+        )
+
+    compiler = Compiler(model, quote=quote, grain=tuple(grain_cols))
+
+    try:
         tree = Parser(tokenize(measure.expression)).parse()
         body = compiler.compile(tree)
 
         needed = set(body.tables) | {t for t, _ in grain_cols}
+        if compiler.shift is not None:
+            needed.add(compiler.shift[1])
         if not needed:
             # Blocked, not unsupported. A measure that reads no column is a
             # constant -- a label, a tooltip, a hard-coded target -- and there
@@ -975,13 +1116,23 @@ def translate(model, measure, grain: tuple[str, ...] = (), quote: str = '"') -> 
                 )
                 joined.add(target)
 
-        select = [compiler.col(t, c) for t, c in grain_cols]
+        # A measure that compares against an earlier period brings its own
+        # grain with it: it is meaningful at one row per that period and at no
+        # other, so the period joins the GROUP BY whether or not the caller
+        # asked for it. Without this the LAG would order over rows that are not
+        # periods and return a number nobody asked for.
+        group_by = [compiler.col(t, c) for t, c in grain_cols]
+        select = list(group_by)
+        if compiler.shift is not None:
+            period_sql = compiler.period_expr(compiler.shift)
+            select.append(f"{period_sql} AS {compiler.q(compiler.shift[0])}")
+            group_by.append(period_sql)
         select.append(f"{body.sql} AS {compiler.q(measure.name)}")
 
         lines = [f"SELECT {', '.join(select)}", f"FROM {compiler.q(base)}"]
         lines.extend(joins)
-        if grain_cols:
-            group = ", ".join(compiler.col(t, c) for t, c in grain_cols)
+        if group_by:
+            group = ", ".join(group_by)
             lines.append(f"GROUP BY {group}")
             lines.append(f"ORDER BY {group}")
 

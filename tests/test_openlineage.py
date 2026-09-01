@@ -118,7 +118,12 @@ def test_a_measure_whose_columns_are_not_fixed_is_left_out_and_reported(
     """
     assert emitted.omitted
     names = {measure for measure, _ in emitted.omitted}
-    assert "OOS Results PM" in names
+    # Still genuinely undecidable: RANKX ranks against a row set the report
+    # chooses, so there is no fixed list of columns it reads.
+    assert "Instrument Failure Rank" in names
+    # And no longer omitted: a previous-period measure translates now, so its
+    # columns are known and the catalog gets its lineage instead of a gap.
+    assert "OOS Results PM" not in names
     for _, reason in emitted.omitted:
         assert reason, "a measure was omitted with no reason given"
 

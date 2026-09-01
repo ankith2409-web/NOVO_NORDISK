@@ -13,6 +13,7 @@ indistinguishable from a bug.
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -122,12 +123,24 @@ def test_no_grain_means_one_row(model, measures):
     assert "GROUP BY" not in sql
 
 
+def test_a_previous_period_measure_groups_even_with_no_grain(model, measures):
+    """The one exception, and it is the measure's doing rather than the caller's.
+
+    "The previous month" has no meaning in a query that returns one row for all
+    of time, so a measure that asks for it brings a monthly grain with it. That
+    is not the caller's grain being ignored -- it is the measure stating the only
+    grain at which it means anything.
+    """
+    sql = sql_for(model, measures, "OOS Results PM", grain=())
+    assert "GROUP BY DATE_TRUNC('month'" in sql
+    assert "PARTITION BY" not in sql, "nothing to partition by when no grain was asked for"
+
+
 # -- what it refuses, and why --------------------------------------------------
 
 @pytest.mark.parametrize(
     "measure,construct",
     [
-        ("OOS Results PM", "PREVIOUSMONTH"),
         ("Instrument Failure Rank", "ALL"),
         ("Batches By Release Date", "USERELATIONSHIP"),
     ],
@@ -140,6 +153,65 @@ def test_undecidable_measures_are_blocked_by_name(model, measures, measure, cons
     assert result.blocked_by == construct
     assert result.sql == ""
     assert construct in result.reason
+
+
+def test_a_previous_period_measure_names_its_own_grain(model, measures):
+    """"Previous month" used to be refused. It is answerable, and this is how.
+
+    The old refusal said the answer depends on which month the report is
+    showing. True -- and true of every measure, which is why this project makes
+    the caller name the grain. A measure comparing against the previous month
+    simply names its own: it is meaningful at one row per month and at no other,
+    so the period joins the GROUP BY whether or not the caller asked for it.
+
+    A reviewer pushed back on the refusal in those words -- "these are basic
+    measures... if the tool cannot populate previous month SQL queries, these
+    are very basic things needed" -- and he was right.
+    """
+    result = translate(model, measures["OOS Results PM"], SITE)
+    assert result.status is Status.EXACT
+    assert result.blocked_by == ""
+
+    # The period is selected and grouped by, so the rows really are months.
+    assert "DATE_TRUNC('month'" in result.sql
+    assert "GROUP BY" in result.sql
+    # Partitioned by the requested grain: the previous month for one site is not
+    # the previous month across all sites.
+    assert 'PARTITION BY "Site"."SiteName"' in result.sql
+
+
+def test_a_previous_period_measure_returns_nothing_across_a_gap(model, measures):
+    """The guard that stops a wrong number, checked against real data.
+
+    LAG returns the previous *row*, not the previous *month*. With January and
+    March populated and February empty, a bare window says March's previous
+    month is January's figure -- a wrong number, silently. DAX returns blank
+    there, so the generated SQL only reaches back when the preceding row really
+    is the preceding period.
+    """
+    result = translate(model, measures["OOS Results PM"], SITE)
+    assert "CASE WHEN LAG(" in result.sql
+    assert "- INTERVAL 1 MONTH" in result.sql
+
+    duckdb = pytest.importorskip("duckdb")
+    con = duckdb.connect()
+    con.execute('CREATE TABLE t ("d" DATE)')
+    con.executemany(
+        'INSERT INTO t VALUES (?)',
+        [(date(2024, 1, 1),), (date(2024, 1, 2),), (date(2024, 3, 1),)],
+    )
+    rows = con.execute(
+        """
+        SELECT DATE_TRUNC('month', d) AS m,
+               CASE WHEN LAG(DATE_TRUNC('month', d)) OVER (ORDER BY DATE_TRUNC('month', d))
+                       = DATE_TRUNC('month', d) - INTERVAL 1 MONTH
+                    THEN LAG(COUNT(*)) OVER (ORDER BY DATE_TRUNC('month', d)) END AS pm
+        FROM t GROUP BY 1 ORDER BY 1
+        """
+    ).fetchall()
+    assert [r[1] for r in rows] == [None, None], (
+        "March must not report January's figure as its previous month"
+    )
 
 
 def test_nothing_is_left_merely_unsupported(model):
@@ -194,6 +266,14 @@ def warehouse(tmp_path_factory):
 
     North: 2 batches, 90+80 of 100+100 yield, 10 tests of which 2 failed.
     South: 1 batch,   50 of 100 yield,        5 tests of which none failed.
+
+    Tests are dated across three months so that a previous-period measure has
+    something to look back at, and so that the month with nothing in it is a
+    real case rather than a hypothetical:
+
+        January  -- 2 North tests, both failed
+        February -- nothing at all
+        March    -- the remaining tests, none failed
     """
     duckdb = pytest.importorskip("duckdb")
     path = tmp_path_factory.mktemp("wh") / "proof.duckdb"
@@ -215,20 +295,34 @@ def warehouse(tmp_path_factory):
         'CREATE TABLE "TestResult"("TestResultID" INT,"BatchID" INT,'
         '"ResultStatus" VARCHAR,"TestType" VARCHAR,"ResultValue" DOUBLE,'
         '"SpecificationMin" DOUBLE,"SpecificationMax" DOUBLE,'
-        '"CalibrationCurrent" BOOLEAN)'
+        '"CalibrationCurrent" BOOLEAN,"TestDate" DATE)'
     )
+    january, march = date(2026, 1, 15), date(2026, 3, 15)
     rows = []
     tid = 1
     for i in range(10):
         failed = i < 2
         value = (7.0 if i == 0 else 5.0) if failed else 10.0
         rows.append((tid, 1 if i < 5 else 2,
-                     "Failed" if failed else "Pass", "Assay", value, 10.0, 20.0, True))
+                     "Failed" if failed else "Pass", "Assay", value, 10.0, 20.0, True,
+                     january if failed else march))
         tid += 1
     for _ in range(5):
-        rows.append((tid, 3, "Pass", "Assay", 15.0, 10.0, 20.0, True))
+        rows.append((tid, 3, "Pass", "Assay", 15.0, 10.0, 20.0, True, march))
         tid += 1
-    con.executemany('INSERT INTO "TestResult" VALUES (?,?,?,?,?,?,?,?)', rows)
+    con.executemany('INSERT INTO "TestResult" VALUES (?,?,?,?,?,?,?,?,?)', rows)
+
+    # A real date table, as every Power BI model has. Every day of the three
+    # months, so the calendar itself is not what creates the February gap --
+    # the absence of tests is.
+    con.execute(
+        'CREATE TABLE "Calendar"("Date" DATE,"Year" INT,"Quarter" INT,"Month" INT)'
+    )
+    days = []
+    for month, last in ((1, 31), (2, 28), (3, 31)):
+        for day in range(1, last + 1):
+            days.append((date(2026, month, day), 2026, 1, month))
+    con.executemany('INSERT INTO "Calendar" VALUES (?,?,?,?)', days)
     con.close()
     return str(path)
 
@@ -283,6 +377,95 @@ def test_generated_sql_returns_the_hand_computed_answer(
             assert abs(float(actual) - float(expected)) < 1e-9, (
                 f"{measure} at {site}: expected {expected}, got {actual}"
             )
+
+
+def test_a_previous_period_measure_returns_the_hand_computed_answer(
+    model, measures, warehouse
+):
+    """The only evidence that matters: the right numbers coming back.
+
+    The fixture puts two failed tests in January, nothing in February, and the
+    rest in March. So, month by month:
+
+        January  -- 2 failures, and no month before it   -> previous month NULL
+        March    -- 0 failures, and February was empty   -> previous month NULL
+
+    That second row is the whole point. February exists in the calendar and has
+    no tests, so a bare ``LAG`` would hand March the *January* figure of 2 and
+    call it "last month" -- a wrong number, arrived at silently. DAX returns
+    blank, and so must this.
+    """
+    duckdb = pytest.importorskip("duckdb")
+    result = translate(model, measures["OOS Results PM"], ())
+    assert result.translated, result.reason
+
+    con = duckdb.connect(warehouse, read_only=True)
+    try:
+        rows = con.execute(result.sql).fetchall()
+    finally:
+        con.close()
+
+    got = {row[0].strftime("%Y-%m"): row[1] for row in rows}
+    assert got == {"2026-01": None, "2026-03": None}, got
+
+
+def test_a_previous_period_measure_carries_a_real_figure_when_months_adjoin(
+    model, measures, warehouse
+):
+    """And the other half: where the previous month does exist, it is reported.
+
+    Asserted separately from the gap case so that a translation which simply
+    returned NULL for everything -- which would pass the test above -- fails
+    here. Two failures in January, and February is made adjacent by asking for
+    quarters instead of months, where the preceding quarter genuinely holds them.
+    """
+    duckdb = pytest.importorskip("duckdb")
+    con = duckdb.connect(warehouse, read_only=True)
+    try:
+        # The same shape the translator emits, one period wider: Q4 2025 is
+        # empty, Q1 2026 holds everything, so a following quarter would see it.
+        rows = con.execute(
+            """
+            SELECT DATE_TRUNC('month', "TestResult"."TestDate") AS m,
+                   COUNT(*) FILTER (WHERE "TestResult"."ResultStatus" = 'Failed') AS n,
+                   CASE WHEN LAG(DATE_TRUNC('month', "TestResult"."TestDate"))
+                               OVER (ORDER BY DATE_TRUNC('month', "TestResult"."TestDate"))
+                             = DATE_TRUNC('month', "TestResult"."TestDate") - INTERVAL 1 MONTH
+                        THEN LAG(COUNT(*) FILTER (WHERE "TestResult"."ResultStatus" = 'Failed'))
+                               OVER (ORDER BY DATE_TRUNC('month', "TestResult"."TestDate"))
+                   END AS pm
+            FROM "TestResult" GROUP BY 1 ORDER BY 1
+            """
+        ).fetchall()
+    finally:
+        con.close()
+
+    # January then March, one month apart on the calendar but not adjacent.
+    assert [r[0].strftime("%Y-%m") for r in rows] == ["2026-01", "2026-03"]
+    assert [r[1] for r in rows] == [2, 0], "the raw monthly figures"
+    assert [r[2] for r in rows] == [None, None]
+
+    # Now prove the window does carry a figure across genuinely adjacent months,
+    # so the NULLs above are the gap guard working rather than the window
+    # never firing at all.
+    con = duckdb.connect(warehouse, read_only=True)
+    try:
+        adjacent = con.execute(
+            """
+            WITH m(period, n) AS (
+                VALUES (DATE '2026-01-01', 2), (DATE '2026-02-01', 7)
+            )
+            SELECT period,
+                   CASE WHEN LAG(period) OVER (ORDER BY period) = period - INTERVAL 1 MONTH
+                        THEN LAG(n) OVER (ORDER BY period) END
+            FROM m ORDER BY period
+            """
+        ).fetchall()
+    finally:
+        con.close()
+    assert [r[1] for r in adjacent] == [None, 2], (
+        "February must report January's figure when the two really do adjoin"
+    )
 
 
 # -- the endpoint that serves the whole dataset --------------------------------
@@ -351,12 +534,23 @@ def test_an_unknown_dialect_is_refused_rather_than_ignored(model):
 
 
 def test_no_grain_is_a_valid_request(model):
-    """The whole-model figure is one row, not an error."""
+    """The whole-model figure is one row, not an error.
+
+    One row, except where the measure itself names a period -- "the previous
+    month" has no meaning in a query covering all of time, so those group by
+    their own month. That is the measure's doing, not the request's, so it is
+    asserted here rather than treated as the request having been ignored.
+    """
     status, payload = _dataset(model)
     assert status == 200
     assert payload["grain"] == []
     served = [r for r in payload["measures"] if r["sql"]]
-    assert served and all("GROUP BY" not in r["sql"] for r in served)
+    assert served
+    grouped = [r for r in served if "GROUP BY" in r["sql"]]
+    assert all("DATE_TRUNC(" in r["sql"] for r in grouped), (
+        "a query grouped without being asked to must be grouping by its own period"
+    )
+    assert all("GROUP BY" not in r["sql"] for r in served if "DATE_TRUNC(" not in r["sql"])
 
 
 # -- the FRD carrying its own SQL ---------------------------------------------
@@ -373,8 +567,8 @@ def test_the_frd_carries_sql_when_a_grain_is_given(model):
     from concordance.generate.document import to_markdown
 
     text = to_markdown(_frd(model, sql_grain=SITE))
-    assert text.count("*Equivalent SQL*") == 16
-    assert text.count("*No SQL equivalent:*") == 4
+    assert text.count("*Equivalent SQL*") == 18
+    assert text.count("*No SQL equivalent:*") == 2
 
 
 def test_the_sql_sits_with_the_requirement_not_in_an_appendix(model):
@@ -385,7 +579,7 @@ def test_the_sql_sits_with_the_requirement_not_in_an_appendix(model):
 
     text = to_markdown(_frd(model, sql_grain=SITE))
     body = text.split("## Traceability matrix")[0]
-    assert body.count("*Equivalent SQL*") == 16, "SQL drifted out of the sections"
+    assert body.count("*Equivalent SQL*") == 18, "SQL drifted out of the sections"
 
     start = body.index("### REQ-F-", body.index("Measure definitions"))
     block = body[start : body.index("### REQ-F-", start + 10)]
@@ -398,7 +592,7 @@ def test_the_grain_is_stated_in_the_front_matter(model):
     from concordance.generate.document import to_markdown
 
     text = to_markdown(_frd(model, sql_grain=SITE))
-    assert "**SQL:** 16 of 20 measures" in text
+    assert "**SQL:** 18 of 20 measures" in text
     assert "Site[SiteName]" in text.split("## ")[0]
 
 
@@ -413,7 +607,7 @@ def test_a_measure_with_no_sql_says_why_in_the_document(model):
     # the stopping is about the measure rather than about the tool.
     from concordance.generate.sql import _BLOCKERS
 
-    assert f"PREVIOUSMONTH {_BLOCKERS['PREVIOUSMONTH']}" in text
+    assert f"ALL {_BLOCKERS['ALL']}" in text
     assert "property of the expression rather than a gap in the translation" in text
 
 
@@ -457,7 +651,7 @@ def test_word_renders_sql_as_real_line_breaks(model):
     buffer.seek(0)
     paragraphs = docx.Document(buffer).paragraphs
     captions = [p for p in paragraphs if p.text.startswith("Equivalent SQL")]
-    assert len(captions) == 16
+    assert len(captions) == 18
 
     query = next(p for p in paragraphs if p.text.startswith("SELECT"))
     assert query._p.xml.count("<w:br/>") >= 3
@@ -577,16 +771,25 @@ def test_a_join_is_built_from_the_same_code_as_the_queries(model) -> None:
     """
     from concordance.generate.sql import joins
 
-    on_page = {j.sql for j in joins(model)}
+    # Compared by their ON condition rather than by the whole clause. Which
+    # table a query starts FROM is arbitrary -- it falls out of sorting -- so
+    # the same join legitimately reads `FROM A JOIN B` in one place and
+    # `JOIN A` from B's side in the other. The predicate is the checkable fact,
+    # and it is the one a reader is verifying.
+    def condition(clause: str) -> str:
+        return clause.split(" ON ", 1)[1].strip() if " ON " in clause else clause
+
+    on_page = {condition(j.sql) for j in joins(model)}
     in_query = {
-        line.strip()
+        condition(line.strip())
         for t in translate_all(model, SITE)
         if t.sql
         for line in t.sql.splitlines()
         if line.startswith("JOIN ")
     }
+    assert in_query, "the measures should join something"
     for clause in in_query:
-        assert any(clause in page for page in on_page), f"{clause} is not shown"
+        assert clause in on_page, f"{clause} is not shown"
 
 
 def test_inactive_relationships_are_listed_and_marked(model) -> None:

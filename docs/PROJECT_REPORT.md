@@ -87,20 +87,31 @@ Coverage, measured rather than estimated:
 
 | Model | Measures | Translated | Notes |
 |---|---|---|---|
-| QualityControl | 20 | 16 | authored for this project |
-| ClinicalTrialSafety | 24 | 18 | authored for this project |
+| QualityControl | 20 | 18 | authored for this project |
+| ClinicalTrialSafety | 24 | 21 | authored for this project |
 | DiabetesCare | 12 | 11 | authored for this project |
 | Supply Chain (Microsoft sample) | 4 | 4 | not authored here |
-| Sales & Returns (Microsoft sample) | 58 | 6 | not authored here |
+| Sales & Returns (Microsoft sample) | 58 | 18 | not authored here |
 
 The last row is the important one and is not a typo. On models written for this project
-the translator handles 80%; on a Power BI file nobody here authored it handles 10%. The
+the translator handles 89%; on a Power BI file nobody here authored it handles 31%. The
 difference is not a defect being hidden — it is what the first three numbers were always
-worth. Sales & Returns leans on time intelligence (`PREVIOUSMONTH`), `ALL`, `ALLSELECTED`
-and `ISINSCOPE`, all of which change or remove the filter context rather than reading it,
-and none of which a single query at a fixed grain can express.
+worth.
 
-What matters more than the ratio is what happens to the other 52. Each is refused with the
+That last figure was 10% until a reviewer pushed back on one of the refusals. Measures
+comparing against an earlier period — `PREVIOUSMONTH` and its siblings — were declined on
+the grounds that the answer depends on which month the report is showing. True, and true of
+every measure, which is why this tool makes the caller name the grain in the first place. A
+previous-month measure simply names its own: it is meaningful at one row per month and at
+no other, so it is now translated there, as a window function over the period, and the
+period joins the `GROUP BY`. Twelve more of Sales & Returns' measures translate as a result,
+and three more of ClinicalTrialSafety's.
+
+The remaining refusals are `ALL`, `ALLSELECTED`, `ISINSCOPE` and `USERELATIONSHIP`, which
+change or remove the filter context rather than reading it, and which no single query at a
+fixed grain can express.
+
+What matters more than the ratio is what happens to the other 40. Each is refused with the
 construct that stopped it and why, rather than being emitted as SQL that parses and quietly
 computes a different number. A wrong query is worse than an absent one: the absent one gets
 asked about. Automated tests assert that no refusal on a real Power BI file is ever a gap
