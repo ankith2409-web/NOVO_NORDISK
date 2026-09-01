@@ -28,6 +28,7 @@ import { Intro } from "@/components/Intro";
 import { FAVICON_SVG, Wordmark } from "@/components/Logo";
 import { Overview } from "@/views/Overview";
 import { Model } from "@/views/Model";
+import { Dashboard } from "@/views/Dashboard";
 import { Dataset } from "@/views/Dataset";
 import { FEATURE } from "@/lib/naming";
 import { Requirements } from "@/views/Requirements";
@@ -40,6 +41,7 @@ import { recall, recallOneOf, remember } from "@/lib/remember";
 type ViewId =
   | "overview"
   | "model"
+  | "dashboard"
   | "dataset"
   | "requirements"
   | "drift"
@@ -49,6 +51,12 @@ type ViewId =
 const VIEWS: { id: ViewId; label: string; needs?: "drift" | "reconcile" }[] = [
   { id: "overview", label: "Overview" },
   { id: "model", label: "Model" },
+  // Above Dataset on purpose. It is the only page that starts from what a
+  // person is actually looking at -- a tile on a dashboard with a title on it
+  // -- and works back to the definition. Everything below it starts from the
+  // model and works outward, which is the wrong direction for someone holding
+  // a report and asking "where does this number come from".
+  { id: "dashboard", label: "Dashboard" },
   // Sits next to Model because it answers the same question at a different
   // altitude: Model is one object in depth, Dataset is every measure at once.
   { id: "dataset", label: FEATURE.dataset.tab },
@@ -452,6 +460,7 @@ export default function App() {
           {!resolved && <p className="p-4 font-mono text-xs text-faint">Connecting…</p>}
           {resolved && view === "overview" && <Overview overview={overview} />}
           {resolved && view === "model" && <Model />}
+          {resolved && view === "dashboard" && <Dashboard />}
           {resolved && view === "dataset" && <Dataset />}
           {resolved && view === "requirements" && <Requirements />}
           {resolved && view === "drift" && (

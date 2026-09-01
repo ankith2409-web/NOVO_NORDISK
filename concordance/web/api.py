@@ -682,6 +682,64 @@ def _record(record: Any) -> dict[str, Any] | None:
     }
 
 
+def report(context: ApiContext, params: Params) -> dict[str, Any]:
+    """The dashboard's tiles, each joined to the DAX and SQL behind it.
+
+    The one question the reviewers said was missing: given a tile called "Total
+    Sales", which measure produces that number and what query would reproduce
+    it. Answered only for a source that carries a report -- a `.SemanticModel`
+    folder is the model alone, and the empty answer here is a true one rather
+    than a failure.
+    """
+    from concordance.generate.sql import DIALECTS
+    from concordance.generate.tiles import correlate, counts
+
+    grain = tuple(g for g in (params.get("grain") or []) if g.strip())
+    dialect = _one(params, "dialect", required=False).lower() or "duckdb"
+    if dialect not in DIALECTS:
+        raise ApiError(
+            HTTPStatus.BAD_REQUEST,
+            f"unknown dialect {dialect!r}; choose one of " + ", ".join(sorted(DIALECTS)),
+        )
+
+    pages = correlate(context.graph, grain, dialect)
+    return {
+        "model": context.graph.model.name,
+        "source_format": context.graph.model.source_type,
+        "dialect": dialect,
+        "grain": list(grain),
+        "counts": counts(pages),
+        "pages": [
+            {
+                "name": page.name,
+                "ordinal": page.ordinal,
+                "tiles": [
+                    {
+                        "title": tile.title,
+                        "visual_type": tile.visual_type,
+                        "fields": [
+                            {
+                                "role": field.role,
+                                "table": field.table,
+                                "name": field.name,
+                                "qualified_name": field.qualified_name,
+                                "aggregation": field.aggregation,
+                                "kind": field.kind,
+                                "dax": field.expression,
+                                "sql": field.sql,
+                                "reason": field.reason,
+                            }
+                            for field in tile.fields
+                        ],
+                    }
+                    for tile in page.tiles
+                ],
+            }
+            for page in pages
+        ],
+    }
+
+
 def dataset(context: ApiContext, params: Params) -> dict[str, Any]:
     """Every measure in one model, with its DAX and its SQL side by side.
 
@@ -831,6 +889,7 @@ ROUTES: dict[str, Callable[[ApiContext, Params], dict[str, Any]]] = {
     "/api/drift": drift,
     "/api/reconcile": reconcile,
     "/api/dataset": dataset,
+    "/api/report": report,
 }
 
 #: Answered outside `ROUTES` because neither is a pure function of a context:

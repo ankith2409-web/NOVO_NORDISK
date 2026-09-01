@@ -231,6 +231,48 @@ export interface DatasetPayload {
   measures: DatasetMeasure[];
 }
 
+/**
+ * A dashboard tile, and what produces the number on it.
+ *
+ * `kind` is "" when the model holds neither a measure nor a column under this
+ * name -- a real finding, so it is carried rather than filtered server-side.
+ */
+export interface TileField {
+  role: string;
+  table: string;
+  name: string;
+  qualified_name: string;
+  aggregation: string;
+  kind: "measure" | "column" | "";
+  dax: string;
+  sql: string;
+  reason: string;
+}
+
+export interface Tile {
+  /** Empty when the report author never set one. */
+  title: string;
+  visual_type: string;
+  fields: TileField[];
+}
+
+export interface ReportPayload {
+  model: string;
+  source_format: string;
+  dialect: string;
+  grain: string[];
+  counts: {
+    pages: number;
+    tiles: number;
+    titled: number;
+    with_measures: number;
+    measure_fields: number;
+    with_sql: number;
+    unresolved: number;
+  };
+  pages: { name: string; ordinal: number; tiles: Tile[] }[];
+}
+
 export interface ReconcilePayload {
   model: string;
   warehouse: string;
@@ -655,6 +697,13 @@ export const api = {
 
   /** Drop one uploaded model. Only ever this browser's own. */
   forget: (model: string) => post<{ forgotten: string }>("/forget", { model }),
+
+  report: (grain: string[], dialect: string) => {
+    const params = new URLSearchParams();
+    for (const g of grain) params.append("grain", g);
+    if (dialect) params.set("dialect", dialect);
+    return get<ReportPayload>("/report", params);
+  },
 
   whoami: () => get<WhoAmI>("/whoami"),
   overview: () => get<Overview>("/overview"),

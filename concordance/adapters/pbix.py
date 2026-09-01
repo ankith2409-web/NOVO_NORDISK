@@ -189,11 +189,31 @@ class PbixAdapter:
         model.variations = build_variations(
             _safe(raw, "tmschema_variations"), _safe(raw, "tmschema_hierarchies")
         )
+        model.report_pages = self._report_pages(path)
         model.coverage_gaps = self._coverage_gaps(raw)
         resolve_table_dependencies(model)
         return model
 
     # -- pieces -------------------------------------------------------------
+
+    def _report_pages(self, path: Path):
+        """The report layer, read straight out of the .pbix archive.
+
+        PBIXRay reads the data model and does not expose the report, so this
+        opens the file a second time as the zip it is. Failing to read it costs
+        the report layer and nothing else: a model whose pages cannot be parsed
+        is still a model, and refusing to open it over a bonus would be a poor
+        trade.
+        """
+        import zipfile
+
+        from concordance.normalize.layout import read_layout
+
+        try:
+            with zipfile.ZipFile(path) as archive:
+                return read_layout(archive.read("Report/Layout"))
+        except (KeyError, OSError, zipfile.BadZipFile):
+            return []
 
     def _build_hierarchies(self, raw: PBIXRay) -> list[Hierarchy]:
         """Assemble hierarchies from their separately-stored levels.

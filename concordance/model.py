@@ -11,6 +11,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+# The report layer's shapes are defined next to the parser that produces them,
+# and named here because the model holds them. Re-exported so that `from
+# concordance.model import Visual` works alongside every other object kind --
+# a caller should not have to know which of these came from a different file.
+from concordance.normalize.layout import ReportPage, Visual, VisualField as VisualField
+
 
 class ObjectKind(Enum):
     TABLE = "table"
@@ -356,6 +362,14 @@ class SemanticModel:
     object_permissions: list[ObjectPermission] = field(default_factory=list)
     perspectives: list[Perspective] = field(default_factory=list)
     coverage_gaps: list[CoverageGap] = field(default_factory=list)
+    #: The report layer: which pages exist and which tiles are on them. Empty
+    #: for a source that carries no report -- a .SemanticModel folder is the
+    #: model alone, and a tile it does not describe must not be invented for it.
+    report_pages: list[ReportPage] = field(default_factory=list)
+
+    def visuals(self) -> list[Visual]:
+        """Every tile in the report, across all pages."""
+        return [visual for page in self.report_pages for visual in page.visuals]
 
     def user_tables(self) -> list[Table]:
         return [t for t in self.tables if not t.is_system]
@@ -380,4 +394,6 @@ class SemanticModel:
             ),
             "kpis": len(self.kpis),
             "perspectives": len(self.perspectives),
+            "report_pages": len(self.report_pages),
+            "visuals": len(self.visuals()),
         }
