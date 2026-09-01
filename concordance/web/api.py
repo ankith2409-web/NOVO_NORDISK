@@ -753,6 +753,7 @@ def dataset(context: ApiContext, params: Params) -> dict[str, Any]:
     """
     from concordance.generate.sql import (
         DIALECTS,
+        combine,
         Status,
         joins,
         to_dialect,
@@ -768,6 +769,10 @@ def dataset(context: ApiContext, params: Params) -> dict[str, Any]:
             f"unknown dialect {dialect!r}; choose one of "
             + ", ".join(sorted(DIALECTS)),
         )
+
+    # Every measure as columns of as few queries as possible. Asked for twice:
+    # "convert the whole thing into an SQL query rather than giving one each".
+    queries, not_combined = combine(model, grain, dialect)
 
     rows: list[dict[str, Any]] = []
     for translation in translate_all(model, grain):
@@ -833,6 +838,13 @@ def dataset(context: ApiContext, params: Params) -> dict[str, Any]:
             "blocked": len(rows) - translated,
         },
         "measures": rows,
+        "combined": [
+            {"label": q.label, "sql": q.sql, "measures": list(q.measures)}
+            for q in queries
+        ],
+        "not_combined": [
+            {"measure": name, "reason": reason} for name, reason in not_combined
+        ],
     }
 
 

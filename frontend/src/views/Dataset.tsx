@@ -105,6 +105,32 @@ export function Dataset() {
     )
     .join("\n\n");
 
+  /**
+   * Every measure as columns of as few queries as possible.
+   *
+   * A different thing from the block above, and the one actually asked for:
+   * "if you can convert the whole thing into an SQL query rather than giving
+   * one each". One query you run once and get the whole dashboard back, rather
+   * than forty you run in turn and line up by hand.
+   *
+   * Usually one query. Two when the model compares against an earlier period,
+   * because a monthly figure and an all-time total cannot share a result set
+   * without one of them changing meaning -- so each says which grain it is at.
+   */
+  const oneQuery = [
+    ...data.combined.map(
+      (q) => `-- ${q.label}\n-- ${q.measures.join(", ")}\n${q.sql};`,
+    ),
+    ...(data.not_combined.length
+      ? [
+          "-- Not in any query above, and why:\n" +
+            data.not_combined
+              .map((m) => `--   ${m.measure}: ${m.reason}`)
+              .join("\n"),
+        ]
+      : []),
+  ].join("\n\n");
+
   const copy = (text: string, token: string) => {
     void navigator.clipboard.writeText(text).then(() => {
       setCopied(token);
@@ -251,6 +277,7 @@ export function Dataset() {
           <AllInOnePlace
             dax={allDax}
             sql={allSql}
+            oneQuery={oneQuery}
             model={data.model}
             counts={data.counts}
             dialect={dialect}
@@ -285,6 +312,7 @@ export function Dataset() {
 function AllInOnePlace({
   dax,
   sql,
+  oneQuery,
   model,
   counts,
   dialect,
@@ -294,6 +322,7 @@ function AllInOnePlace({
 }: {
   dax: string;
   sql: string;
+  oneQuery: string;
   model: string;
   counts: DatasetPayload["counts"];
   dialect: string;
@@ -302,8 +331,8 @@ function AllInOnePlace({
   onCopy: (text: string, token: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [showing, setShowing] = useState<"dax" | "sql">("dax");
-  const text = showing === "dax" ? dax : sql;
+  const [showing, setShowing] = useState<"dax" | "sql" | "one">("dax");
+  const text = showing === "dax" ? dax : showing === "sql" ? sql : oneQuery;
 
   return (
     <section className="rounded border border-hairline bg-ground">
@@ -333,6 +362,7 @@ function AllInOnePlace({
           [
             { id: "dax", text: dax, label: "copy all DAX" },
             { id: "sql", text: sql, label: "copy all SQL" },
+            { id: "one", text: oneQuery, label: "copy one query" },
           ] as const
         ).map((one) => (
           <Button
@@ -358,7 +388,8 @@ function AllInOnePlace({
             {(
               [
                 { id: "dax", label: "DAX", said: "as written in Power BI" },
-                { id: "sql", label: "SQL", said: `as ${dialect}` },
+                { id: "sql", label: "SQL", said: "one query per measure" },
+                { id: "one", label: "SQL", said: "all measures in one query" },
               ] as const
             ).map((tab) => (
               <Button
@@ -377,7 +408,15 @@ function AllInOnePlace({
           </div>
 
           <p className="text-xs text-muted">
-            {showing === "dax" ? (
+            {showing === "one" ? (
+              <>
+                Every measure as columns of a single query — run it once and the whole
+                dashboard comes back, instead of running {counts.translated} queries and
+                lining the answers up by hand. Measures that read different tables are
+                aggregated separately and joined on the grain, so nothing is multiplied
+                by a table it does not belong to.
+              </>
+            ) : showing === "dax" ? (
               <>
                 Every measure in {model}, exactly as it is written in the model, each
                 under its name.

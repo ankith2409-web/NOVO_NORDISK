@@ -229,6 +229,10 @@ export interface DatasetPayload {
   dialects: string[];
   counts: { measures: number; translated: number; blocked: number };
   measures: DatasetMeasure[];
+  /** Every measure as columns of as few queries as possible. */
+  combined: { label: string; sql: string; measures: string[] }[];
+  /** Measures no combined query can carry, and why. */
+  not_combined: { measure: string; reason: string }[];
 }
 
 /**

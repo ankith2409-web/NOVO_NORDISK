@@ -1172,6 +1172,190 @@ class Join:
     sql: str
 
 
+@dataclass(frozen=True)
+class Combined:
+    """Several measures in one query, at one grain."""
+
+    #: What this query returns, said plainly: "one row per Store[Region]".
+    label: str
+    sql: str
+    #: The measures it computes, in the order they appear as columns.
+    measures: tuple[str, ...]
+
+
+def combine(
+    model, grain: tuple[str, ...] = (), dialect: str = "duckdb", quote: str = '"'
+) -> tuple[list[Combined], list[tuple[str, str]]]:
+    """Every translatable measure as columns of as few queries as possible.
+
+    Asked for twice, in these words: "if you can convert the whole thing into an
+    SQL query rather than giving one each", and "you can give the whole thing in
+    one SQL query itself with all the data sets". One query you can paste into a
+    warehouse and get the whole dashboard back, rather than forty you have to
+    run one at a time.
+
+    "As few as possible" rather than "one", because one is sometimes a lie. A
+    measure comparing against the previous month is computed per month; a plain
+    total is computed once. Forcing them into a single query would silently
+    change what the plain totals mean -- they would become monthly figures under
+    a heading that says otherwise. So measures are grouped by the grain they are
+    actually computed at, which in practice is one query, or two when the model
+    has period comparisons.
+
+    Returns the queries and, separately, the measures left out with the reason,
+    because a combined query that quietly dropped a third of the model would be
+    the same failure this project exists to prevent.
+    """
+    grain_cols = _grain_columns(model, grain)
+    # Grouped twice. First by the period a measure compares against, because
+    # measures at different grains cannot share a query without changing what
+    # they mean. Then by the tables a measure reads, for the reason below.
+    groups: dict[
+        tuple[str, str, str] | None,
+        dict[frozenset[str], list[tuple[object, _Fragment, Compiler]]],
+    ] = {}
+    omitted: list[tuple[str, str]] = []
+
+    for measure in model.measures:
+        compiler = Compiler(model, quote=quote, grain=tuple(grain_cols))
+        try:
+            tree = Parser(tokenize(measure.expression)).parse()
+            body = compiler.compile(tree)
+            reads = set(body.tables) | {t for t, _ in grain_cols}
+            if compiler.shift is not None:
+                reads.add(compiler.shift[1])
+            if not reads:
+                raise Blocked(
+                    measure.name, "is a constant, so there is nothing to select it from"
+                )
+        except (Unsupported, Blocked) as stop:
+            omitted.append((measure.name, f"{stop.construct} {stop.why}"))
+            continue
+        groups.setdefault(compiler.shift, {}).setdefault(
+            frozenset(reads), []
+        ).append((measure, body, compiler))
+
+    out: list[Combined] = []
+    for shift in sorted(groups, key=lambda s: (s is not None, s or ())):
+        by_tables = groups[shift]
+        parts: list[tuple[str, list[str], list[str]]] = []  # (sql, columns, measures)
+
+        for tables in sorted(by_tables, key=lambda f: (len(f), sorted(f))):
+            members = by_tables[tables]
+            compiler = members[0][2]
+            select, group_by, period_alias = [], [], None
+
+            for table, column in grain_cols:
+                select.append(compiler.col(table, column))
+                group_by.append(compiler.col(table, column))
+            if shift is not None:
+                period_sql = compiler.period_expr(shift)
+                period_alias = shift[0]
+                select.append(f"{period_sql} AS {compiler.q(period_alias)}")
+                group_by.append(period_sql)
+            for measure, body, _ in members:
+                select.append(f"{body.sql} AS {compiler.q(measure.name)}")
+
+            base = sorted(tables)[0]
+            joined = {base}
+            lines = ["SELECT " + ",\n       ".join(select), f"FROM {compiler.q(base)}"]
+            for table in sorted(tables - {base}):
+                for lt, lc, rt, rc in compiler.join_path(base, table):
+                    target = rt if lt in joined else lt
+                    if target in joined:
+                        continue
+                    lines.append(
+                        f"JOIN {compiler.q(target)} "
+                        f"ON {compiler.col(lt, lc)} = {compiler.col(rt, rc)}"
+                    )
+                    joined.add(target)
+            if group_by:
+                lines.append("GROUP BY " + ", ".join(group_by))
+
+            keys = [compiler.q(c) for _, c in grain_cols]
+            if period_alias:
+                keys.append(compiler.q(period_alias))
+            parts.append((
+                "\n".join(lines),
+                keys,
+                [m.name for m, _, _ in members],
+            ))
+
+        compiler = by_tables[next(iter(by_tables))][0][2]
+        described = [f"{t}[{c}]" for t, c in grain_cols]
+        if shift is not None:
+            described.append(f"{shift[1]}[{shift[2]}] by {shift[0]}")
+
+        sql = _stitch(parts, compiler)
+        out.append(
+            Combined(
+                label=(
+                    "one row per " + ", ".join(described)
+                    if described
+                    else "one row for the whole model"
+                ),
+                sql=to_dialect(sql, dialect),
+                measures=tuple(name for _, _, names in parts for name in names),
+            )
+        )
+    return out, sorted(omitted)
+
+
+def _stitch(parts, compiler) -> str:
+    """Join the per-table-set queries into one, without fanning any of them out.
+
+    This is the part that has to be right, and the naive version is wrong in a
+    way that looks fine. Measures read different tables: `Batches Manufactured`
+    counts rows of Batch, `Tests Performed` counts rows of TestResult. Selecting
+    both from one joined query multiplies Batch's rows by the test results
+    hanging off them, and the batch count silently reports 10 where it should
+    report 2. A test caught exactly that.
+
+    So each set of tables is aggregated on its own, and the results are joined
+    on the grain afterwards -- by which point every side is already one row per
+    grain value and nothing can fan out. ``FULL JOIN ... USING`` rather than an
+    inner join, so a grain value present in one half and missing from the other
+    survives instead of deleting the whole row.
+    """
+    if len(parts) == 1:
+        sql, keys, _ = parts[0]
+        return sql + ("\nORDER BY " + ", ".join(keys) if keys else "")
+
+    ctes = []
+    for index, (sql, _, _) in enumerate(parts):
+        body = "\n".join("    " + line for line in sql.splitlines())
+        ctes.append(f"{compiler.q(f'part{index}')} AS (\n{body}\n)")
+
+    keys = parts[0][1]
+    names = [compiler.q(f"part{i}") for i in range(len(parts))]
+    select: list[str] = []
+    for key in keys:
+        # Unqualified on purpose. ``USING`` merges the two sides into one
+        # column; naming it through the first part -- ``part0."SiteName"`` --
+        # reads NULL for any row present only in a later part. Whether that can
+        # happen depends on the model (here it cannot: test results reach a site
+        # only through a batch, so the later parts are always subsets), which is
+        # exactly why this is written the way that is right regardless rather
+        # than the way that happens to work on the model in front of us.
+        select.append(key)
+    for index, (_, _, measures) in enumerate(parts):
+        for measure in measures:
+            select.append(f"{names[index]}.{compiler.q(measure)}")
+
+    lines = ["WITH " + ",\n".join(ctes)]
+    lines.append("SELECT " + ",\n       ".join(select))
+    lines.append(f"FROM {names[0]}")
+    for name in names[1:]:
+        if keys:
+            lines.append(f"FULL JOIN {name} USING ({', '.join(keys)})")
+        else:
+            # Every part is a single row, so there is nothing to line up.
+            lines.append(f"CROSS JOIN {name}")
+    if keys:
+        lines.append("ORDER BY " + ", ".join(keys))
+    return "\n".join(lines)
+
+
 def joins(model, dialect: str = "duckdb", quote: str = '"') -> list[Join]:
     """Every relationship in the model, with the SQL join it corresponds to.
 

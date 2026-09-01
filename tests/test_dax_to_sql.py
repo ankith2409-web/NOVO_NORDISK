@@ -279,7 +279,12 @@ def warehouse(tmp_path_factory):
     path = tmp_path_factory.mktemp("wh") / "proof.duckdb"
     con = duckdb.connect(str(path))
     con.execute('CREATE TABLE "Site"("SiteID" INT,"SiteName" VARCHAR)')
-    con.execute("""INSERT INTO "Site" VALUES (1,'North'),(2,'South')""")
+    # East exists to make one specific bug reproducible: it has manufactured a
+    # batch and has no test results at all, so it appears in queries over Batch
+    # and is absent from queries over TestResult. Combining the two must not
+    # lose it. Nothing else in this file depends on East, so the hand-computed
+    # answers below are unchanged.
+    con.execute("""INSERT INTO "Site" VALUES (1,'North'),(2,'South'),(3,'East')""")
     con.execute(
         'CREATE TABLE "Batch"("BatchID" INT,"SiteID" INT,"ProductID" INT,'
         '"ActualYield" INT,"TheoreticalYield" INT,"Status" VARCHAR,'
@@ -289,7 +294,8 @@ def warehouse(tmp_path_factory):
         """INSERT INTO "Batch" VALUES
         (1,1,1,90,100,'Released',TRUE ,DATE '2026-01-01',DATE '2026-01-11'),
         (2,1,1,80,100,'Released',FALSE,DATE '2026-01-01',DATE '2026-01-21'),
-        (3,2,1,50,100,'Rejected',TRUE ,DATE '2026-01-01',DATE '2026-01-06')"""
+        (3,2,1,50,100,'Rejected',TRUE ,DATE '2026-01-01',DATE '2026-01-06'),
+        (4,3,1,60,100,'Released',TRUE ,DATE '2026-01-01',DATE '2026-01-16')"""
     )
     con.execute(
         'CREATE TABLE "TestResult"("TestResultID" INT,"BatchID" INT,'
@@ -466,6 +472,115 @@ def test_a_previous_period_measure_carries_a_real_figure_when_months_adjoin(
     assert [r[1] for r in adjacent] == [None, 2], (
         "February must report January's figure when the two really do adjoin"
     )
+
+
+# -- everything in one query ---------------------------------------------------
+
+def test_one_query_returns_what_the_separate_queries_returned(
+    model, measures, warehouse
+):
+    """The whole point, and the only thing that makes combining safe.
+
+    Asked for twice: "if you can convert the whole thing into an SQL query
+    rather than giving one each", and "you can give the whole thing in one SQL
+    query itself with all the data sets". A combined query is worth having only
+    if every column in it holds the number that measure's own query holds --
+    otherwise it is a faster way to be wrong.
+
+    So each measure is computed both ways and the answers compared, against a
+    warehouse whose contents are known.
+    """
+    duckdb = pytest.importorskip("duckdb")
+    from concordance.generate.sql import combine
+
+    queries, omitted = combine(model, SITE)
+    assert queries, "nothing combined at all"
+
+    con = duckdb.connect(warehouse, read_only=True)
+    try:
+        for query in queries:
+            combined_rows = con.execute(query.sql).fetchall()
+            columns = [d[0] for d in con.description]
+            together = {
+                (row[columns.index("SiteName")], name): row[columns.index(name)]
+                for row in combined_rows
+                for name in query.measures
+            }
+            for name in query.measures:
+                alone = translate(model, measures[name], SITE)
+                assert alone.translated, name
+                for row in con.execute(alone.sql).fetchall():
+                    site, value = row[0], row[-1]
+                    assert together[(site, name)] == value, (
+                        f"{name} at {site}: {together[(site, name)]} combined "
+                        f"vs {value} on its own"
+                    )
+    finally:
+        con.close()
+
+
+def test_a_grain_value_missing_from_one_half_still_appears(model, measures, warehouse):
+    """Joining the parts back together must not delete rows.
+
+    Measures reading different tables are aggregated separately and lined up on
+    the grain afterwards. An inner join there would keep only grain values
+    present in every part, so a site that has manufactured a batch but has no
+    test results yet would disappear from the combined answer while still
+    appearing in each individual query -- a row silently lost, which is worse
+    than a number being absent.
+
+    East is exactly that shape: one batch, no tests.
+    """
+    duckdb = pytest.importorskip("duckdb")
+    from concordance.generate.sql import combine
+
+    queries, _ = combine(model, SITE)
+    plain = next(q for q in queries if "by month" not in q.label)
+
+    con = duckdb.connect(warehouse, read_only=True)
+    try:
+        rows = con.execute(plain.sql).fetchall()
+    finally:
+        con.close()
+
+    sites = {row[0] for row in rows}
+    assert sites == {"North", "South", "East"}, sites
+    assert None not in sites, "a grain value came back nameless"
+
+
+def test_measures_at_different_grains_are_not_forced_into_one_query(model):
+    """One query, except where one query would be a lie.
+
+    A previous-month measure is computed per month; a plain total is computed
+    once. Putting both in a single query silently turns the totals into monthly
+    figures under a heading that says otherwise -- so they are grouped by the
+    grain they are really computed at, and the label says which.
+    """
+    from concordance.generate.sql import combine
+
+    queries, _ = combine(model, SITE)
+    assert len(queries) == 2, [q.label for q in queries]
+
+    plain = next(q for q in queries if "by month" not in q.label)
+    monthly = next(q for q in queries if "by month" in q.label)
+    assert "OOS Results PM" in monthly.measures
+    assert "OOS Results PM" not in plain.measures
+    assert "DATE_TRUNC" not in plain.sql
+    assert plain.label == "one row per Site[SiteName]"
+
+
+def test_a_measure_that_cannot_be_combined_is_named_not_dropped(model):
+    """A combined query missing a third of the model, with nothing saying so,
+    is the failure this project exists to prevent -- committed by the tool."""
+    from concordance.generate.sql import combine
+
+    queries, omitted = combine(model, SITE)
+    combined = {name for q in queries for name in q.measures}
+    assert omitted
+    for name, reason in omitted:
+        assert name not in combined
+        assert reason.strip(), f"{name} was dropped with no reason"
+    assert combined | {n for n, _ in omitted} == {m.name for m in model.measures}
 
 
 # -- the endpoint that serves the whole dataset --------------------------------
