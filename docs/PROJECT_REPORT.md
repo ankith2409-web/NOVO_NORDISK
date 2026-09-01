@@ -28,6 +28,48 @@ moment that link breaks.
 
 ## 3. What was built
 
+A reviewer asked for a small architectural diagram in this document. Here is the whole
+system on one page. The single rule that shapes it: the source is parsed once into one
+graph, and every feature below reads that graph. Nothing re-parses a `.pbix`, so no two
+features can disagree about what a model says.
+
+```
+   .pbix file                TMDL folder              SQL warehouse
+   (data model + report)     (model only)             (DuckDB, Snowflake,
+        │                         │                    Databricks, Redshift, Athena)
+        └────────────┬────────────┘                         │
+                     ▼                                      │
+        ┌──────────────────────────────┐                    │
+        │   SemanticModel (model.py)   │                    │
+        │  tables · columns · measures │                    │
+        │  joins · hierarchies · KPIs  │                    │
+        │  security · report pages     │                    │
+        └──────────────┬───────────────┘                    │
+                       ▼                                    │
+        ┌──────────────────────────────┐                    │
+        │  Canonical Semantic Graph    │  one graph,        │
+        │  (graph/csg.py, networkx)    │  read by all       │
+        └──┬────┬─────┬─────┬─────┬────┘                    │
+           ▼    ▼     ▼     ▼     ▼                         ▼
+        BRD/  DAX→  Dash-  Drift  Line-              Reconciliation
+        FRD   SQL   board  (v1 v  age                (is the warehouse's
+              +one  tiles→ v2)                        definition the same?)
+              query  DAX
+           │    │     │     │     │                         │
+           └────┴──┬──┴─────┴─────┴─────────────────────────┘
+                   ▼
+        ┌──────────────────────────────┐
+        │  web/api.py — plain functions │  every endpoint testable
+        │  returning JSON, no HTTP      │  without opening a socket
+        └──────────────┬───────────────┘
+                       ▼
+        ┌──────────────────────────────┐
+        │  web/server.py — stdlib only  │  no web framework
+        └──────────────┬───────────────┘
+                       ▼
+              Browser UI  ·  CLI  ·  OpenLineage export
+```
+
 ### 3.1 Model extraction
 Reads a Power BI model in either of its two real formats — a compiled `.pbix` file or a
 TMDL project folder — into one internal representation covering tables, columns,
@@ -111,11 +153,43 @@ The remaining refusals are `ALL`, `ALLSELECTED`, `ISINSCOPE` and `USERELATIONSHI
 change or remove the filter context rather than reading it, and which no single query at a
 fixed grain can express.
 
+**Everything in one query.** Asked for twice — "convert the whole thing into an SQL query
+rather than giving one each" — and now offered alongside the per-measure queries: every
+measure as columns of a single query you run once, instead of forty run in turn and lined
+up by hand. Measures reading different tables are aggregated separately and joined on the
+grain afterwards, because selecting them from one joined query multiplies one table's rows
+by another's: a batch count reported 10 where it should have reported 2 until a test that
+compares every combined column against that measure's own query caught it.
+
 What matters more than the ratio is what happens to the other 40. Each is refused with the
 construct that stopped it and why, rather than being emitted as SQL that parses and quietly
 computes a different number. A wrong query is worse than an absent one: the absent one gets
 asked about. Automated tests assert that no refusal on a real Power BI file is ever a gap
 in the translator dressed up as a limit of the DAX.
+
+### 3.5b Dashboard tiles, joined to their DAX and their SQL
+
+The question reviewers asked most, and the one they named as the missing piece: *"How do
+I understand which DAX and SQL is for which particular KPI in the dashboard?"*
+
+A `.pbix` contains the report as well as the model — pages, tiles, each tile's title, and
+the query behind it — and nothing had ever read it. Concordance now does, so a tile
+titled "Net Sales" is shown next to the measure that produces its number, that measure's
+DAX, and the SQL that reproduces it. It is the only view here that starts from what a
+person is actually looking at and works back to the definition; every other one starts
+from the model and works outward.
+
+Nothing is inferred. Titles are the titles the author typed, and a tile with no title
+says so rather than having one written for it. One detail is worth stating because it
+decides whether the feature is trustworthy: a tile refers to its fields by an alias fixed
+when the field was first used, and that alias does not follow later renames. In
+Microsoft's own sample the first card is titled "Net Sales", carries the alias
+`Analysis DAX.Sales`, and actually selects the measure `Net Sales` — there has never been
+a measure called `Sales` in that model. Reading the alias reported 22 fields that do not
+exist and missed 7 real measures; reading the query Power BI actually evaluates gives 2
+unresolved out of 89, and both of those are genuine.
+
+On Sales & Returns: 18 pages, 71 tiles, 27 of which show a measure.
 
 ### 3.6 Lineage graph
 Traces a number visually from the file or warehouse it was loaded from, through the
@@ -216,7 +290,7 @@ unrunnable for anyone without a paid account.
   every design decision, test and refusal reviewed and accepted by the team. The reasoning
   behind each non-obvious choice is written into the source as comments rather than left
   in a chat log, which is why the modules read as arguments rather than as instructions.
-- **865 automated Python tests, 60 automated frontend tests**, all passing.
+- **942 automated Python tests, 60 automated frontend tests**, all passing.
 - Tests for the load-bearing claims were deliberately broken once and confirmed to fail,
   to prove they actually catch the problems they claim to — including the one asserting a
   reviewer cannot sign off under another reviewer's name.
@@ -234,18 +308,28 @@ unrunnable for anyone without a paid account.
 
 ## 6. What the sample data does and does not cover
 
-Seven sample Power BI models are used for testing and demonstration: two clinical-trial
-safety models, one quality-control/manufacturing model, one diabetes/metabolic-health
-model, one general sales model, one sales-returns model, and one supply-chain model.
-These are **test fixtures**, not a built-in library of industry dashboards — Concordance
-does not ship pre-built content for any domain. Pointed at any other real Power BI model,
-it extracts and documents that model with the same behavior.
+Eight sample Power BI models are used for testing and demonstration: two clinical-trial
+safety models (a version pair), one quality-control/manufacturing model, one
+diabetes/metabolic-health model, one retail sales-and-profit model, one general sales
+model, one sales-returns model, and one supply-chain model. These are **test fixtures**,
+not a built-in library of industry dashboards — Concordance does not ship pre-built
+content for any domain. Pointed at any other real Power BI model, it extracts and
+documents that model with the same behavior.
 
-Four of the seven were authored for this project. The other three are Power BI sample
+Five of the eight were authored for this project. The other three are Power BI sample
 workbooks published by Microsoft, used unmodified — they are the only honest test of how
 this behaves on DAX nobody here chose, and section 3.5a reports what that test showed.
+They are also the only ones carrying a report layer, so section 3.5b's tile correlation
+has something to correlate.
 
-Of the four authored here, three are synthetic, written to mirror real structure. The
+`StoreSales` is the newest and deliberately the plainest: sales, cost, profit, margin and
+orders, with Total Sales defined as unit price times units sold. It exists because a
+reviewer said four times in one session that a clinical or manufacturing model is the
+wrong thing to evaluate a documentation tool on — a reader spending their attention on
+what a protocol deviation is has none left for whether the document describing it is any
+good. It is the model the interface opens on.
+
+Of the five authored here, four are synthetic, written to mirror real structure. The
 diabetes model is
 different: it is built directly on a real, public dataset — the Pima Indians Diabetes
 Dataset (National Institute of Diabetes and Digestive and Kidney Diseases), 768 real
@@ -253,9 +337,9 @@ patient records — kept including its known missing-value encoding rather than 
 the fixture reflects an actual data-quality issue rather than a tidy synthetic one. See
 `data/samples/README.md` for provenance.
 
-Clinical trial safety, pharmaceutical quality control and diabetes/metabolic health are
-now represented in the sample data; hospital pharmacy analytics and detailed supply-chain
-KPIs are not currently represented in any sample model.
+Clinical trial safety, pharmaceutical quality control, diabetes/metabolic health and
+plain retail sales are now represented in the sample data; hospital pharmacy analytics and
+detailed supply-chain KPIs are not currently represented in any sample model.
 
 ## 7. Known limitations, stated plainly
 
@@ -285,6 +369,17 @@ KPIs are not currently represented in any sample model.
   implemented but have never been run against a live account — the build network
   blocks all four. Their logic is unit-tested against fake database cursors; the
   first real connection is the acceptance test. See section 4.
+- A model is opened from a file, not from a Power BI URL. A reviewer asked to paste a
+  workspace link and have everything generate from it. That needs an Azure AD app
+  registration — tenant id, client id and secret, service-principal API access enabled
+  for the tenant, and the principal added to the workspace — none of which can be created
+  from this side. The upload box is the same journey minus the link: the file it produces
+  is the file that link would fetch.
+- Time intelligence is translated only where the shift is unambiguous: `PREVIOUSDAY`,
+  `PREVIOUSMONTH`, `PREVIOUSQUARTER`, `PREVIOUSYEAR`. `DATEADD` and `PARALLELPERIOD` take
+  an offset and a unit that need not match the grain, and `SAMEPERIODLASTYEAR` shifts a
+  year while keeping the period — each is a different translation, and guessing between
+  them would put a wrong number on screen, so they are still refused by name.
 
 ## 8. Summary
 

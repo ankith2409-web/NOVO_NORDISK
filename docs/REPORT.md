@@ -70,10 +70,26 @@ requirements need a reference update, not re-validation.
 
 ## 4. Results on real models
 
-Seven models were used, in both Power BI formats. Six mirror real structure; the seventh,
-`DiabetesCare`, is built on a real public dataset — 768 patient records from the Pima
-Indians Diabetes study — kept with its known missing-value encoding intact rather than
-cleaned.
+Eight models were used, in both Power BI formats. Six mirror real structure; `DiabetesCare`
+is built on a real public dataset — 768 patient records from the Pima Indians Diabetes
+study — kept with its known missing-value encoding intact rather than cleaned; and three
+are Microsoft's own published sample workbooks, used unmodified, because a translator only
+tested on DAX its authors chose has not been tested.
+
+**DAX to SQL:** 89% of measures on the models written here, 31% on Microsoft's Sales &
+Returns. The second number is the real one, and it was 10% until a reviewer pushed back on
+a refusal: measures comparing against an earlier period were declined because the answer
+depends on which month the report is showing. True — and true of every measure, which is
+why this tool makes the caller name a grain in the first place. A previous-month measure
+names its own, so it is now translated at one row per month, as a window over the period.
+The remaining refusals change or remove the filter context and no fixed-grain query can
+express them.
+
+**Dashboard tiles to DAX:** a `.pbix` carries its report as well as its model, so a tile
+titled "Net Sales" is now shown beside the measure that produces its number, that measure's
+DAX, and the SQL for it. 71 tiles across 18 pages of Sales & Returns, 27 of them showing a
+measure, 2 fields of 89 naming something the model does not contain — kept and marked,
+because a tile bound to a field that is not there is a finding.
 
 **Drift, `ClinicalTrialSafety` v1 → v2:** 1 added, 1 removed, 4 changed, 103 unchanged —
 and **8 requirements identified as now in question**. Listing changed objects is what any
@@ -125,7 +141,7 @@ This is the part that is hardest to demo and matters most in a regulated industr
 
 ## 6. Engineering
 
-- **14,012 lines of Python, 5,901 of TypeScript, 925 automated tests** (865 Python, 60
+- **18,095 lines of Python, 8,222 of TypeScript, 1,002 automated tests** (942 Python, 60
   frontend). Tests were mutation-checked — each confirmed to fail when the logic it covers
   is deliberately broken, because a test that cannot fail protects nothing and a green run
   does not show that. The check applies to the load-bearing claims as well as the frontend:
