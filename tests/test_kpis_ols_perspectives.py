@@ -134,6 +134,48 @@ def test_a_kpi_is_edged_to_the_measure_it_decorates(tmp_path: Path) -> None:
     assert graph.graph.has_edge("kpi:Sales[Revenue]", "measure:Sales[Revenue]")
 
 
+def test_the_served_graph_carries_each_threshold_separately() -> None:
+    """The three rules split, as well as joined.
+
+    The joined ``expression`` is what the fingerprint covers and what drift
+    reports as this object's detail, so it stays. The split fields exist so that
+    anything displaying a KPI -- the Model tab does -- reads them off the graph
+    instead of taking that joined string back apart, which would be a second
+    parse of text this code just finished assembling and would eventually
+    disagree with it.
+    """
+    node = next(
+        n
+        for n in SemanticGraph(_model()).to_dict()["nodes"]
+        if n["kind"] == "kpi"
+    )
+    assert node["target_expression"] == "[Overall Diabetes Prevalence]"
+    assert "IF(Ratio <= 1" in node["status_expression"]
+    assert node["target_description"] == "Cohort-wide prevalence"
+    # An unset rule is present and empty rather than absent: the page says
+    # "no trend rule" only because it can tell the difference between a rule
+    # that is blank and a field it was never given.
+    assert node["trend_expression"] == ""
+    # And the joined form the fingerprint is taken over survives untouched.
+    assert node["expression"].startswith("target: [Overall Diabetes Prevalence]")
+
+
+def test_splitting_the_thresholds_did_not_move_any_fingerprint(tmp_path: Path) -> None:
+    """Adding fields to the node must not change what drift compares.
+
+    A snapshot reads ``expression`` for an object's detail and ignores every
+    other attribute. If that stopped being true, every KPI in every model would
+    report as changed the first time this ran against an older snapshot -- drift
+    crying wolf on a display change, which is the one thing it must never do.
+    """
+    graph = SemanticGraph(
+        TmdlAdapter().extract(str(build(tmp_path, status="IF([Revenue] > 1, 1, -1)")))
+    )
+    record = snap.take(graph).objects["kpi:Sales[Revenue]"]
+    assert record.detail.startswith("target:")
+    assert "target_expression" not in record.detail
+
+
 # -- requirements --------------------------------------------------------------
 
 def test_each_construct_reaches_the_document() -> None:

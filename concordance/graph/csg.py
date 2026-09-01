@@ -268,6 +268,17 @@ class SemanticGraph:
                 table=kpi.table,
                 fingerprint=kpi.fingerprint,
                 description=kpi.description,
+                # The three thresholds separately as well as joined. The joined
+                # form is what the fingerprint covers and what drift shows as
+                # the object's detail, so it stays; the split form exists so
+                # that anything displaying a KPI does not have to take the
+                # joined string apart again -- a second, weaker parse of text
+                # this code just finished assembling.
+                target_expression=kpi.target_expression,
+                status_expression=kpi.status_expression,
+                trend_expression=kpi.trend_expression,
+                target_description=kpi.target_description,
+                status_description=kpi.status_description,
                 expression="; ".join(
                     f"{label}: {text}"
                     for label, text in (

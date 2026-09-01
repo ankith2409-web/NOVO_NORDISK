@@ -297,7 +297,20 @@ export interface DriftPayload {
 }
 
 export interface GraphPayload {
-  model: string;
+  /**
+   * An object, not a string.
+   *
+   * It was declared `string` here and is `{name, source_path, ...}` on the
+   * wire, so the first code to render it put an object where React expected a
+   * child and took the whole view down. The type was the bug: it type-checked
+   * a mistake the server would never have accepted.
+   */
+  model: {
+    name: string;
+    source_path: string;
+    source_type: string;
+    summary: Record<string, number>;
+  };
   nodes: { id: string; kind: string; [key: string]: unknown }[];
   edges: { source: string; target: string; kind: string; [key: string]: unknown }[];
   stats: { nodes: number; edges: number; unresolved_references: number };

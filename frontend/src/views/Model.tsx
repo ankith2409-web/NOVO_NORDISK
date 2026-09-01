@@ -19,7 +19,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { api, type GraphPayload, type MeasureDetail } from "@/lib/api";
-import { Chip, Failure, Loading, Panel } from "@/components/primitives";
+import { Chip, Failure, Fingerprint, Loading, Panel } from "@/components/primitives";
 import { EvidenceDrawer } from "@/components/EvidenceDrawer";
 import { Lineage } from "@/components/Lineage";
 import { cx } from "@/lib/cx";
@@ -32,6 +32,12 @@ type Node = GraphPayload["nodes"][number] & {
   fingerprint?: string;
   is_system?: boolean;
   is_measure_only?: boolean;
+  target_expression?: string;
+  status_expression?: string;
+  trend_expression?: string;
+  target_description?: string | null;
+  status_description?: string | null;
+  description?: string | null;
 };
 
 const CHILD_KINDS = ["measure", "column", "calculated_column", "hierarchy"] as const;
@@ -97,8 +103,27 @@ export function Model() {
   const [filter, setFilter] = useState("");
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Node | null>(null);
+  const [showKpis, setShowKpis] = useState(false);
 
   const groups = useMemo(() => (graph ? group(graph.nodes as Node[]) : []), [graph]);
+
+  /**
+   * The KPIs, which the tree above cannot show.
+   *
+   * A KPI is not a child of a table in the way a column or a measure is -- it
+   * decorates one measure and says what the business calls an acceptable value
+   * of it. Nesting it under a table would put it beside the measure it judges
+   * and make the two look like the same kind of thing, which is the confusion
+   * this panel exists to prevent: the measure says what the number *is*, the
+   * KPI says what counts as good, and they change independently.
+   */
+  const kpis = useMemo(
+    () =>
+      ((graph?.nodes ?? []) as Node[])
+        .filter((node) => node.kind === "kpi")
+        .sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "")),
+    [graph],
+  );
 
   const shown = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -143,6 +168,29 @@ export function Model() {
           />
         </div>
 
+        {/* Above the tree rather than inside it. A KPI belongs to the model,
+            not to one table's list of children, and putting it at the top is
+            also the only way anyone finds out the model has any: the previous
+            build read KPIs, fingerprinted them and wrote them into the
+            documents, and showed them on no screen at all. */}
+        <button
+          onClick={() => {
+            setShowKpis(true);
+            setSelected(null);
+          }}
+          aria-current={showKpis ? "true" : undefined}
+          className={cx(
+            "flex w-full flex-none items-center gap-1.5 border-b border-hairline px-2 py-1.5 text-left text-[13px]",
+            showKpis ? "bg-accent-soft text-accent" : "text-muted hover:bg-raised hover:text-ink",
+          )}
+        >
+          <span className="w-7 flex-none font-mono text-[9px] text-faint">kpi</span>
+          <span className="truncate">Targets and thresholds</span>
+          <span className="ml-auto font-mono text-[10px] text-faint tabular">
+            {kpis.length}
+          </span>
+        </button>
+
         <div className="min-h-0 flex-1 overflow-auto py-1">
           {shown.map((table) => (
             <div key={table.name}>
@@ -180,7 +228,10 @@ export function Model() {
                 table.children.map((child) => (
                   <button
                     key={child.id}
-                    onClick={() => setSelected(child)}
+                    onClick={() => {
+                      setSelected(child);
+                      setShowKpis(false);
+                    }}
                     aria-current={selected?.id === child.id ? "true" : undefined}
                     className={cx(
                       "flex w-full items-center gap-1.5 py-1 pr-2 pl-6 text-left text-[13px]",
@@ -208,7 +259,19 @@ export function Model() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        {selected ? (
+        {showKpis ? (
+          <Kpis
+            kpis={kpis}
+            model={graph.model.name}
+            onSelectMeasure={(id) => {
+              const found = (graph.nodes as Node[]).find((node) => node.id === id);
+              if (found) {
+                setSelected(found);
+                setShowKpis(false);
+              }
+            }}
+          />
+        ) : selected ? (
           <Detail
             node={selected}
             graph={graph}
@@ -223,6 +286,137 @@ export function Model() {
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Every KPI in the model, with the DAX behind each threshold.
+ *
+ * Three expressions, shown separately rather than as the one joined string the
+ * graph node also carries. That string is what the fingerprint covers and what
+ * drift reports as the object's detail, so it exists for a reason -- but taking
+ * it apart again here would be a second parse of text this codebase just
+ * finished assembling, and the two would eventually disagree.
+ *
+ * Blank thresholds are named as blank rather than omitted. "This KPI has no
+ * trend rule" is a finding for whoever is reviewing whether the report's
+ * red/amber/green means anything; a row quietly missing from a list is not.
+ */
+function Kpis({
+  kpis,
+  model,
+  onSelectMeasure,
+}: {
+  kpis: Node[];
+  model: string;
+  onSelectMeasure: (id: string) => void;
+}) {
+  if (kpis.length === 0)
+    return (
+      <div className="p-4">
+        <h2 className="font-serif text-lg font-semibold">Targets and thresholds</h2>
+        <p className="mt-1.5 max-w-prose text-sm text-muted">
+          {model} defines no KPIs. A measure says what a number is; a KPI attaches a
+          target to it and a rule for when the report shows that number as good, at
+          risk or bad. This model states the numbers without stating what counts as
+          an acceptable value of them, so nothing here can be read as a target
+          anybody agreed to.
+        </p>
+        <p className="mt-2 max-w-prose text-xs text-faint">
+          In Power BI these are set on a measure under <em>Add KPI</em>. If this model
+          is meant to have them, they are missing from the file rather than from this
+          page.
+        </p>
+      </div>
+    );
+
+  return (
+    <div className="flex flex-col gap-3 p-4">
+      <header>
+        <h2 className="font-serif text-lg font-semibold">Targets and thresholds</h2>
+        <p className="mt-1 max-w-prose text-sm text-muted">
+          What {model} treats as an acceptable value, not what it calculates. Each of
+          these decorates a measure: the measure gives the figure, the rules below
+          decide the colour the report shows it in.
+        </p>
+      </header>
+
+      {kpis.map((kpi) => (
+        <article key={kpi.id} className="rounded border border-hairline bg-ground">
+          <header className="flex flex-wrap items-center gap-2 border-b border-hairline px-3.5 py-2">
+            <h3 className="text-sm font-semibold">{kpi.name}</h3>
+            <Chip tone="accent">kpi</Chip>
+            <button
+              onClick={() => onSelectMeasure(`measure:${kpi.table}[${kpi.name}]`)}
+              className="font-mono text-[11px] text-accent underline-offset-2 hover:underline"
+              title="Open the measure this KPI judges"
+            >
+              {kpi.table}[{kpi.name}]
+            </button>
+            <span className="ml-auto">
+              <Fingerprint
+                value={(kpi.fingerprint ?? "").slice(0, 12)}
+                full={kpi.fingerprint}
+              />
+            </span>
+          </header>
+
+          {kpi.description && (
+            <p className="border-b border-hairline px-3.5 py-2 text-[12.5px] text-muted">
+              {kpi.description}
+            </p>
+          )}
+
+          <dl className="divide-y divide-hairline">
+            {(
+              [
+                {
+                  label: "target",
+                  says: "the figure this is measured against",
+                  expression: kpi.target_expression,
+                  described: kpi.target_description,
+                },
+                {
+                  label: "status",
+                  says: "which values count as good, at risk or bad",
+                  expression: kpi.status_expression,
+                  described: kpi.status_description,
+                },
+                {
+                  label: "trend",
+                  says: "whether it is moving the right way",
+                  expression: kpi.trend_expression,
+                  described: null,
+                },
+              ] as const
+            ).map((rule) => (
+              <div key={rule.label} className="px-3.5 py-2.5">
+                <dt className="flex flex-wrap items-baseline gap-2">
+                  <span className="font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
+                    {rule.label}
+                  </span>
+                  <span className="text-[11.5px] text-faint">{rule.says}</span>
+                  {rule.described && (
+                    <span className="text-[11.5px] text-muted">· {rule.described}</span>
+                  )}
+                </dt>
+                <dd className="mt-1">
+                  {rule.expression ? (
+                    <pre className="overflow-x-auto rounded border border-hairline bg-surface px-2.5 py-2 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap">
+                      {rule.expression}
+                    </pre>
+                  ) : (
+                    <p className="text-[12px] text-faint">
+                      Not set. The model attaches no {rule.label} rule to this KPI.
+                    </p>
+                  )}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </article>
+      ))}
     </div>
   );
 }
