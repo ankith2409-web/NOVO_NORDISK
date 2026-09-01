@@ -8,14 +8,28 @@ a weak demonstration and should not be able to hide behind a word like
 
 **Authored for this project** (synthetic, written to mirror real structure):
 `ClinicalTrialSafety`, `ClinicalTrialSafety_v2`, `QualityControl`,
-`DiabetesCare`. The last of these is built on real public data -- see below.
+`DiabetesCare`, `StoreSales`. `DiabetesCare` is built on real public data --
+see below. The rest describe structure and DAX only: they are semantic models,
+not data, and no rows ship with them.
+
+`StoreSales` exists for a reason worth recording. A reviewer said four times in
+one session that the clinical and manufacturing models were the wrong thing to
+evaluate a documentation tool on -- "if you are not able to understand these
+things, you will not be able to correlate, because you don't know what is
+Clinical Trial Safety... you can make a simple one, like use profit and sales
+information". So `StoreSales` is sales, cost, profit, margin and orders, with
+Total Sales defined as unit price times units sold exactly as she described it.
+It is deliberately the plainest model here, and its five headline measures are
+named after the tiles on the dashboard she was showing at the time.
 
 **Not authored here**: the `.pbix` files. These are Power BI sample workbooks
 distributed by Microsoft (`Sales_Returns_Sample`, `Supply_Chain_Sample`,
 `AdventureWorks_Sales`), used unmodified. They matter precisely because nobody
 on this project chose their DAX: running the translator over them is the only
 honest measure of its coverage, and doing so dropped the figure from 80% on the
-models above to 10% on Sales & Returns. That number is in the report.
+models above to 10% on Sales & Returns. That number is in the report, and has
+since moved to 31% -- not by loosening anything, but by translating
+previous-period measures that used to be refused. The report says why.
 
 `diabetes_patients.csv` here is real, public data, kept as its own folder
 rather than mixed into `data/models/` so that distinction stays visible.

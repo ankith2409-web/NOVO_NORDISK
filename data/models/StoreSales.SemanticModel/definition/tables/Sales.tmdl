@@ -1,0 +1,90 @@
+/// One row per order line: what was sold, to whom, from where, and when.
+/// This is the only table holding figures; everything else describes it.
+table Sales
+
+	column OrderLineID
+		dataType: int64
+		isKey
+		summarizeBy: none
+		sourceColumn: OrderLineID
+
+	/// The order this line belongs to. Several lines share one order, which is
+	/// why counting orders is a distinct count rather than a row count.
+	column OrderID
+		dataType: string
+		summarizeBy: none
+		sourceColumn: OrderID
+
+	column ProductID
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: ProductID
+
+	column CustomerID
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: CustomerID
+
+	column StoreID
+		dataType: int64
+		summarizeBy: none
+		sourceColumn: StoreID
+
+	/// The date the order was placed. The active link to the calendar.
+	column OrderDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: OrderDate
+
+	/// The date it left the warehouse. Linked to the calendar too, but
+	/// inactively -- see relationships.tmdl.
+	column ShipDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		summarizeBy: none
+		sourceColumn: ShipDate
+
+	/// How many were sold on this line.
+	column Units
+		dataType: int64
+		summarizeBy: sum
+		sourceColumn: Units
+
+	/// What one unit sold for, after any discount.
+	column UnitPrice
+		dataType: double
+		formatString: \$#,0.00
+		summarizeBy: none
+		sourceColumn: UnitPrice
+
+	/// What one unit cost us. The difference between this and UnitPrice is
+	/// where all the profit in this model comes from.
+	column UnitCost
+		dataType: double
+		formatString: \$#,0.00
+		summarizeBy: none
+		sourceColumn: UnitCost
+
+	/// Units times price, computed per line rather than in a measure so the
+	/// arithmetic is stored once and every measure agrees about it.
+	column 'Line Sales' = Sales[Units] * Sales[UnitPrice]
+		dataType: double
+		formatString: \$#,0.00
+		summarizeBy: sum
+
+	/// Units times cost, the same way.
+	column 'Line Cost' = Sales[Units] * Sales[UnitCost]
+		dataType: double
+		formatString: \$#,0.00
+		summarizeBy: sum
+
+	partition Sales = m
+		mode: import
+		source = ```
+			let
+			    Source = Csv.Document(File.Contents("sales.csv"), [Delimiter=","]),
+			    Promoted = Table.PromoteHeaders(Source)
+			in
+			    Promoted
+			```

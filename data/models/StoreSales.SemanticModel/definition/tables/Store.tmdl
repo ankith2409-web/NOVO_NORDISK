@@ -1,0 +1,44 @@
+/// Where it was sold from.
+table Store
+
+	column StoreID
+		dataType: int64
+		isKey
+		summarizeBy: none
+		sourceColumn: StoreID
+
+	column StoreName
+		dataType: string
+		summarizeBy: none
+		sourceColumn: StoreName
+
+	column City
+		dataType: string
+		summarizeBy: none
+		sourceColumn: City
+
+	column Region
+		dataType: string
+		summarizeBy: none
+		sourceColumn: Region
+
+	hierarchy 'Store Location'
+
+		level Region
+			column: Region
+
+		level City
+			column: City
+
+		level Store
+			column: StoreName
+
+	partition Store = m
+		mode: import
+		source = ```
+			let
+			    Source = Csv.Document(File.Contents("store.csv"), [Delimiter=","]),
+			    Promoted = Table.PromoteHeaders(Source)
+			in
+			    Promoted
+			```

@@ -18,13 +18,22 @@ set -eu
 # Without the MODEL= prefix both flags attach to whichever model is listed
 # first, which made this exact configuration impossible to start -- the
 # deployment served "not configured" on both tabs for every model.
+# StoreSales is listed first, so it is the model the interface opens on. A
+# reviewer asked for that in as many words: the clinical and manufacturing
+# models are the wrong thing to evaluate a documentation tool on, because the
+# reader spends their attention on the domain instead of on the documentation.
+# Sales, cost, profit and margin need no explaining to anybody.
+#
 # The last two are Microsoft's own published Power BI samples, unmodified.
 # They are here because a reviewer asked the fair question: everything above was
 # authored for this project, so of course it reads cleanly. A real .pbix built
 # by someone else is the only honest test of that, and it says two things at
-# once -- Supply Chain translates completely, and Sales & Returns translates six
-# measures of fifty-eight, refusing the rest for stated reasons rather than
-# guessing. The second number is the more useful one to be able to show.
+# once -- Supply Chain translates completely, and Sales & Returns translates
+# eighteen measures of fifty-eight, refusing the rest for stated reasons rather
+# than guessing. The second number is the more useful one to be able to show.
+# They also carry a report layer, which the models above do not: the Dashboard
+# tab has tiles to correlate only where a .pbix supplied them.
+#
 # Only the models that are actually present are passed. `serve` refuses to
 # start on a source it cannot read -- correct behaviour for someone who typed a
 # path, and fatal here, where `set -e` turns it into a container that exits on
@@ -33,6 +42,7 @@ set -eu
 # demo loses a model instead of losing everything.
 MODELS=""
 for model in \
+    data/models/StoreSales.SemanticModel \
     data/models/ClinicalTrialSafety.SemanticModel \
     data/models/QualityControl.SemanticModel \
     data/models/DiabetesCare.SemanticModel \
