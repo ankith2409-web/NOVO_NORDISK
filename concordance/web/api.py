@@ -717,6 +717,8 @@ def report(context: ApiContext, params: Params) -> dict[str, Any]:
                     {
                         "title": tile.title,
                         "visual_type": tile.visual_type,
+                        # "what is the KPI and non-KPI as a part of your DAX"
+                        "is_kpi": tile.is_kpi,
                         "fields": [
                             {
                                 "role": field.role,

@@ -839,7 +839,7 @@ concordance/
 scripts/               report generator, warehouse fixture, snapshot capture
 tests/                 741 tests, run against the real models
 frontend/              React interface over the JSON API (Vite, Tailwind)
-data/models/           three Microsoft .pbix samples + an authored TMDL model and its v2
+data/models/           four Microsoft .pbix samples + authored TMDL models (incl. a v2 pair)
 ```
 
 ## Notes from building the extractor

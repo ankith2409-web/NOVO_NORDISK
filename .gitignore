@@ -23,6 +23,9 @@ data/out/
 data/models/*.pbix
 !data/models/Supply_Chain_Sample.pbix
 !data/models/Sales_Returns_Sample.pbix
+# The demo model. Microsoft's own Store Sales sample, unmodified: five tables,
+# a real report layer, and a domain nobody needs explained.
+!data/models/StoreSales.pbix
 
 .env
 .DS_Store

@@ -29,6 +29,9 @@ import { useLoad } from "@/lib/useLoad";
 /** Power BI's internal names for its visuals, in the words people use. */
 const VISUAL_NAMES: Record<string, string> = {
   card: "single number",
+  // Power BI's newer name for the same thing, and it must be here rather than
+  // fall through: an unmapped type shows the internal name to the reader.
+  cardVisual: "single number",
   multiRowCard: "numbers",
   barChart: "bar chart",
   clusteredBarChart: "bar chart",
@@ -50,6 +53,17 @@ const VISUAL_NAMES: Record<string, string> = {
   kpi: "KPI visual",
   map: "map",
   filledMap: "map",
+  azureMap: "map",
+  shapeMap: "map",
+  ribbonChart: "ribbon chart",
+  lineClusteredColumnComboChart: "line and column chart",
+  lineStackedColumnComboChart: "line and column chart",
+  hundredPercentStackedBarChart: "stacked bar chart",
+  hundredPercentStackedColumnChart: "stacked column chart",
+  stackedBarChart: "stacked bar chart",
+  stackedColumnChart: "stacked column chart",
+  areaChart100: "area chart",
+  scatterChartCombo: "scatter chart",
   keyDriversVisual: "key influencers",
   decompositionTreeVisual: "decomposition tree",
   qnaVisual: "Q&A",
@@ -73,7 +87,7 @@ export function Dashboard({ dialect = "duckdb" }: { dialect?: string }) {
     () => api.report([], dialect),
     [dialect],
   );
-  const [onlyWithFormulas, setOnlyWithFormulas] = useState(false);
+  const [onlyKpis, setOnlyKpis] = useState(false);
 
   const pages = useMemo(() => {
     if (!data) return [];
@@ -82,14 +96,11 @@ export function Dashboard({ dialect = "duckdb" }: { dialect?: string }) {
     // the list rather than shown as a row reading "0 tiles", and counted below
     // so that nothing disappears silently.
     const withTiles = data.pages.filter((page) => page.tiles.length > 0);
-    if (!onlyWithFormulas) return withTiles;
+    if (!onlyKpis) return withTiles;
     return withTiles
-      .map((page) => ({
-        ...page,
-        tiles: page.tiles.filter((tile) => tile.fields.some((f) => f.kind === "measure")),
-      }))
+      .map((page) => ({ ...page, tiles: page.tiles.filter((tile) => tile.is_kpi) }))
       .filter((page) => page.tiles.length > 0);
-  }, [data, onlyWithFormulas]);
+  }, [data, onlyKpis]);
 
   if (error)
     return (
@@ -130,14 +141,21 @@ export function Dashboard({ dialect = "duckdb" }: { dialect?: string }) {
         <p className="max-w-prose text-sm text-muted">
           Every tile on {data.model}&rsquo;s report, and the formula behind the number
           it shows. Read from the report itself, so a tile appears here under the
-          title its author typed.
+          title its author typed. Tiles that state a figure as a number are marked{" "}
+          <span className="font-medium text-ok">KPI</span>; the rest draw the same
+          measures as charts.
         </p>
       </header>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Stat label="pages" value={c.pages} />
         <Stat label="tiles" value={c.tiles} />
-        <Stat label="show a measure" value={c.with_measures} tone="ok" />
+        <Stat
+          label="KPIs"
+          value={c.kpis}
+          tone="ok"
+          hint="Tiles that state a figure as a number — the headline cards — rather than drawing it as a chart."
+        />
         <Stat
           label="not in this model"
           value={c.unresolved}
@@ -150,10 +168,10 @@ export function Dashboard({ dialect = "duckdb" }: { dialect?: string }) {
         <label className="flex items-center gap-2 text-sm text-muted">
           <input
             type="checkbox"
-            checked={onlyWithFormulas}
-            onChange={(event) => setOnlyWithFormulas(event.target.checked)}
+            checked={onlyKpis}
+            onChange={(event) => setOnlyKpis(event.target.checked)}
           />
-          only tiles with a formula behind them
+          only the KPIs ({c.kpis} of {c.tiles} tiles, {c.kpi_measures} measures behind them)
         </label>
         {blank > 0 && (
           <span className="text-xs text-faint">
@@ -165,9 +183,9 @@ export function Dashboard({ dialect = "duckdb" }: { dialect?: string }) {
 
       {pages.length === 0 ? (
         <Empty>
-          No tile on this report shows a measure. Every one of them displays columns
-          directly, so there is no DAX to correlate — the numbers are the data as
-          stored, not a calculation over it.
+          {onlyKpis
+            ? "No tile on this report states a figure as a number — every one draws it as a chart. The measures are all still here; untick the box to see them under the visuals that plot them."
+            : "No tile on this report shows a measure. Every one of them displays columns directly, so there is no DAX to correlate — the numbers are the data as stored, not a calculation over it."}
         </Empty>
       ) : (
         <div className="flex flex-col gap-3">
@@ -230,6 +248,14 @@ function TileRow({ tile }: { tile: Tile }) {
           // display time; writing one here would put words on screen that are
           // in no file.
           <h3 className="text-sm font-semibold text-faint italic">no title set</h3>
+        )}
+        {/* The split a reviewer asked for by name. A KPI states its figure; a
+            chart draws one. Both may read the same measure, and only the first
+            is what anybody points at and calls the KPI. */}
+        {tile.is_kpi && (
+          <Chip tone="ok" title="States a figure as a number, rather than drawing it">
+            KPI
+          </Chip>
         )}
         <Chip tone="neutral">{visualInWords(tile.visual_type)}</Chip>
       </div>

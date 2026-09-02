@@ -24,6 +24,13 @@ set -eu
 # reader spends their attention on the domain instead of on the documentation.
 # Sales, cost, profit and margin need no explaining to anybody.
 #
+# It is Microsoft's own Store Sales sample, unmodified, rather than one written
+# here -- five tables, four joins, 32 measures of which 29 translate, and a real
+# report whose thirteen tiles every one carry a measure. An authored model
+# stood here first and was replaced by it: a file somebody else wrote is worth
+# more as evidence, and this one also has the report layer an authored
+# .SemanticModel folder cannot have, so the tiles have something to correlate.
+#
 # The last two are Microsoft's own published Power BI samples, unmodified.
 # They are here because a reviewer asked the fair question: everything above was
 # authored for this project, so of course it reads cleanly. A real .pbix built
@@ -42,7 +49,7 @@ set -eu
 # demo loses a model instead of losing everything.
 MODELS=""
 for model in \
-    data/models/StoreSales.SemanticModel \
+    data/models/StoreSales.pbix \
     data/models/ClinicalTrialSafety.SemanticModel \
     data/models/QualityControl.SemanticModel \
     data/models/DiabetesCare.SemanticModel \

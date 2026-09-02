@@ -30,6 +30,29 @@ from dataclasses import dataclass
 from concordance.graph.csg import SemanticGraph
 from concordance.model import Visual
 
+#: Visual types that show a figure *as a number*, which is what the reviewers
+#: meant by a KPI. Their own words, watching a dashboard:
+#:
+#:     "Here it's the numbers. Here it's the graphical representation."
+#:     "these are the KPIs for us... Total Sales, Total Profit, Profit Margin,
+#:      Orders"
+#:     "what is the KPI and non-KPI as a part of your DAX. That's it."
+#:
+#: So the distinction is not ours to invent -- it is the one Power BI already
+#: makes when an author drops a measure on a card instead of on a chart. A card
+#: states a figure; a bar chart draws a comparison. Both may read the same
+#: measure, and only the first is what anybody points at and calls the KPI.
+#:
+#: Listed rather than guessed at from the name, and deliberately short. A gauge
+#: and a treemap both encode a number as a shape, so neither is here: including
+#: them would blur the exact line a reviewer drew.
+_NUMBER_VISUALS = frozenset({
+    "card",
+    "cardVisual",
+    "multiRowCard",
+    "kpi",
+})
+
 
 @dataclass(frozen=True)
 class ResolvedField:
@@ -71,6 +94,21 @@ class Tile:
     def measures(self) -> tuple[ResolvedField, ...]:
         """The fields that are measures, which is what "the formula" means here."""
         return tuple(f for f in self.fields if f.kind == "measure")
+
+    @property
+    def is_kpi(self) -> bool:
+        """Does this tile state a number, rather than draw one?
+
+        The reviewers' distinction, in their words: "here it's the numbers,
+        here it's the graphical representation". A tile is a KPI when it puts a
+        measure on a card -- the headline figures across the top of every
+        dashboard -- and not when it plots that same measure as a chart.
+
+        A card showing no measure is not a KPI either: a card over a plain
+        column displays a stored value, and calling that a key performance
+        indicator would stretch the word past use.
+        """
+        return self.visual_type in _NUMBER_VISUALS and bool(self.measures)
 
     @property
     def is_titled(self) -> bool:
@@ -192,11 +230,16 @@ def counts(pages: tuple[Page, ...]) -> dict[str, int]:
     """Enough to say, in one line, how much of the report is accounted for."""
     tiles = [tile for page in pages for tile in page.tiles]
     fields = [field for tile in tiles for field in tile.fields]
+    kpis = [t for t in tiles if t.is_kpi]
     return {
         "pages": len(pages),
         "tiles": len(tiles),
         "titled": sum(1 for t in tiles if t.is_titled),
         "with_measures": sum(1 for t in tiles if t.measures),
+        # The split a reviewer asked for by name: "what is the KPI and non-KPI
+        # as a part of your DAX".
+        "kpis": len(kpis),
+        "kpi_measures": len({f.name for t in kpis for f in t.measures}),
         "measure_fields": sum(1 for f in fields if f.kind == "measure"),
         "with_sql": sum(1 for f in fields if f.sql),
         "unresolved": sum(1 for f in fields if not f.resolved),

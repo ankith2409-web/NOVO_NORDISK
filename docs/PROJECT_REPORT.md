@@ -134,11 +134,15 @@ Coverage, measured rather than estimated:
 | DiabetesCare | 12 | 11 | authored for this project |
 | Supply Chain (Microsoft sample) | 4 | 4 | not authored here |
 | Sales & Returns (Microsoft sample) | 58 | 18 | not authored here |
+| Store Sales (Microsoft sample) | 32 | 29 | not authored here |
 
-The last row is the important one and is not a typo. On models written for this project
-the translator handles 89%; on a Power BI file nobody here authored it handles 31%. The
-difference is not a defect being hidden — it is what the first three numbers were always
-worth.
+The Sales & Returns row is the important one and is not a typo. On models written for
+this project the translator handles 89%; on Microsoft's Sales & Returns it handles 31%.
+The difference is not a defect being hidden — it is what the first three numbers were
+always worth. Store Sales, also Microsoft's and also unmodified, lands at 91%, which says
+the gap is not "authored here versus not": it is how much of a model's DAX leans on
+filter-context functions that no single query stands for. Sales & Returns is full of
+them; Store Sales is not.
 
 That last figure was 10% until a reviewer pushed back on one of the refusals. Measures
 comparing against an earlier period — `PREVIOUSMONTH` and its siblings — were declined on
@@ -329,20 +333,23 @@ not a built-in library of industry dashboards — Concordance does not ship pre-
 content for any domain. Pointed at any other real Power BI model, it extracts and
 documents that model with the same behavior.
 
-Five of the eight were authored for this project. The other three are Power BI sample
+Four of the eight were authored for this project. The other four are Power BI sample
 workbooks published by Microsoft, used unmodified — they are the only honest test of how
 this behaves on DAX nobody here chose, and section 3.5a reports what that test showed.
 They are also the only ones carrying a report layer, so section 3.5b's tile correlation
 has something to correlate.
 
-`StoreSales` is the newest and deliberately the plainest: sales, cost, profit, margin and
-orders, with Total Sales defined as unit price times units sold. It exists because a
-reviewer said four times in one session that a clinical or manufacturing model is the
+`StoreSales` is Microsoft's own Store Sales sample workbook, and it is the plainest thing
+here: five tables, four joins, thirty-two measures and a three-page report of sales,
+margin and store comparisons. It is the model the interface opens on because a reviewer
+said four times in one session that a clinical or manufacturing model is the
 wrong thing to evaluate a documentation tool on — a reader spending their attention on
 what a protocol deviation is has none left for whether the document describing it is any
-good. It is the model the interface opens on.
+good. An earlier version of `StoreSales` was written here to fill that role; it was
+replaced by Microsoft's file because a model nobody here authored is the stronger
+demonstration, and because it carries a report layer the authored one could not.
 
-Of the five authored here, four are synthetic, written to mirror real structure. The
+Of the four authored here, three are synthetic, written to mirror real structure. The
 diabetes model is
 different: it is built directly on a real, public dataset — the Pima Indians Diabetes
 Dataset (National Institute of Diabetes and Digestive and Kidney Diseases), 768 real

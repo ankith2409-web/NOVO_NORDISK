@@ -257,6 +257,12 @@ export interface Tile {
   /** Empty when the report author never set one. */
   title: string;
   visual_type: string;
+  /**
+   * True when the tile states a figure as a number rather than drawing it.
+   * The reviewers' own split: "here it's the numbers, here it's the graphical
+   * representation".
+   */
+  is_kpi: boolean;
   fields: TileField[];
 }
 
@@ -270,6 +276,8 @@ export interface ReportPayload {
     tiles: number;
     titled: number;
     with_measures: number;
+    kpis: number;
+    kpi_measures: number;
     measure_fields: number;
     with_sql: number;
     unresolved: number;

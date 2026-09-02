@@ -235,3 +235,50 @@ def test_the_other_sample_reads_too() -> None:
     assert len(model.visuals()) == 12
     pages = correlate(SemanticGraph(model))
     assert any(tile.fields for page in pages for tile in page.tiles)
+
+
+# -- KPI and non-KPI -----------------------------------------------------------
+
+
+def test_a_kpi_is_a_number_on_a_card_not_a_chart(pages) -> None:
+    """The split a reviewer asked for by name.
+
+    Watching a dashboard, in their words: "Here it's the numbers. Here it's the
+    graphical representation... these are the KPIs for us." And then, directly:
+    "what is the KPI and non-KPI as a part of your DAX. That's it."
+
+    So the distinction is not one this project invented -- it is the one Power BI
+    already makes when an author drops a measure on a card rather than on a
+    chart. The same measure often appears both ways; only the card is what
+    somebody points at and calls the KPI.
+    """
+    kpis = [t for page in pages for t in page.tiles if t.is_kpi]
+    others = [t for page in pages for t in page.tiles if not t.is_kpi]
+    assert kpis and others, "the sample should demonstrate both sides"
+
+    for tile in kpis:
+        assert tile.measures, "a KPI states a measure"
+    # Nothing that plots is counted as a KPI.
+    assert not any(
+        t.visual_type in ("barChart", "lineChart", "donutChart", "pivotTable")
+        for t in kpis
+    )
+
+
+def test_a_card_over_a_plain_column_is_not_a_kpi(pages) -> None:
+    """A card showing a stored value displays data, not a performance indicator.
+
+    Calling that a KPI would stretch the word until it stopped dividing
+    anything, which is the whole point of being asked for the split.
+    """
+    for page in pages:
+        for tile in page.tiles:
+            if tile.is_kpi:
+                assert tile.measures, f"{tile.title} has no measure behind it"
+
+
+def test_the_counts_report_both_sides(pages) -> None:
+    figures = counts(pages)
+    assert figures["kpis"] >= 1
+    assert figures["kpis"] <= figures["tiles"]
+    assert figures["kpi_measures"] >= 1

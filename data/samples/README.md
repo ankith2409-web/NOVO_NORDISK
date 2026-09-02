@@ -8,28 +8,41 @@ a weak demonstration and should not be able to hide behind a word like
 
 **Authored for this project** (synthetic, written to mirror real structure):
 `ClinicalTrialSafety`, `ClinicalTrialSafety_v2`, `QualityControl`,
-`DiabetesCare`, `StoreSales`. `DiabetesCare` is built on real public data --
-see below. The rest describe structure and DAX only: they are semantic models,
-not data, and no rows ship with them.
+`DiabetesCare`. `DiabetesCare` is built on real public data -- see below. The
+rest describe structure and DAX only: they are semantic models, not data, and no
+rows ship with them.
 
-`StoreSales` exists for a reason worth recording. A reviewer said four times in
-one session that the clinical and manufacturing models were the wrong thing to
-evaluate a documentation tool on -- "if you are not able to understand these
-things, you will not be able to correlate, because you don't know what is
-Clinical Trial Safety... you can make a simple one, like use profit and sales
-information". So `StoreSales` is sales, cost, profit, margin and orders, with
-Total Sales defined as unit price times units sold exactly as she described it.
-It is deliberately the plainest model here, and its five headline measures are
-named after the tiles on the dashboard she was showing at the time.
+**Not authored here**: `StoreSales.pbix`, `Sales_Returns_Sample.pbix`,
+`Supply_Chain_Sample.pbix`, `AdventureWorks_Sales.pbix` -- Power BI sample
+workbooks published by Microsoft, used unmodified.
 
-**Not authored here**: the `.pbix` files. These are Power BI sample workbooks
-distributed by Microsoft (`Sales_Returns_Sample`, `Supply_Chain_Sample`,
-`AdventureWorks_Sales`), used unmodified. They matter precisely because nobody
-on this project chose their DAX: running the translator over them is the only
-honest measure of its coverage, and doing so dropped the figure from 80% on the
-models above to 10% on Sales & Returns. That number is in the report, and has
-since moved to 31% -- not by loosening anything, but by translating
-previous-period measures that used to be refused. The report says why.
+`StoreSales` is the one the interface opens on, and it replaced a model written
+here. A reviewer said four times in one session that the clinical and
+manufacturing models were the wrong thing to evaluate a documentation tool on --
+"if you are not able to understand these things, you will not be able to
+correlate, because you don't know what is Clinical Trial Safety... you can make
+a simple one, like use profit and sales information". A sales model was written
+to answer that, and then replaced by Microsoft's own Store Sales sample, which
+is better on both counts: a file somebody else wrote is worth more as evidence
+than one written to be read well, and only a real `.pbix` carries the report
+layer, so only it has tiles for the Dashboard tab to correlate. Five tables,
+four joins, 32 measures of which 29 translate, and 13 tiles every one of which
+carries a measure.
+
+The `.pbix` files matter precisely because nobody on this project chose their
+DAX: running the translator over them is the only honest measure of its
+coverage, and doing so dropped the figure from 80% on the authored models to 10%
+on Sales & Returns. That number is in the report, and has since moved to 31% --
+not by loosening anything, but by translating previous-period measures that used
+to be refused, and by resolving unqualified column references that were being
+mistaken for missing measures.
+
+Running the tool over Microsoft's whole published library (43 files) rather than
+over three of them found both of those, and one more worth recording: **not one
+of the 43 defines a Power BI KPI object.** The extractor reads them correctly --
+the tables simply come back empty. KPI objects are rare in practice, and what
+everybody including these reviewers calls a "KPI" is a measure shown on a card
+tile, which is what the Dashboard tab marks.
 
 `diabetes_patients.csv` here is real, public data, kept as its own folder
 rather than mixed into `data/models/` so that distinction stays visible.
