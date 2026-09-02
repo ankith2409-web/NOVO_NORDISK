@@ -49,24 +49,20 @@ export function Intro({
         : "What was read out of the model, and what was not.",
     ],
     [
-      "Model",
-      "Every table, measure and join, with the DAX behind each one and what breaks if you change it.",
-    ],
-    [
-      "Requirements",
-      "The BRD and FRD, derived from the model rather than typed. Each statement carries the objects it came from.",
+      "Dashboard",
+      "Each tile on the report, and the formula behind the number it shows — the DAX, and the same figure written as SQL.",
     ],
     [
       `${FEATURE.dataset.tab}`,
-      "Every measure at once, with the SQL that computes the same number beside the DAX that defines it.",
+      "The tables, how they join, and every measure at once: its DAX, its SQL, and all of it copyable in one go.",
     ],
     [
-      `${FEATURE.drift.tab} · ${FEATURE.reconcile.tab}`,
-      "What moved between two versions of a model, and whether the warehouse computes the same numbers Power BI does.",
+      "Documents",
+      "The BRD and FRD, derived from the model rather than typed. Each statement carries the objects it came from.",
     ],
     [
-      `${FEATURE.review.tab}`,
-      "Everything the tool was not confident enough to assert on its own. It is meant to be short, and it is meant to be read.",
+      "Also here",
+      `Browse objects one at a time, compare two versions (${FEATURE.drift.tab.toLowerCase()}), check the ${FEATURE.reconcile.tab.toLowerCase()} agrees, and settle anything the tool would not assert on its own.`,
     ],
     [
       "Copilot",

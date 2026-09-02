@@ -10,7 +10,7 @@
  * shown broken: the overview reports which capabilities exist, and the rail
  * renders accordingly.
  */
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
   api,
   SNAPSHOT_MODE,
@@ -48,22 +48,47 @@ type ViewId =
   | "reconcile"
   | "review";
 
-const VIEWS: { id: ViewId; label: string; needs?: "drift" | "reconcile" }[] = [
+/**
+ * The rail, in two groups.
+ *
+ * A reviewer said this in as many words and it went unheard for a sprint:
+ * "Make it very simple, that's what I'm trying to tell. Because we don't need
+ * like warehouse or to confirm drift. We just need everything to be converted
+ * into tables, of course, columns, measures, of course what joins it is having,
+ * and how is it related to each other... Whatever you have taken is very
+ * complex. I don't need so much."
+ *
+ * She was looking at seven tabs when she said it. The answer was to add an
+ * eighth, which is the opposite of listening. Nothing is deleted here -- the
+ * other reviewer asked for drift by name, and a feature you cannot show is
+ * worse than one nobody clicks -- but the four she actually asked for now sit
+ * on their own, and the three she said she did not need sit under a line
+ * saying so.
+ *
+ * The order of the first four is the order somebody meets the model in: what
+ * is this, what is on its dashboard, what does it calculate, what document
+ * comes out.
+ */
+const VIEWS: {
+  id: ViewId;
+  label: string;
+  needs?: "drift" | "reconcile";
+  /** "more" items sit below the divider. */
+  group?: "more";
+}[] = [
   { id: "overview", label: "Overview" },
-  { id: "model", label: "Model" },
-  // Above Dataset on purpose. It is the only page that starts from what a
-  // person is actually looking at -- a tile on a dashboard with a title on it
-  // -- and works back to the definition. Everything below it starts from the
-  // model and works outward, which is the wrong direction for someone holding
-  // a report and asking "where does this number come from".
+  // The only page that starts from what a person is actually looking at -- a
+  // tile with a title on it -- and works back to the definition.
   { id: "dashboard", label: "Dashboard" },
-  // Sits next to Model because it answers the same question at a different
-  // altitude: Model is one object in depth, Dataset is every measure at once.
   { id: "dataset", label: FEATURE.dataset.tab },
-  { id: "requirements", label: "Requirements" },
-  { id: "drift", label: FEATURE.drift.tab, needs: "drift" },
-  { id: "reconcile", label: FEATURE.reconcile.tab, needs: "reconcile" },
-  { id: "review", label: FEATURE.review.tab },
+  { id: "requirements", label: "Documents" },
+
+  // Below the line. Everything still works; none of it is the first thing to
+  // look at.
+  { id: "model", label: "Browse objects", group: "more" },
+  { id: "drift", label: FEATURE.drift.tab, needs: "drift", group: "more" },
+  { id: "reconcile", label: FEATURE.reconcile.tab, needs: "reconcile", group: "more" },
+  { id: "review", label: FEATURE.review.tab, group: "more" },
 ];
 
 function useTheme() {
@@ -421,9 +446,16 @@ export default function App() {
             wide enough to leave headroom instead of landing on the next
             one-pixel margin. */}
         <nav className="flex w-44 flex-none flex-col gap-0.5 border-r border-hairline bg-ground p-2">
-          {VIEWS.map((entry) => (
+          {VIEWS.map((entry, index) => (
+            <Fragment key={entry.id}>
+              {/* One line, once, before the first secondary item. Labelled, so
+                  it reads as a deliberate second tier rather than as a gap. */}
+              {entry.group === "more" && VIEWS[index - 1]?.group !== "more" && (
+                <p className="mt-3 mb-1 px-2.5 font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
+                  also here
+                </p>
+              )}
             <button
-              key={entry.id}
               onClick={() => setView(entry.id)}
               aria-current={view === entry.id ? "page" : undefined}
               title={
@@ -450,6 +482,7 @@ export default function App() {
                 <span className="flex-none font-mono text-[10px] text-faint">off</span>
               )}
             </button>
+            </Fragment>
           ))}
         </nav>
 

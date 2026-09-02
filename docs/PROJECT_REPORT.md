@@ -218,12 +218,25 @@ trail that mixes the two without saying which is which forces every entry to be 
 as unverified.
 
 ### 3.9 Web application
-A six-view interface (Overview, Model browser with lineage, Requirements, Drift,
-Reconcile, Review) plus a docked chat panel, built in React and served directly by the
-Python backend as a single self-contained page — no separate build step required to run
-it.
+The interface leads with four things and keeps the rest to hand. **Overview** — what the
+model holds. **Dashboard** — each tile and the formula behind it. **Dataset + SQL** — the
+tables, how they join, and every measure's DAX and SQL, copyable in one go. **Documents**
+— the BRD and FRD. Below a divider sit Browse objects, Drift, Warehouse and To confirm.
 
-The generated BRD and FRD can be downloaded from the Requirements view as Markdown or as
+That split is a correction rather than a design. A reviewer, looking at seven equally
+weighted tabs, said: *"Make it very simple, that's what I'm trying to tell. Because we
+don't need like warehouse or to confirm drift. We just need everything to be converted
+into tables, of course, columns, measures, of course what joins it is having... Whatever
+you have taken is very complex."* The first response to that was to add an eighth tab,
+which is the opposite of listening. Nothing has been deleted — a second reviewer asked
+for drift by name, and a capability that cannot be shown is worse than one nobody clicks
+— but the four she asked for now stand alone, and the rest are where a first-time reader
+will not trip over them.
+
+Built in React and served directly by the Python backend as a single self-contained page
+— no separate build step required to run it.
+
+The generated BRD and FRD can be downloaded from the Documents view as Markdown or as
 Word, the latter because a requirements document in a regulated setting is circulated for
 signature. Both are rendered by the same code the command line uses, so the file someone
 downloads and the file the CLI writes cannot disagree — a test asserts they are

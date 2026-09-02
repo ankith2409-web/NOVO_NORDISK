@@ -39,6 +39,14 @@ export function Overview({ overview }: { overview: OverviewData | null }) {
     <div className="flex flex-col gap-4 p-4">
       <header>
         <h1 className="font-serif text-2xl leading-tight font-semibold">{data.model}</h1>
+        {/* One sentence, in words with no Power BI in them. A reviewer asked
+            twice for "simple language", and a page that opens on a format name
+            and a table ratio is written for whoever built it. */}
+        <p className="mt-1.5 max-w-prose text-sm text-muted">
+          This Power BI model has been read end to end. Below is what it holds; the tabs
+          on the left show what each number means, where it appears on the dashboard, and
+          the same calculation written as SQL.
+        </p>
         <p className="mt-1 font-mono text-xs text-faint">
           {data.source_format} · {data.user_tables} user tables of {data.tables}
         </p>
@@ -58,8 +66,30 @@ export function Overview({ overview }: { overview: OverviewData | null }) {
         />
       </div>
 
-      {/* Limits first. If there is nothing to declare, say that too -- silence
-          here would be indistinguishable from not having checked.
+      {review && review.count > 0 && (
+        <Panel title={`Awaiting confirmation (${review.count})`}>
+          <ul className="divide-y divide-hairline">
+            {review.pending.slice(0, 6).map((requirement) => (
+              <li key={requirement.id} className="px-3.5 py-2.5">
+                <div className="flex items-baseline gap-2">
+                  <code className="font-mono text-[11px] text-faint">{requirement.id}</code>
+                  <span className="text-sm">
+                    <RichText>{requirement.statement}</RichText>
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-muted">
+                  <RichText>{requirement.rationale}</RichText>
+                </p>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+
+      {/* Kept, and no longer first. Declaring what could not be read is the
+          thing that makes the rest of this page trustworthy, and silence here
+          would be indistinguishable from not having checked -- but leading with
+          it meant the first panel anybody saw was a list of what is missing.
 
           Two different admissions share this panel, and the chips keep them
           apart: a coverage gap is a feature this adapter cannot read at all,
@@ -98,25 +128,6 @@ export function Overview({ overview }: { overview: OverviewData | null }) {
         )}
       </Panel>
 
-      {review && review.count > 0 && (
-        <Panel title={`Awaiting confirmation (${review.count})`}>
-          <ul className="divide-y divide-hairline">
-            {review.pending.slice(0, 6).map((requirement) => (
-              <li key={requirement.id} className="px-3.5 py-2.5">
-                <div className="flex items-baseline gap-2">
-                  <code className="font-mono text-[11px] text-faint">{requirement.id}</code>
-                  <span className="text-sm">
-                    <RichText>{requirement.statement}</RichText>
-                  </span>
-                </div>
-                <p className="mt-1 text-xs text-muted">
-                  <RichText>{requirement.rationale}</RichText>
-                </p>
-              </li>
-            ))}
-          </ul>
-        </Panel>
-      )}
 
       {/* Lower-cased so it reads as a status line rather than a heading, but
           named the same as the tabs -- a reader who sees "reconcile" here and

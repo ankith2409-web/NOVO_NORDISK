@@ -35,7 +35,7 @@ untouched.
 | **Review / decision log** | Lets a person accept, reject, or correct a low-confidence requirement. The decision is bound to the fingerprint(s) it was made against, so it automatically goes **stale** — not silently carried over — when the underlying logic changes | `concordance/review/decisions.py` |
 | **Access control** | Optional shared-token auth, per-reviewer tokens (`--users`), or Auth0 (`--auth0-*`) with signup and Google. A decision records the identity the server resolved from the credential, never one the caller supplied | `concordance/web/server.py`, `concordance/review/identity.py`, `concordance/review/auth0.py` |
 | **Multi-model serving** | One server process can host several models at once, each with its own independent chat session, drift baseline, and warehouse | `concordance/web/api.py` (`ModelRegistry`) |
-| **Web interface** | A six-view React app: Overview, Model (browser + lineage), Requirements, Drift, Reconcile, Review — plus a docked chat panel | `frontend/src/` |
+| **Web interface** | React app, four primary views — Overview, Dashboard (tiles → DAX → SQL), Dataset + SQL, Documents — with Browse objects, Drift, Warehouse and To confirm grouped below as secondary, plus a docked chat panel | `frontend/src/` |
 | **CLI** | `extract`, `inspect`, `explain`, `verify`, `ask`, `reconcile`, `drift`, `auditpack`, `snapshot`, `document`, `serve` | `concordance/cli.py` |
 
 ## 3. High-level architecture
@@ -272,7 +272,7 @@ constructing each failure and checking the actual response.
 
 ## 13. Frontend — `frontend/src/`
 
-React 19 + Vite + Tailwind 4. Six views (`Overview`, `Model`, `Requirements`, `Drift`,
+React 19 + Vite + Tailwind 4. Eight views (`Overview`, `Dashboard`, `Dataset`, `Requirements`, `Model`, `Drift`,
 `Reconcile`, `Review`) plus a docked `Copilot` chat panel that stays mounted whether shown
 or hidden, so closing it never drops the conversation.
 
