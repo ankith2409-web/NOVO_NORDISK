@@ -207,11 +207,11 @@ class PbixAdapter:
         """
         import zipfile
 
-        from concordance.normalize.layout import read_layout
+        from concordance.normalize.layout import read_report
 
         try:
             with zipfile.ZipFile(path) as archive:
-                return read_layout(archive.read("Report/Layout"))
+                return read_report(archive)
         except (KeyError, OSError, zipfile.BadZipFile):
             return []
 

@@ -641,7 +641,17 @@ class Compiler:
     def _measure(self, node: MeasureRef, where: tuple[str, ...]) -> _Fragment:
         measure = self.measures.get(node.name.casefold())
         if measure is None:
-            raise Unsupported(f"[{node.name}]", "is not a measure in this model")
+            # `[Name]` on its own usually means a measure, and sometimes means a
+            # column of the table the expression already sits in -- Power BI
+            # accepts the unqualified form and real models use it. Microsoft's
+            # own Store Sales sample writes `AVERAGE([SellingAreaSize])`, where
+            # `SellingAreaSize` is a column on `Store`; refusing that reported
+            # "is not a measure in this model" about something the model plainly
+            # has, and blocked 28 of its 32 measures.
+            #
+            # Resolved by looking it up rather than by assuming, which is the
+            # same fallback `_column` already makes in the other direction.
+            return self._unqualified_column(node)
         if measure.name in self._seen:
             raise Unsupported(f"[{node.name}]", "refers to itself through a cycle")
 
@@ -651,6 +661,34 @@ class Compiler:
             return self.compile(tree, where)
         finally:
             self._seen.pop()
+
+    def _unqualified_column(self, node: MeasureRef) -> _Fragment:
+        """A bare `[Name]` that is a column rather than a measure.
+
+        Only when exactly one table has a column by that name. Two tables with
+        the same column name make the reference genuinely ambiguous -- DAX
+        resolves it from the row context the expression is evaluated in, which a
+        query at a fixed grain does not have -- so it is refused, naming the
+        candidates. Guessing would pick a table by sort order and return a
+        number from the wrong one.
+        """
+        owners = sorted(
+            {table for (table, column) in self.columns if column == node.name.casefold()}
+        )
+        if not owners:
+            raise Unsupported(
+                f"[{node.name}]", "is not a measure or a column in this model"
+            )
+        if len(owners) > 1:
+            real = ", ".join(self.columns[(t, node.name.casefold())][0] for t in owners)
+            raise Blocked(
+                f"[{node.name}]",
+                "is a column name used on more than one table "
+                f"({real}), so which one is meant depends on where the "
+                "expression is evaluated rather than on the expression itself",
+            )
+        table, column = self.columns[(owners[0], node.name.casefold())]
+        return self._column(ColumnRef(table, column))
 
     def _let(self, node: Let, where: tuple[str, ...]) -> _Fragment:
         saved = dict(self._vars)

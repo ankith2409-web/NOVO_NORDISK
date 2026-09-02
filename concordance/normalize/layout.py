@@ -30,10 +30,21 @@ Returns sample are buttons, and there are images, shapes and text boxes besides.
 None of them show a number, so none of them can correlate to a measure, and
 listing them would bury the ten that matter.
 
-The format is undocumented but stable: UTF-16LE JSON, with more JSON *inside*
-it as strings in ``config``. Both layers are parsed defensively, because this is
-a file format Microsoft can change without telling anyone, and a report that
-fails to parse must cost the caller the report layer and nothing else.
+**Two formats, because Power BI changed one.** Older files carry the whole
+report in a single ``Report/Layout`` blob: UTF-16LE JSON, with more JSON
+*inside* it as strings. Newer ones (PBIR) carry a file per visual under
+``Report/definition/pages/<page>/visuals/<id>/visual.json``. Both are read here.
+This is not an optional nicety: 5 of Microsoft's own recent samples use the new
+format, and reading only the old one reported "this file contains no report"
+about files that plainly do -- a confident wrong answer about somebody else's
+work, which is the thing this project exists not to give.
+
+The newer format is the easier of the two, because a field names its table
+outright instead of through an alias that may be stale.
+
+Both layers are parsed defensively, because this is a file format Microsoft can
+change without telling anyone, and a report that fails to parse must cost the
+caller the report layer and nothing else.
 """
 
 from __future__ import annotations
@@ -114,8 +125,28 @@ class ReportPage:
     visuals: list[Visual] = field(default_factory=list)
 
 
+def read_report(archive) -> list[ReportPage]:
+    """The report layer of an open ``.pbix``, in whichever format it uses.
+
+    Takes the archive rather than bytes because the newer format is spread over
+    many entries. Tries the legacy blob first only because it is one read; a
+    file has one format or the other, never both.
+    """
+    try:
+        names = set(archive.namelist())
+    except Exception:
+        return []
+
+    if "Report/Layout" in names:
+        try:
+            return read_layout(archive.read("Report/Layout"))
+        except (KeyError, OSError):
+            return []
+    return _read_pbir(archive, names)
+
+
 def read_layout(raw: bytes) -> list[ReportPage]:
-    """Parse ``Report/Layout`` into pages of tiles.
+    """Parse the legacy ``Report/Layout`` blob into pages of tiles.
 
     Returns an empty list rather than raising when the bytes are not a layout
     this understands. The report layer is a bonus on top of the semantic model,
@@ -141,6 +172,125 @@ def read_layout(raw: bytes) -> list[ReportPage]:
                 page.visuals.append(visual)
         pages.append(page)
     return pages
+
+
+def _read_pbir(archive, names: set[str]) -> list[ReportPage]:
+    """The newer per-file report format.
+
+    ``pages.json`` gives the page order, each ``page.json`` its display name,
+    and each ``visual.json`` one tile. Page order is taken from the file that
+    declares it rather than from however the zip happens to be sorted -- a
+    report's pages are ordered by its author, and that order is the only
+    landmark a reader has for finding a tile again.
+    """
+    root = "Report/definition/pages/"
+    order: list[str] = []
+    meta = f"{root}pages.json"
+    if meta in names:
+        declared = _load(archive, meta)
+        if isinstance(declared, dict):
+            order = [str(p) for p in (declared.get("pageOrder") or [])]
+
+    # Any page the order forgot still appears, after the ones it names.
+    present = sorted({
+        n[len(root):].split("/", 1)[0]
+        for n in names
+        if n.startswith(root) and n.endswith("/page.json")
+    })
+    for name in present:
+        if name not in order:
+            order.append(name)
+
+    pages: list[ReportPage] = []
+    for ordinal, folder in enumerate(order):
+        definition = _load(archive, f"{root}{folder}/page.json")
+        if not isinstance(definition, dict):
+            continue
+        page = ReportPage(
+            name=str(definition.get("displayName") or folder),
+            ordinal=ordinal,
+        )
+        prefix = f"{root}{folder}/visuals/"
+        for entry in sorted(n for n in names if n.startswith(prefix) and n.endswith("/visual.json")):
+            visual = _pbir_visual(_load(archive, entry), page.name)
+            if visual is not None and visual.fields:
+                page.visuals.append(visual)
+        pages.append(page)
+    return pages
+
+
+def _load(archive, name: str) -> Any:
+    """One JSON entry, or None. ``utf-8-sig`` because these carry a BOM."""
+    try:
+        return json.loads(archive.read(name).decode("utf-8-sig"))
+    except (KeyError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+
+def _pbir_visual(document: Any, page: str) -> Visual | None:
+    """One tile from the newer format.
+
+    Simpler than its predecessor in the one way that matters: a projection
+    names its table outright (``SourceRef.Entity``) instead of through a
+    one-letter alias resolved against a ``From`` clause, so there is no stale
+    alias to be misled by.
+    """
+    if not isinstance(document, dict):
+        return None
+    visual = document.get("visual")
+    if not isinstance(visual, dict):
+        return None
+
+    fields: list[VisualField] = []
+    state = (visual.get("query") or {}).get("queryState")
+    if isinstance(state, dict):
+        for role, well in state.items():
+            if not isinstance(well, dict):
+                continue
+            for projection in well.get("projections") or []:
+                if not isinstance(projection, dict):
+                    continue
+                field = _pbir_field(str(role), projection.get("field"))
+                if field is not None:
+                    fields.append(field)
+
+    return Visual(
+        page=page,
+        visual_type=str(visual.get("visualType") or "unknown"),
+        title=_title(visual.get("visualContainerObjects") or {}, key="title"),
+        fields=tuple(fields),
+    )
+
+
+def _pbir_field(role: str, field: Any) -> VisualField | None:
+    """``{"Measure"|"Column": {"Expression": {"SourceRef": {"Entity": ...}}, "Property": ...}}``
+
+    Aggregations wrap the same shape, exactly as in the older format.
+    """
+    if not isinstance(field, dict):
+        return None
+
+    aggregation = ""
+    wrapper = field.get("Aggregation")
+    if isinstance(wrapper, dict):
+        aggregation = _FUNCTIONS.get(wrapper.get("Function"), "")
+        field = wrapper.get("Expression")
+        if not isinstance(field, dict):
+            return None
+
+    for key in ("Measure", "Column"):
+        inner = field.get(key)
+        if not isinstance(inner, dict):
+            continue
+        name = str(inner.get("Property") or "")
+        if not name:
+            continue
+        expression = inner.get("Expression")
+        entity = ""
+        if isinstance(expression, dict):
+            entity = str((expression.get("SourceRef") or {}).get("Entity") or "")
+        return VisualField(role=role, table=entity, name=name, aggregation=aggregation)
+    return None
 
 
 def _decode(raw: bytes) -> Any:
@@ -205,21 +355,22 @@ def _visual(container: Any, page: str) -> Visual | None:
     return Visual(
         page=page,
         visual_type=str(single.get("visualType") or "unknown"),
-        title=_title(single),
+        title=_title(single.get("vcObjects") or {}, key="title"),
         fields=tuple(fields),
     )
 
 
-def _title(single: dict) -> str:
+def _title(objects: Any, key: str = "title") -> str:
     """The title the author typed, or "" when they set none.
 
     Buried four levels down and wrapped in single quotes as a DAX-ish literal,
-    which is Power BI's storage rather than anything the author sees.
+    which is Power BI's storage rather than anything the author sees. Both
+    report formats bury it identically; only the name of the dict holding it
+    differs, so both call this.
     """
-    objects = single.get("vcObjects")
     if not isinstance(objects, dict):
         return ""
-    for entry in objects.get("title") or []:
+    for entry in objects.get(key) or []:
         if not isinstance(entry, dict):
             continue
         literal = (
