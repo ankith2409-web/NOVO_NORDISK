@@ -24,7 +24,14 @@
  * built specifically to show formulas.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type ReportPayload, type Tile, type TileField } from "@/lib/api";
+import {
+  api,
+  type MeasureValue,
+  type ReportPayload,
+  type Tile,
+  type TileField,
+  type ValuesPayload,
+} from "@/lib/api";
 import { Chip, Empty, Failure, Loading, Stat } from "@/components/primitives";
 import { ChevronIcon } from "@/components/icons";
 import { cx } from "@/lib/cx";
@@ -103,8 +110,20 @@ export function Dashboard({
     () => api.report([], dialect),
     [dialect],
   );
+  // The figures, run against the model's own rows. Loaded separately from the
+  // report because it is the slower of the two by an order of magnitude -- the
+  // first call for a model reads a million rows into a query engine -- and the
+  // page has plenty to show while it is still working.
+  const { data: computed } = useLoad<ValuesPayload>(() => api.values(), []);
+  const [picked, setPicked] = useState("");
   const scope = useRef<HTMLDivElement>(null);
   const marked = useFocusTarget(focus, scope);
+
+  const figures = useMemo(() => {
+    const by = new Map<string, MeasureValue>();
+    for (const value of computed?.values ?? []) by.set(value.measure, value);
+    return by;
+  }, [computed]);
 
   const pages = useMemo(
     // A page whose visuals are all furniture -- Microsoft's sample opens on a
@@ -180,6 +199,7 @@ export function Dashboard({
       </div>
     );
 
+  const opened = kpis.find((entry) => entry.field.name === picked);
   const c = data.counts;
   const blank = data.pages.filter((page) => page.tiles.length === 0).length;
   const wanted = focus?.target ?? "";
@@ -236,33 +256,77 @@ export function Dashboard({
             plot them.
           </Empty>
         ) : (
-          <div className="grid gap-2.5 xl:grid-cols-2">
-            {kpis.map(({ field, shownOn }) => (
-              <article
-                key={field.qualified_name}
-                data-focus={field.name}
-                className={cx(
-                  "flex min-w-0 flex-col gap-2 rounded border border-ok/30 bg-ground p-3",
-                  isMarked(marked, field.name) && MARK_CLASS,
+          <>
+            {/* The card row. Clicking one opens it below rather than expanding
+                it in place: the cards are a row somebody scans across, and a
+                card that grew to hold a SQL query would push the rest of them
+                off the line being scanned. */}
+            <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-4">
+              {kpis.map(({ field, shownOn }) => (
+                <KpiCard
+                  key={field.qualified_name}
+                  field={field}
+                  places={shownOn.length}
+                  figure={figures.get(field.name)}
+                  loading={!computed}
+                  selected={picked === field.name}
+                  marked={isMarked(marked, field.name)}
+                  onPick={() =>
+                    setPicked((was) => (was === field.name ? "" : field.name))
+                  }
+                />
+              ))}
+            </div>
+
+            {/* Said once, under the row, rather than on every card. */}
+            {computed && (
+              <p className="text-[11.5px] text-muted">
+                {computed.available ? (
+                  <>
+                    Every figure above was computed by running that measure&rsquo;s own
+                    SQL against the {computed.rows.toLocaleString()} rows this file
+                    carries — open a card to see the query that produced it. Shown as
+                    the query returned them: Power BI renders a ratio like 0.42 as
+                    42.29% using a format string this file does not expose, so
+                    reinterpreting one here would be a guess.
+                  </>
+                ) : (
+                  computed.reason
                 )}
-              >
+              </p>
+            )}
+
+            {/* The opened card, in full. One at a time, so there is one place
+                on the page where a formula is being read. */}
+            {opened && (
+              <article className="flex min-w-0 flex-col gap-2 rounded border border-accent bg-ground p-3.5">
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                  <h3 className="font-serif text-base font-semibold">{field.name}</h3>
+                  <h3 className="font-serif text-base font-semibold">
+                    {opened.field.name}
+                  </h3>
                   <Chip tone="ok">KPI</Chip>
-                  <span className="font-mono text-[10.5px] text-faint">{field.table}</span>
+                  <span className="font-mono text-[10.5px] text-faint">
+                    {opened.field.table}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPicked("")}
+                    className="ml-auto text-[11.5px] text-accent underline underline-offset-2"
+                  >
+                    close
+                  </button>
                 </div>
-                {/* Where it is shown, which is the half a tile-led list got
-                    right. Named as pages rather than as tiles because in a real
-                    report several cards share one title -- all three of Store
-                    Sales' say "Store Sales Report" -- and the page is what
-                    actually tells a reader where to look. */}
+                {/* Where it is shown. Named as pages rather than as tiles
+                    because in a real report several cards share one title --
+                    all three of Store Sales' say "Store Sales Report" -- and
+                    the page is what actually tells a reader where to look. */}
                 <p className="text-[12px] text-muted">
-                  On {shownOn.map((where) => where.page).join(", ")}
+                  On {opened.shownOn.map((where) => where.page).join(", ")}
                 </p>
-                <FieldBody field={field} />
+                <FieldBody field={opened.field} />
               </article>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </section>
 
@@ -404,6 +468,95 @@ function TileRow({ tile, marked }: { tile: Tile; marked: string | null }) {
         ))}
       </ul>
     </li>
+  );
+}
+
+/**
+ * A figure, sized for reading rather than for precision.
+ *
+ * Two rules, both from what the real values turned out to be. Large ones are
+ * abbreviated because `45,184,553.69` on a card is a number nobody reads to the
+ * end -- `45.18M` is the same figure at the size the card is. Small ones keep
+ * significant digits instead of decimal places: `Sales Per Sq Ft` is 0.00094,
+ * and rounding it to two decimals renders a real measure as `0.00`, which reads
+ * as "this is zero" rather than "this is small".
+ *
+ * Nothing is reinterpreted. Power BI shows `Gross Margin %` as `42.29%` because
+ * the measure carries a format string; that string is not in what this file's
+ * reader exposes, so the ratio is shown as the ratio it is.
+ */
+function readable(value: number): string {
+  const size = Math.abs(value);
+  if (size === 0) return "0";
+  if (size >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}B`;
+  if (size >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
+  if (size >= 10_000) return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  if (size >= 1) return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return Number(value.toPrecision(2)).toString();
+}
+
+/**
+ * One headline figure, as a card.
+ *
+ * The number leads and the name sits under it, which is the way round every
+ * dashboard does it and the opposite of a definition list. A measure that could
+ * not be computed says so in the number's place rather than showing a zero --
+ * a zero here would be indistinguishable from a real one.
+ */
+function KpiCard({
+  field,
+  places,
+  figure,
+  loading,
+  selected,
+  marked,
+  onPick,
+}: {
+  field: TileField;
+  /** How many report pages show it. */
+  places: number;
+  figure: MeasureValue | undefined;
+  loading: boolean;
+  selected: boolean;
+  marked: boolean;
+  onPick: () => void;
+}) {
+  const value = figure?.value ?? null;
+
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      aria-pressed={selected}
+      data-focus={field.name}
+      className={cx(
+        "flex min-w-0 flex-col gap-0.5 rounded border bg-ground p-3 text-left",
+        "transition-colors duration-(--duration-feedback) ease-(--ease-standard)",
+        selected ? "border-accent bg-accent-soft" : "border-hairline hover:border-edge",
+        marked && MARK_CLASS,
+      )}
+    >
+      <span className="flex min-h-7 items-baseline">
+        {loading ? (
+          <span className="text-[13px] text-faint">computing…</span>
+        ) : value !== null ? (
+          <span
+            className="truncate font-mono text-[22px] leading-none font-semibold tabular"
+            // The full figure, unabbreviated, for anyone who needs the digits
+            // the card does not have room for.
+            title={value.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+          >
+            {readable(value)}
+          </span>
+        ) : (
+          <span className="text-[13px] text-review">no single figure</span>
+        )}
+      </span>
+      <span className="truncate text-[13px] font-medium">{field.name}</span>
+      <span className="truncate font-mono text-[10.5px] text-faint">
+        {field.table} · on {places} page{places === 1 ? "" : "s"}
+      </span>
+    </button>
   );
 }
 

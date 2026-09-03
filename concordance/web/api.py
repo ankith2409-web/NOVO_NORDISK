@@ -92,6 +92,14 @@ class ApiContext:
     #: is unavailable, the same way an absent warehouse means reconcile is.
     provider: Any = None
 
+    #: Every measure run against the model's own rows, once. Unlike
+    #: `requirements` below this *is* cached, and for the opposite reason:
+    #: loading 1.3 million rows into DuckDB takes about three seconds, which is
+    #: fine once and unacceptable on every request. Staleness is not a risk --
+    #: a model's file does not change under a running server, and an uploaded
+    #: one lives only as long as the session that uploaded it.
+    _evaluated: Any = None
+
     def requirements(self, kind: Kind) -> list[Requirement]:
         """Derive requirements on demand.
 
@@ -100,6 +108,14 @@ class ApiContext:
         document matches the model.
         """
         return [r for r in RequirementDeriver(self.graph).derive() if r.kind is kind]
+
+    def evaluated(self):
+        """The model's measures, run against its own data. Computed once."""
+        from concordance.generate.evaluate import evaluate
+
+        if self._evaluated is None:
+            self._evaluated = evaluate(self.graph.model)
+        return self._evaluated
 
 
 @dataclass
@@ -908,9 +924,37 @@ def find(context: ApiContext, params: Params) -> dict[str, Any]:
     return search(context.graph, (params.get("q") or [""])[0])
 
 
+def values(context: ApiContext, params: Params) -> dict[str, Any]:
+    """What each measure actually comes to, run against the model's own rows.
+
+    The only endpoint that returns a figure this project computed rather than
+    read. Each one travels with the query that produced it, so a reader can
+    check it instead of trusting it, and a measure that does not translate
+    returns no figure at all rather than a stand-in zero.
+    """
+    run = context.evaluated()
+    return {
+        "model": context.graph.model.name,
+        "available": run.available,
+        "reason": run.reason,
+        "rows": run.rows_loaded,
+        "values": [
+            {
+                "measure": value.measure,
+                "table": value.table,
+                "value": value.value,
+                "sql": value.sql,
+                "reason": value.reason,
+            }
+            for value in run.values
+        ],
+    }
+
+
 ROUTES: dict[str, Callable[[ApiContext, Params], dict[str, Any]]] = {
     "/api/overview": overview,
     "/api/search": find,
+    "/api/values": values,
     "/api/graph": graph,
     "/api/tables": tables,
     "/api/table": table,

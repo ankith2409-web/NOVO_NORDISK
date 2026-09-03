@@ -306,6 +306,28 @@ export interface ReportPayload {
   pages: ReportPage[];
 }
 
+/** One measure, run against the model's own rows. */
+export interface MeasureValue {
+  measure: string;
+  table: string;
+  /** The figure the query returned, or null when it could not be computed.
+   *  Never a stand-in zero -- `reason` says why instead. */
+  value: number | null;
+  /** The query that produced it, so the figure can be checked not trusted. */
+  sql: string;
+  /** Why there is no figure. Empty when there is one. */
+  reason: string;
+}
+
+export interface ValuesPayload {
+  model: string;
+  /** False when the source carries no rows to query -- a .SemanticModel folder. */
+  available: boolean;
+  reason: string;
+  rows: number;
+  values: MeasureValue[];
+}
+
 export interface ReportPage {
   name: string;
   ordinal: number;
@@ -747,6 +769,9 @@ export const api = {
   whoami: () => get<WhoAmI>("/whoami"),
   overview: () => get<Overview>("/overview"),
   search: (q: string) => get<SearchPayload>("/search", { q }),
+  /** Every measure run against the model's own data. The first call for a
+   *  model loads its rows and takes a few seconds; the server caches it. */
+  values: () => get<ValuesPayload>("/values"),
   graph: () => get<GraphPayload>("/graph"),
   tables: () => get<{ tables: TableSummary[] }>("/tables"),
   measures: () => get<{ measures: MeasureSummary[] }>("/measures"),
