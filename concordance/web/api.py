@@ -713,12 +713,25 @@ def report(context: ApiContext, params: Params) -> dict[str, Any]:
             {
                 "name": page.name,
                 "ordinal": page.ordinal,
+                # The canvas the author laid this page out on, so a drawing of
+                # it can be to scale rather than to a guess.
+                "width": page.width,
+                "height": page.height,
                 "tiles": [
                     {
                         "title": tile.title,
                         "visual_type": tile.visual_type,
                         # "what is the KPI and non-KPI as a part of your DAX"
                         "is_kpi": tile.is_kpi,
+                        # Where the author put it. Enough to redraw the page as
+                        # its own floor plan -- which is the only honest way to
+                        # show a dashboard here, since the figures on it cannot
+                        # be computed without evaluating DAX against the data.
+                        "x": tile.x,
+                        "y": tile.y,
+                        "width": tile.width,
+                        "height": tile.height,
+                        "z": tile.z,
                         "fields": [
                             {
                                 "role": field.role,

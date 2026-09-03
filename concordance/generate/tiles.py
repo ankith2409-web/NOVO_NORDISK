@@ -101,6 +101,16 @@ class Tile:
     title: str
     visual_type: str
     fields: tuple[ResolvedField, ...]
+    #: Where the author put it on the page, in the page's own coordinates.
+    x: float = 0.0
+    y: float = 0.0
+    width: float = 0.0
+    height: float = 0.0
+    z: float = 0.0
+
+    @property
+    def is_placed(self) -> bool:
+        return self.width > 0 and self.height > 0
 
     @property
     def measures(self) -> tuple[ResolvedField, ...]:
@@ -132,6 +142,10 @@ class Page:
     name: str
     ordinal: int
     tiles: tuple[Tile, ...]
+    #: The canvas the tiles were laid out on. Drawing them against any other
+    #: size puts them in the wrong places.
+    width: float = 0.0
+    height: float = 0.0
 
 
 def correlate(
@@ -174,9 +188,23 @@ def correlate(
                         _resolve(field, measures, columns, translations, Status, dialect)
                         for field in _distinct(visual)
                     ),
+                    x=visual.x,
+                    y=visual.y,
+                    width=visual.width,
+                    height=visual.height,
+                    z=visual.z,
                 )
             )
-        pages.append(Page(name=page.name, ordinal=page.ordinal, tiles=tuple(tiles)))
+        canvas = page.canvas
+        pages.append(
+            Page(
+                name=page.name,
+                ordinal=page.ordinal,
+                tiles=tuple(tiles),
+                width=canvas[0],
+                height=canvas[1],
+            )
+        )
     return tuple(pages)
 
 

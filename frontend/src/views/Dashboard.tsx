@@ -27,6 +27,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type ReportPayload, type Tile, type TileField } from "@/lib/api";
 import { Chip, Empty, Failure, Loading, Stat } from "@/components/primitives";
 import { ChevronIcon } from "@/components/icons";
+import { ReportMap } from "@/components/ReportMap";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
 import {
@@ -90,6 +91,18 @@ function visualInWords(type: string): string {
     return "custom visual";
   }
   return type;
+}
+
+/**
+ * What to call a tile on the map.
+ *
+ * Its author's title where there is one. Where there is not, the kind of
+ * visual it is -- "donut chart", "map" -- which is a description rather than an
+ * invented name, and is what somebody looking at the real dashboard would call
+ * it anyway.
+ */
+function nameOf(tile: Tile): string {
+  return tile.title || visualInWords(tile.visual_type);
 }
 
 export function Dashboard({
@@ -270,12 +283,14 @@ export function Dashboard({
           that is how the person holding the dashboard knows where a tile is.
           Renaming or re-sorting them would break the only landmark they have. */}
       <section className="flex flex-col gap-2.5">
-        <h2 className="font-serif text-lg font-semibold">
-          Everything else on the report
-        </h2>
+        <h2 className="font-serif text-lg font-semibold">The report, page by page</h2>
         <p className="max-w-prose text-[13px] text-muted">
-          The same measures drawn as charts, and the tiles that show columns
-          directly. Grouped by page, in the order the report puts them in.
+          Each page drawn as its own floor plan — every tile where its author put it,
+          at the size they made it. Click a rectangle to read the formula behind it.
+          The figures themselves are not shown, and are not knowable from this file:
+          a measure&rsquo;s value is DAX evaluated against data under the filter
+          context the report supplies, and printing a number here would mean
+          inventing one.
           {blank > 0 && (
             <>
               {" "}
@@ -301,6 +316,7 @@ export function Dashboard({
               // different question: `marked` cannot answer it, because a tile
               // inside a shut page has not rendered and so cannot be found or
               // marked. The request itself has to open the page.
+              canvas={{ width: page.width, height: page.height }}
               startOpen={index === 0 || holds(page.tiles, wanted)}
               wanted={wanted}
               marked={marked}
@@ -320,18 +336,25 @@ function holds(tiles: Tile[], wanted: string): boolean {
 function PageCard({
   name,
   tiles,
+  canvas,
   startOpen,
   wanted,
   marked,
 }: {
   name: string;
   tiles: Tile[];
+  canvas: { width: number; height: number };
   startOpen: boolean;
   /** What search asked for, whether or not it has been found and marked yet. */
   wanted: string;
   marked: string | null;
 }) {
   const [open, setOpen] = useState(startOpen);
+  // Which tile on the map is being read. Nothing, until somebody clicks a
+  // rectangle -- opening with one already chosen would put a highlight on the
+  // page that nobody asked for and that says nothing about the tile.
+  const [picked, setPicked] = useState<number | null>(null);
+  const rows = useRef<HTMLUListElement>(null);
   const withFormula = tiles.filter((t) => t.fields.some((f) => f.kind === "measure")).length;
 
   // A second lookup while this page is already mounted: the initial state
@@ -340,6 +363,14 @@ function PageCard({
   useEffect(() => {
     if (asked) setOpen(true);
   }, [asked]);
+
+  function pick(index: number) {
+    setPicked(index);
+    // The row is the detail; the map is the index into it. Scrolled rather
+    // than expanded in place so there is one copy of a tile's formulas on the
+    // page and not two saying possibly different things.
+    rows.current?.children[index]?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
 
   return (
     <section className="rounded border border-hairline bg-ground">
@@ -363,21 +394,49 @@ function PageCard({
       </button>
 
       {open && (
-        <ul className="divide-y divide-hairline border-t border-hairline">
-          {tiles.map((tile, index) => (
-            <TileRow key={`${tile.title}-${index}`} tile={tile} marked={marked} />
-          ))}
-        </ul>
+        <>
+          <div className="border-t border-hairline p-3.5">
+            <ReportMap
+              tiles={tiles}
+              canvas={canvas}
+              picked={picked}
+              onPick={pick}
+              nameOf={nameOf}
+            />
+          </div>
+          <ul ref={rows} className="divide-y divide-hairline border-t border-hairline">
+            {tiles.map((tile, index) => (
+              <TileRow
+                key={`${tile.title}-${index}`}
+                tile={tile}
+                marked={marked}
+                picked={picked === index}
+              />
+            ))}
+          </ul>
+        </>
       )}
     </section>
   );
 }
 
-function TileRow({ tile, marked }: { tile: Tile; marked: string | null }) {
+function TileRow({
+  tile,
+  marked,
+  picked = false,
+}: {
+  tile: Tile;
+  marked: string | null;
+  /** True when this is the rectangle just clicked on the map above. */
+  picked?: boolean;
+}) {
   return (
     <li
       data-focus={tile.title}
-      className={cx("px-3.5 py-3", isMarked(marked, tile.title) && MARK_CLASS)}
+      className={cx(
+        "px-3.5 py-3",
+        (picked || isMarked(marked, tile.title)) && MARK_CLASS,
+      )}
     >
       <div className="flex flex-wrap items-baseline gap-2">
         {tile.title ? (

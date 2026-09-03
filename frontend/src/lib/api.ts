@@ -284,6 +284,13 @@ export interface Tile {
    * representation".
    */
   is_kpi: boolean;
+  /** Where the author put it, in the page's own coordinates. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Stacking order: two overlapping tiles, and the higher one is on top. */
+  z: number;
   fields: TileField[];
 }
 
@@ -303,7 +310,16 @@ export interface ReportPayload {
     with_sql: number;
     unresolved: number;
   };
-  pages: { name: string; ordinal: number; tiles: Tile[] }[];
+  pages: ReportPage[];
+}
+
+export interface ReportPage {
+  name: string;
+  ordinal: number;
+  /** The canvas the tiles were laid out on, in their own coordinates. */
+  width: number;
+  height: number;
+  tiles: Tile[];
 }
 
 export interface ReconcilePayload {
