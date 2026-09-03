@@ -209,6 +209,17 @@ class ModelTools:
             "not_extracted": [
                 {"feature": g.feature, "count": g.count} for g in self.model.coverage_gaps
             ],
+            # Per-table counts, so the overview can show where the model's
+            # weight actually sits without a second request. Cheap: these are
+            # already-extracted objects being counted, not anything derived.
+            "by_table": [
+                {
+                    "name": t.name,
+                    "columns": sum(1 for c in self.model.columns if c.table == t.name),
+                    "measures": sum(1 for m in self.model.measures if m.table == t.name),
+                }
+                for t in sorted(self.model.user_tables(), key=lambda t: t.name)
+            ],
         }
 
     def list_tables(self) -> list[dict[str, Any]]:

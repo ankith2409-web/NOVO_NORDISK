@@ -28,6 +28,7 @@ import { api, type ReportPayload, type Tile, type TileField } from "@/lib/api";
 import { Chip, Empty, Failure, Loading, Stat } from "@/components/primitives";
 import { ChevronIcon } from "@/components/icons";
 import { ReportMap } from "@/components/ReportMap";
+import { Meter } from "@/components/Chart";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
 import {
@@ -240,6 +241,19 @@ export function Dashboard({
           the headline cards somebody points at. Each one is named by its measure, with
           the DAX behind it and the same calculation written as SQL.
         </p>
+
+        {/* The split, as a proportion. Two parts of one whole is a bar with
+            both numbers on it, not a pie: the figures are known, so nothing is
+            gained by asking the eye to read an angle instead. */}
+        <div className="max-w-md rounded border border-hairline bg-ground px-3.5 py-3">
+          <Meter
+            value={c.kpis}
+            of={c.tiles}
+            label="tiles state a figure as a number"
+            rest="draw their measures as charts instead."
+            tone="ok"
+          />
+        </div>
 
         {kpis.length === 0 ? (
           <Empty>

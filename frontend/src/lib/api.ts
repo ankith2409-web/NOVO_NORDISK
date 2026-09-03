@@ -30,6 +30,8 @@ export interface Overview {
   user_hierarchies: number;
   unresolved_references: { from: string; to: string; reason: string }[];
   not_extracted: CoverageGap[];
+  /** Per-table counts, for the "where the weight sits" chart. */
+  by_table: { name: string; columns: number; measures: number }[];
   capabilities: { drift: boolean; reconcile: boolean };
 }
 

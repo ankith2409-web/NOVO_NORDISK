@@ -24,6 +24,7 @@ import { api, type Overview as OverviewData } from "@/lib/api";
 import { Chip, Failure, Loading, Panel, Stat } from "@/components/primitives";
 import { ChevronIcon } from "@/components/icons";
 import { RichText } from "@/components/RichText";
+import { Bars } from "@/components/Chart";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
 import { FEATURE } from "@/lib/naming";
@@ -139,6 +140,32 @@ export function Overview({
           hint="Low-confidence statements awaiting a person"
         />
       </div>
+
+      {data.by_table.length > 0 && (
+        <section className="flex flex-col gap-2.5">
+          <h2 className="font-serif text-lg font-semibold">Where the weight sits</h2>
+          <div className="grid gap-5 rounded border border-hairline bg-ground p-3.5 md:grid-cols-2">
+            <div className="flex flex-col gap-2">
+              <h3 className="text-sm font-medium">Calculations, by table</h3>
+              <Bars
+                unit="measures"
+                rows={data.by_table
+                  .filter((t) => t.measures > 0)
+                  .map((t) => ({ label: t.name, value: t.measures }))}
+                caption="Which tables the model's logic is written on. A table with none holds data that other tables calculate from."
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <h3 className="text-sm font-medium">Columns, by table</h3>
+              <Bars
+                unit="columns"
+                rows={data.by_table.map((t) => ({ label: t.name, value: t.columns }))}
+                caption="How much each table holds. The widest is usually the one everything else joins to."
+              />
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className="flex flex-col gap-2.5">
         <h2 className="font-serif text-lg font-semibold">Where to start</h2>

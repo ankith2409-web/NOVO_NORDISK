@@ -32,6 +32,7 @@ import {
 } from "@/components/primitives";
 import { ChevronIcon, CopyIcon, DownloadIcon } from "@/components/icons";
 import { SchemaMap } from "@/components/SchemaMap";
+import { Meter } from "@/components/Chart";
 import { SNAPSHOT_MODE } from "@/lib/api";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
@@ -173,6 +174,19 @@ export function Dataset({ focus = null }: { focus?: FocusRequest | null }) {
           how it is joined with each other and what are the SQL" -- and it is
           above rather than below because a JOIN in the SQL further down means
           nothing until you know what it refers to. */}
+      {/* The same three figures as a proportion. A reviewer asked for the
+          numbers to be shown as a chart, and one ratio is a bar with both
+          numbers on it -- not a two-slice pie, which asks the eye to estimate
+          an angle for a figure that is already known. */}
+      <div className="rounded border border-hairline bg-ground px-3.5 py-3">
+        <Meter
+          value={data.counts.translated}
+          of={data.counts.measures}
+          label="measures can be written as a single SQL query"
+          rest="change their answer with what the report is filtered to, so no one query stands for them."
+        />
+      </div>
+
       <Structure tables={data.tables} joins={data.joins} />
 
       {/* Controls. The grain changes what the SQL means, so it is labelled as
