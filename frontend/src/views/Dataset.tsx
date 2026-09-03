@@ -31,6 +31,7 @@ import {
   Stat,
 } from "@/components/primitives";
 import { ChevronIcon, CopyIcon, DownloadIcon } from "@/components/icons";
+import { SchemaMap } from "@/components/SchemaMap";
 import { SNAPSHOT_MODE } from "@/lib/api";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
@@ -481,7 +482,14 @@ function Structure({
   // the first two thirds of it -- putting them behind a disclosure meant this
   // page opened on the third part alone.
   const [open, setOpen] = useState(true);
+  // Which table the reader is asking about. Held here rather than inside the
+  // drawing so the picture and the list below it are always saying the same
+  // thing about the same table.
+  const [focusTable, setFocusTable] = useState("");
   const inactive = joins.filter((j) => !j.active).length;
+  const shown = focusTable
+    ? joins.filter((j) => j.from_table === focusTable || j.to_table === focusTable)
+    : joins;
 
   return (
     <section className="rounded border border-hairline bg-ground">
@@ -509,7 +517,19 @@ function Structure({
       </button>
 
       {open && (
-        <div className="grid gap-4 border-t border-hairline p-3.5 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        <div className="flex flex-col gap-4 border-t border-hairline p-3.5">
+          {/* The picture first. A join is a relationship between two tables,
+              and two lists side by side is the one shape that cannot show
+              one -- it leaves the reader holding the whole graph in their head
+              to notice that everything hangs off `Sales`. */}
+          <SchemaMap
+            tables={tables}
+            joins={joins}
+            selected={focusTable}
+            onSelect={setFocusTable}
+          />
+
+        <div className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
           <div className="flex min-w-0 flex-col gap-1.5">
             <span className="font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
               tables
@@ -518,9 +538,22 @@ function Structure({
               {tables.map((table) => (
                 <li
                   key={table.name}
-                  className="flex items-baseline gap-2 rounded border border-hairline bg-surface px-2.5 py-1.5"
+                  className={cx(
+                    "flex items-baseline gap-2 rounded border bg-surface px-2.5 py-1.5",
+                    focusTable === table.name
+                      ? "border-accent bg-accent-soft"
+                      : "border-hairline",
+                  )}
                 >
-                  <span className="min-w-0 flex-1 truncate text-sm">{table.name}</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFocusTable(focusTable === table.name ? "" : table.name)
+                    }
+                    className="min-w-0 flex-1 truncate text-left text-sm"
+                  >
+                    {table.name}
+                  </button>
                   {table.measures_only ? (
                     <Chip tone="neutral" title="Holds measures only — a grouping, not a table of data">
                       measures only
@@ -537,17 +570,33 @@ function Structure({
           </div>
 
           <div className="flex min-w-0 flex-col gap-1.5">
-            <span className="font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
-              joins
-            </span>
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <span className="font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
+                joins
+              </span>
+              {focusTable && (
+                <button
+                  type="button"
+                  onClick={() => setFocusTable("")}
+                  className="text-[11.5px] text-accent underline underline-offset-2"
+                >
+                  showing only {focusTable} — show all {joins.length}
+                </button>
+              )}
+            </div>
             {joins.length === 0 ? (
               <p className="text-sm text-muted">
                 This model defines no relationships, so its tables stand alone and
                 every measure below reads a single one.
               </p>
+            ) : shown.length === 0 ? (
+              <p className="text-sm text-muted">
+                <span className="font-mono">{focusTable}</span> is not joined to
+                anything in this model, so nothing filters through it.
+              </p>
             ) : (
               <ul className="flex flex-col gap-1.5">
-                {joins.map((join) => (
+                {shown.map((join) => (
                   <li
                     key={`${join.from_table}.${join.from_column}-${join.to_table}.${join.to_column}`}
                     className={cx(
@@ -595,6 +644,7 @@ function Structure({
               </ul>
             )}
           </div>
+        </div>
         </div>
       )}
     </section>
