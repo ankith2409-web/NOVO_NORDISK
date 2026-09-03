@@ -13,7 +13,7 @@
  * Changing it regenerates every query on the page, which is why it sits at the
  * top rather than beside any one measure.
  */
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   api,
   type DatasetJoin,
@@ -35,6 +35,12 @@ import { SNAPSHOT_MODE } from "@/lib/api";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
 import { FEATURE } from "@/lib/naming";
+import {
+  MARK_CLASS,
+  isMarked,
+  useFocusTarget,
+  type FocusRequest,
+} from "@/lib/useFocusTarget";
 
 /** The whole-model figure, which is a single row rather than an absence. */
 const WHOLE_MODEL = "__whole__";
@@ -50,7 +56,9 @@ function cardinalityInWords(cardinality: string): string {
   return said[cardinality] ?? cardinality;
 }
 
-export function Dataset() {
+export function Dataset({ focus = null }: { focus?: FocusRequest | null }) {
+  const scope = useRef<HTMLDivElement>(null);
+  const marked = useFocusTarget(focus, scope);
   const [grain, setGrain] = useState<string>(WHOLE_MODEL);
   const [dialect, setDialect] = useState("duckdb");
   const [onlyTranslated, setOnlyTranslated] = useState(false);
@@ -139,7 +147,7 @@ export function Dataset() {
   };
 
   return (
-    <div className="flex flex-col gap-4 p-3">
+    <div ref={scope} className="flex flex-col gap-4 p-3">
       <header className="flex flex-col gap-1">
         <h1 className="font-serif text-2xl font-bold">{FEATURE.dataset.heading}</h1>
         <p className="text-sm text-muted">
@@ -170,9 +178,11 @@ export function Dataset() {
           a question rather than as a filter. */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded border border-hairline bg-ground px-3.5 py-2.5">
         <label className="flex items-center gap-2 text-sm">
-          <span className="font-mono text-[11px] tracking-wide text-faint uppercase">
-            one row per
-          </span>
+          {/* Sentence case, in the page's own typeface. Set as small mono
+              capitals these read as field names in a schema rather than as
+              the question they are, and a screen where every label looks like
+              code is a screen a non-technical reader stops reading. */}
+          <span className="text-[12.5px] text-muted">One row per</span>
           <select
             value={grain}
             onChange={(e) => setGrain(e.target.value)}
@@ -188,9 +198,7 @@ export function Dataset() {
         </label>
 
         <label className="flex items-center gap-2 text-sm">
-          <span className="font-mono text-[11px] tracking-wide text-faint uppercase">
-            written for
-          </span>
+          <span className="text-[12.5px] text-muted">Written for</span>
           <select
             value={dialect}
             onChange={(e) => setDialect(e.target.value)}
@@ -219,8 +227,8 @@ export function Dataset() {
               with exactly the queries on screen, not a different set. */}
           {!SNAPSHOT_MODE && (
             <>
-              <span className="font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
-                frd with this sql
+              <span className="text-[12.5px] text-muted">
+                Download the FRD, with these queries in it
               </span>
               {(
                 [
@@ -292,6 +300,7 @@ export function Dataset() {
               measure={m}
               copied={copied}
               onCopy={copy}
+              marked={isMarked(marked, m.measure)}
             />
           ))}
           </div>
@@ -467,7 +476,11 @@ function Structure({
   tables: DatasetTable[];
   joins: DatasetJoin[];
 }) {
-  const [open, setOpen] = useState(false);
+  // Open. "What are the datasets, how are they joined with each other, and
+  // what are the SQL" was asked as one question, and the tables and joins are
+  // the first two thirds of it -- putting them behind a disclosure meant this
+  // page opened on the third part alone.
+  const [open, setOpen] = useState(true);
   const inactive = joins.filter((j) => !j.active).length;
 
   return (
@@ -592,17 +605,22 @@ function MeasureRow({
   measure,
   copied,
   onCopy,
+  marked = false,
 }: {
   measure: DatasetMeasure;
   copied: string;
   onCopy: (text: string, token: string) => void;
+  /** True when search sent somebody here to read this one. */
+  marked?: boolean;
 }) {
   const has = measure.status === "exact";
   return (
     <section
+      data-focus={measure.measure}
       className={cx(
         "rounded border bg-ground",
         has ? "border-hairline" : "border-review/40",
+        marked && MARK_CLASS,
       )}
     >
       <header className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 border-b border-hairline px-3.5 py-2">
@@ -620,7 +638,11 @@ function MeasureRow({
         <p className="px-3.5 pt-2 text-sm text-muted">{measure.description}</p>
       )}
 
-      <div className="grid gap-4 p-3.5 md:grid-cols-[minmax(0,4fr)_minmax(0,5fr)]">
+      {/* Side by side is the point -- "this DAX, that SQL" -- but only where
+          there is room for it. At the `md` breakpoint the copilot is still
+          docked, leaving each column about 300px, which is narrower than most
+          single lines of either language. */}
+      <div className="grid gap-4 p-3.5 xl:grid-cols-[minmax(0,4fr)_minmax(0,5fr)]">
         <Side
           label="Power BI"
           language="dax"
@@ -682,7 +704,14 @@ function Side({
           {copied ? "copied" : "copy"}
         </Button>
       </div>
-      <pre className="overflow-x-auto rounded border border-hairline bg-surface px-3 py-2 font-mono text-[11.5px] leading-relaxed">
+      {/* `overflow-x-auto` alone was hiding text rather than revealing it: a
+          `pre` does not wrap, so a long measure scrolled sideways inside a
+          column with no visible scrollbar and simply appeared to stop --
+          `CALCULATE(COUNTA([Store type]), FILTER(ALL(Store), [St`. Wrapping is
+          the right behaviour for a column of code somebody is reading rather
+          than editing; `break-words` covers the case wrapping cannot, a single
+          token longer than the box. */}
+      <pre className="min-w-0 overflow-x-auto rounded border border-hairline bg-surface px-3 py-2 font-mono text-[11.5px] leading-relaxed break-words whitespace-pre-wrap">
         {body}
       </pre>
     </div>

@@ -10,7 +10,7 @@
  * shown broken: the overview reports which capabilities exist, and the rail
  * renders accordingly.
  */
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   SNAPSHOT_MODE,
@@ -22,7 +22,8 @@ import {
 import { Button } from "@/components/primitives";
 import { ModelPicker } from "@/components/ModelPicker";
 import { UploadDialog } from "@/components/UploadDialog";
-import { UploadIcon } from "@/components/icons";
+import { FindAnything, useFindShortcut } from "@/components/FindAnything";
+import { SearchIcon, UploadIcon } from "@/components/icons";
 import { Copilot } from "@/components/Copilot";
 import { Intro } from "@/components/Intro";
 import { FAVICON_SVG, Wordmark } from "@/components/Logo";
@@ -81,7 +82,7 @@ const VIEWS: {
   // tile with a title on it -- and works back to the definition.
   { id: "dashboard", label: "Dashboard" },
   { id: "dataset", label: FEATURE.dataset.tab },
-  { id: "requirements", label: "Documents" },
+  { id: "requirements", label: FEATURE.requirements.tab },
 
   // Below the line. Everything still works; none of it is the first thing to
   // look at.
@@ -237,6 +238,41 @@ export default function App() {
   const [uploading, setUploading] = useState(false);
 
   /**
+   * The thing search sent us to, handed to whichever view can show it.
+   *
+   * Carried as an object rather than a bare string so that arriving at the same
+   * object twice still counts as an arrival: a view scrolls to `focus` in an
+   * effect, and two identical strings would not re-run it. Somebody who looks
+   * up "Total Sales", scrolls away, and looks it up again means it both times.
+   */
+  const [focus, setFocus] = useState<{ view: ViewId; target: string; at: number } | null>(
+    null,
+  );
+  const [finding, setFinding] = useState(false);
+  // Not in the snapshot build, which has no server to search. Offering the
+  // shortcut there would open a box that can only ever answer "nothing found",
+  // about a model that has the thing.
+  const openFind = useCallback(() => {
+    if (!SNAPSHOT_MODE) setFinding(true);
+  }, []);
+  useFindShortcut(openFind);
+
+  function goTo(view: string, target: string) {
+    const known = VIEWS.some((entry) => entry.id === view);
+    // A hit naming a view this build does not have is shown on the overview
+    // rather than dropped: landing somewhere is better than a click that does
+    // nothing, and the overview names every other page.
+    const id = (known ? view : "overview") as ViewId;
+    setView(id);
+    setFocus({ view: id, target, at: Date.now() });
+  }
+
+  /** What a view should scroll to, or null when it was not the destination. */
+  function focusFor(view: ViewId): { target: string; at: number } | null {
+    return focus && focus.view === view ? { target: focus.target, at: focus.at } : null;
+  }
+
+  /**
    * Adopt a model the server has just read, and move to it.
    *
    * Switching immediately is the whole point: somebody who uploads a file wants
@@ -377,9 +413,27 @@ export default function App() {
             Open your model
           </Button>
         )}
+        {/* Drawn as a field rather than as a button, because it is one in every
+            way that matters to the person looking at it: it holds a query and
+            returns results. A magnifying-glass icon button would have been
+            smaller and would have hidden the one control that removes the need
+            to know which tab a thing lives on. */}
+        {!SNAPSHOT_MODE && (
+          <button
+            type="button"
+            onClick={openFind}
+            className="flex min-w-0 flex-1 basis-40 items-center gap-2 rounded border border-hairline bg-surface px-2.5 py-1.5 text-left text-muted sm:max-w-64 hover:border-edge hover:text-ink"
+          >
+            <SearchIcon size={13} className="flex-none text-faint" />
+            <span className="min-w-0 flex-1 truncate text-[12.5px]">Find anything…</span>
+            <kbd className="hidden flex-none font-mono text-[10px] text-faint sm:block">
+              /
+            </kbd>
+          </button>
+        )}
         <div className="ml-auto flex flex-wrap items-center gap-x-2 gap-y-1.5">
           {overview && (
-            <span className="hidden font-mono text-[11px] text-faint sm:inline">
+            <span className="hidden font-mono text-[11px] text-faint lg:inline">
               {overview.measures} measures · {overview.relationships} joins
             </span>
           )}
@@ -428,6 +482,8 @@ export default function App() {
       {/* Covers the header too, so `aria-modal` describes what is actually the
           case rather than claiming an inertness the layout does not provide. */}
       {intro && <Intro overview={overview} onClose={closeIntro} />}
+
+      <FindAnything open={finding} onClose={() => setFinding(false)} onGo={goTo} />
 
       {uploading && (
         <UploadDialog
@@ -491,10 +547,12 @@ export default function App() {
             screen under the new model's name. */}
         <main key={active} className="min-h-0 flex-1 overflow-auto">
           {!resolved && <p className="p-4 font-mono text-xs text-faint">Connecting…</p>}
-          {resolved && view === "overview" && <Overview overview={overview} />}
-          {resolved && view === "model" && <Model />}
-          {resolved && view === "dashboard" && <Dashboard />}
-          {resolved && view === "dataset" && <Dataset />}
+          {resolved && view === "overview" && (
+            <Overview overview={overview} onGo={goTo} />
+          )}
+          {resolved && view === "model" && <Model focus={focusFor("model")} />}
+          {resolved && view === "dashboard" && <Dashboard focus={focusFor("dashboard")} />}
+          {resolved && view === "dataset" && <Dataset focus={focusFor("dataset")} />}
           {resolved && view === "requirements" && <Requirements />}
           {resolved && view === "drift" && (
             <Drift alsoOn={othersWith("drift")} uploaded={activeIsUploaded} />

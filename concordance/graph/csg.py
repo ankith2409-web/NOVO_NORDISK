@@ -117,6 +117,10 @@ class SemanticGraph:
                 # reports "before: Patient / after: Patient" -- correct, and
                 # useless to the person deciding whether it matters.
                 power_query=table.power_query,
+                # And the DAX, for the same reason: on a calculated table this
+                # is the only statement of where the rows come from, and the
+                # only place its columns are defined at all.
+                dax_expression=table.dax_expression,
             )
             self._add_sources(table)
 

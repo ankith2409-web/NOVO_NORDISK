@@ -175,3 +175,13 @@ export function CopyIcon(props: IconProps) {
     </Glyph>
   );
 }
+
+/** Find something. Lucide's `search`. */
+export function SearchIcon(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <circle cx="11" cy="11" r="8" />
+      <path d="m21 21-4.3-4.3" />
+    </Glyph>
+  );
+}

@@ -54,6 +54,18 @@ _NUMBER_VISUALS = frozenset({
 })
 
 
+def is_kpi_visual(visual_type: str, has_measure: bool) -> bool:
+    """The KPI rule itself, in one place.
+
+    A function rather than a method because two callers need it and they hold
+    different things: the dashboard has resolved fields, and search has only the
+    raw visual and the model to check names against. Two copies of this rule is
+    one more than the number that can be right, and the two answers sit side by
+    side on screen, where any disagreement would be immediately visible.
+    """
+    return visual_type in _NUMBER_VISUALS and has_measure
+
+
 @dataclass(frozen=True)
 class ResolvedField:
     """One field of a tile, matched against the model."""
@@ -108,7 +120,7 @@ class Tile:
         column displays a stored value, and calling that a key performance
         indicator would stretch the word past use.
         """
-        return self.visual_type in _NUMBER_VISUALS and bool(self.measures)
+        return is_kpi_visual(self.visual_type, bool(self.measures))
 
     @property
     def is_titled(self) -> bool:

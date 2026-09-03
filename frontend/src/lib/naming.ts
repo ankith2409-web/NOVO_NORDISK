@@ -55,4 +55,17 @@ export const FEATURE = {
     heading: "The whole dataset",
     subject: "the dataset",
   },
+  /**
+   * The generated documents.
+   *
+   * Was "Documents", which is what they are and not what anyone calls them.
+   * Both reviewers and the brief itself name these by their initials -- "an AI
+   * agent that automates BRD/FRD creation" -- and somebody looking for a BRD
+   * should not have to guess that it is filed under a word nobody used.
+   */
+  requirements: {
+    tab: "BRD & FRD",
+    heading: "Business requirements",
+    subject: "the requirements documents",
+  },
 } as const;

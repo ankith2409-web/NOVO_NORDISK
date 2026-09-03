@@ -188,7 +188,17 @@ def test_the_pbix_adapter_holds_the_same_rule_as_tmdl() -> None:
         assert table.fingerprint != fingerprint_text(table.name), (
             f"{table.name} carries M that its fingerprint does not cover"
         )
-    # And a table with no query is still identified by its name alone.
+    # A calculated table has no M, and its DAX is covered instead -- it is the
+    # only statement of what that table contains, so a fingerprint that ignored
+    # it would let every column be redefined without registering a change.
+    calculated = [t for t in model.tables if t.is_calculated]
+    assert calculated, "this fixture carries a what-if parameter table"
+    for table in calculated:
+        assert table.fingerprint != fingerprint_text(table.name), (
+            f"{table.name} is built by DAX its fingerprint does not cover"
+        )
+
+    # And a table with neither definition is still identified by its name alone.
     for table in model.tables:
-        if not table.power_query:
+        if not table.power_query and not table.is_calculated:
             assert table.fingerprint == fingerprint_text(table.name)

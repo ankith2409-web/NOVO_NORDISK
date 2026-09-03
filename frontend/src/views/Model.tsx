@@ -24,6 +24,7 @@ import { EvidenceDrawer } from "@/components/EvidenceDrawer";
 import { Lineage } from "@/components/Lineage";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
+import { type FocusRequest } from "@/lib/useFocusTarget";
 
 type Node = GraphPayload["nodes"][number] & {
   name?: string;
@@ -98,7 +99,7 @@ function group(nodes: Node[]): TableGroup[] {
     .sort((a, b) => Number(a.isSystem) - Number(b.isSystem) || a.name.localeCompare(b.name));
 }
 
-export function Model() {
+export function Model({ focus = null }: { focus?: FocusRequest | null }) {
   const { data: graph, error, retrying, reload } = useLoad<GraphPayload>(() => api.graph(), []);
   const [filter, setFilter] = useState("");
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -142,6 +143,38 @@ export function Model() {
 
   // A filtered tree that still needs expanding hides its own results.
   const expanded = filter.trim() ? new Set(shown.map((t) => t.name)) : open;
+
+  /**
+   * Arriving from search: select the object and open the table holding it.
+   *
+   * Without this the tree is exactly as it was -- every table shut, the detail
+   * pane empty -- and somebody who searched for `Date[Fiscal Year]` has been
+   * dropped on a page that shows no sign of having heard of it.
+   *
+   * Matched on the qualified name because that is what search sends, and on the
+   * bare name as a fallback for a table, which has no qualifier.
+   */
+  const wanted = focus?.target ?? "";
+  const wantedAt = focus?.at ?? 0;
+  useEffect(() => {
+    if (!wanted || !graph) return;
+    const nodes = (graph.nodes ?? []) as Node[];
+    const folded = wanted.toLowerCase();
+    const qualified = (node: Node) =>
+      node.table ? `${node.table}[${node.name}]`.toLowerCase() : (node.name ?? "").toLowerCase();
+
+    const hit =
+      nodes.find((node) => qualified(node) === folded) ??
+      nodes.find((node) => node.kind === "table" && (node.name ?? "").toLowerCase() === folded);
+    if (!hit) return;
+
+    setSelected(hit);
+    const owner = hit.kind === "table" ? hit.name : hit.table;
+    if (owner) setOpen((held) => new Set(held).add(owner));
+    // Cleared so the tree is not still filtered to a previous lookup; the
+    // selection is the answer, and a stale filter beside it is a puzzle.
+    setFilter("");
+  }, [wanted, wantedAt, graph]);
 
   if (error)
     return (
@@ -281,9 +314,31 @@ export function Model() {
             }}
           />
         ) : (
-          <p className="p-4 text-sm text-muted">
-            Select an object to see how it is defined and what depends on it.
-          </p>
+          // Not "select an object". A pane whose whole content is an
+          // instruction to click something is a pane that wasted the space it
+          // occupies -- and this one filled two thirds of the screen. It now
+          // says what the model contains and what clicking will get you.
+          <div className="flex flex-col gap-3 p-4">
+            <h2 className="font-serif text-lg font-semibold">Browse the objects</h2>
+            <p className="max-w-prose text-sm text-muted">
+              Every table in {graph.model?.name ?? "this model"} is listed on the left.
+              Open one to see its columns, measures and drill paths; pick any of them to
+              see how it is defined, what it reads, and what would break if it changed.
+            </p>
+            <dl className="grid max-w-md grid-cols-2 gap-x-6 gap-y-1 text-sm">
+              <dt className="text-muted">Objects</dt>
+              <dd className="text-right font-mono tabular">{graph.nodes.length}</dd>
+              <dt className="text-muted">Links between them</dt>
+              <dd className="text-right font-mono tabular">{graph.edges.length}</dd>
+              <dt className="text-muted">Tables</dt>
+              <dd className="text-right font-mono tabular">{groups.length}</dd>
+            </dl>
+            <p className="max-w-prose text-[13px] text-muted">
+              To find one thing by name, press{" "}
+              <kbd className="rounded border border-hairline px-1 font-mono text-[11px]">/</kbd>{" "}
+              and type it — that searches the whole model, not just this tree.
+            </p>
+          </div>
         )}
       </div>
     </div>

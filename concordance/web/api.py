@@ -816,6 +816,11 @@ def dataset(context: ApiContext, params: Params) -> dict[str, Any]:
                 # measures and no columns. Saying so stops a reader looking for
                 # the table it joins to, which is none.
                 "measures_only": t.is_measure_only,
+                # A calculated table stores nothing: both its rows and its
+                # columns come from this DAX. Saying so stops a reader looking
+                # for the source query it loads from, which is none, and it is
+                # the only definition its columns have.
+                "dax": t.dax_expression,
             }
             for t in sorted(model.user_tables(), key=lambda t: t.name)
         ],
@@ -890,8 +895,22 @@ def _hint(result: dict[str, Any]) -> dict[str, Any]:
 
 
 #: Route table. Every entry is read-only and safe to serve without a session.
+def find(context: ApiContext, params: Params) -> dict[str, Any]:
+    """Everything in the model whose name matches, in one request.
+
+    One endpoint rather than the caller fetching five payloads and joining them
+    in the browser: the answer is small, the model is already in memory here,
+    and a search that has to wait on the dataset page loading is a search
+    nobody uses.
+    """
+    from concordance.web.search import search
+
+    return search(context.graph, (params.get("q") or [""])[0])
+
+
 ROUTES: dict[str, Callable[[ApiContext, Params], dict[str, Any]]] = {
     "/api/overview": overview,
+    "/api/search": find,
     "/api/graph": graph,
     "/api/tables": tables,
     "/api/table": table,

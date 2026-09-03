@@ -111,6 +111,14 @@ class Table:
     #: a grouping rather than as a data entity.
     is_measure_only: bool = False
     power_query: str | None = None
+    #: The DAX that produces this table's rows, when it is a calculated table.
+    #: Such a table has no stored columns at all -- both its rows and its columns
+    #: come from this expression -- so it is the only record of what it holds.
+    dax_expression: str | None = None
+
+    @property
+    def is_calculated(self) -> bool:
+        return self.dax_expression is not None
 
 
 @dataclass(frozen=True)

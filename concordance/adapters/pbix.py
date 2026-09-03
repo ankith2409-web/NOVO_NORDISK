@@ -39,6 +39,7 @@ from concordance.model import (
     Table,
     TablePermission,
 )
+from concordance.normalize.calctable import column_names
 from concordance.normalize.dax import extract_references
 from concordance.normalize.mquery import canonicalise as canonicalise_m
 
@@ -95,11 +96,25 @@ _RLS_RESIDUAL_GAP = (
     "in full, so a role appears here only if it restricts at least one table"
 )
 
-#: Power BI creates a hidden date table per date column, plus a template table.
-#: They carry no business meaning and would otherwise swamp the documentation.
+#: Tables Power BI writes for itself: a hidden date table per date column, a
+#: template for them, and the mapping table the "find clusters" button leaves
+#: behind on a scatter chart. None of them carry an author's intent, and all of
+#: them would otherwise swamp the documentation.
+#:
+#: The cluster table is matched by name rather than by anything structural
+#: because nothing structural separates it: it is a calculated table with a
+#: system flag, and so is the hand-written `Date` table in the same file. What
+#: does separate them is in the partition name, which carries a GUID for the
+#: generated one -- but that is a second field and a more fragile rule than the
+#: name Power BI is documented to use.
 _SYSTEM_TABLE = re.compile(
     r"^(DateTableTemplate_|LocalDateTable_)[0-9a-fA-F-]+$"
+    r"|^ClusterMappingTable( \d+)?$"
 )
+
+#: A partition whose rows come from a DAX expression rather than from a query
+#: against a source. Power BI's own numbering; 2 is `PartitionType.Calculated`.
+_CALCULATED_PARTITION = 2
 
 
 class PbixAdapter:
@@ -137,10 +152,37 @@ class PbixAdapter:
             for r in measure_rows
             if str(r.get("TableName", "")).strip()
         }
+
+        # And a calculated table appears in neither list, for a different
+        # reason: it stores no data to enumerate, so `raw.tables` skips it, and
+        # it hosts no measures, so the rule above does not catch it either.
+        # Microsoft's Store Sales sample loses its whole `Date` table this way
+        # -- the one its own field descriptions tell authors to use -- along
+        # with both of its drill-down hierarchies, whose eight columns were then
+        # reported as unresolved references. The model has them; we were not
+        # reading them.
+        calculated = self._calculated_tables(raw)
+        # Only for tables with no stored columns to enumerate. A calculated
+        # table that also stores columns -- Power BI keeps the materialised
+        # result for some -- already has them read, and a second pass over the
+        # expression would list every column twice.
+        stored = {c.table.casefold() for c in model.columns}
+        model.columns.extend(
+            self._calculated_columns(
+                {t: e for t, e in calculated.items() if t.casefold() not in stored}
+            )
+        )
+
         with_columns = {c.table.casefold() for c in model.columns}
         implied = sorted(t for t in measure_hosts if t.casefold() not in known)
 
-        for name in declared + implied:
+        # A calculated table is only *added* here if neither pass above saw it;
+        # one that hosts measures is already in `implied`, and it picks up its
+        # expression through `calculated` below either way.
+        seen = known | {t.casefold() for t in implied}
+        new_tables = sorted(t for t in calculated if t.casefold() not in seen)
+
+        for name in declared + implied + new_tables:
             query = power_query.get(name)
             model.tables.append(
                 Table(
@@ -151,9 +193,15 @@ class PbixAdapter:
                     # guarantee. 15 of 18 tables in Sales_Returns_Sample carry M,
                     # and without this their load queries could be rewritten with
                     # nothing in the model registering a change.
+                    # Over whichever definition the table has. A calculated
+                    # table's DAX is the only statement of what it contains, so
+                    # leaving it out would let its every column be redefined
+                    # with nothing in the model registering a change.
                     fingerprint=(
                         fingerprint_parts(name, canonicalise_m(query))
                         if query
+                        else fingerprint_parts(name, calculated[name])
+                        if name in calculated
                         else fingerprint_text(name)
                     ),
                     is_system=bool(_SYSTEM_TABLE.match(name)),
@@ -164,6 +212,7 @@ class PbixAdapter:
                         visible_columns=0 if name.casefold() not in with_columns else 1,
                     ),
                     power_query=power_query.get(name),
+                    dax_expression=calculated.get(name),
                 )
             )
         known_measures = {
@@ -214,6 +263,61 @@ class PbixAdapter:
                 return read_report(archive)
         except (KeyError, OSError, zipfile.BadZipFile):
             return []
+
+    def _calculated_tables(self, raw: PBIXRay) -> dict[str, str]:
+        """Tables whose rows a DAX expression produces, from their partitions.
+
+        A partition of type 2 is a calculated one, and its query definition is
+        DAX rather than M. Every such table is returned, whether or not another
+        pass already found it: the expression is worth attaching to a table that
+        was picked up as a measure host, because it is the only statement of
+        where that table's rows come from.
+        """
+        out: dict[str, str] = {}
+        for row in _rows(_safe(raw, "tmschema_partitions")):
+            if int(row.get("Type", 0) or 0) != _CALCULATED_PARTITION:
+                continue
+            name = str(row.get("TableName", "")).strip()
+            expression = str(row.get("QueryDefinition", "") or "").strip()
+            if not name or not expression:
+                continue
+            # Power BI's own hidden date tables are calculated too, and they are
+            # exactly the noise `_SYSTEM_TABLE` exists to keep out.
+            if _SYSTEM_TABLE.match(name):
+                continue
+            out.setdefault(name, expression)
+        return out
+
+    def _calculated_columns(self, tables: dict[str, str]) -> list[Column]:
+        """The columns those expressions state, with the DAX behind each.
+
+        Only what the expression says in so many words. A column that the
+        expression computes without naming -- there is no such thing in
+        `ADDCOLUMNS`, but a future function could -- would be absent here rather
+        than invented, which is the same trade every other reader in this
+        project makes.
+        """
+        out: list[Column] = []
+        for table, expression in tables.items():
+            for name, body in column_names(expression):
+                out.append(
+                    Column(
+                        table=table,
+                        name=name,
+                        # Not stated anywhere in the file for a calculated
+                        # column: Power BI derives it at refresh from the
+                        # expression's result. Claiming one would be inventing
+                        # it, and every consumer here treats "" as unknown.
+                        data_type="",
+                        expression=body,
+                        fingerprint=(
+                            fingerprint_dax(body)
+                            if body
+                            else fingerprint_parts(table, name)
+                        ),
+                    )
+                )
+        return out
 
     def _build_hierarchies(self, raw: PBIXRay) -> list[Hierarchy]:
         """Assemble hierarchies from their separately-stored levels.

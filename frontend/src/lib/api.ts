@@ -55,6 +55,24 @@ export interface Uploaded {
   held: number;
 }
 
+/** One thing in the model that matched what somebody typed. */
+export interface SearchHit {
+  kind: "measure" | "kpi" | "tile" | "table" | "hierarchy" | "column" | "requirement";
+  name: string;
+  /** Where the name sits: a table for a column, a report page for a tile. */
+  context: string;
+  detail: string;
+  /** The view that can show this, and what to open there. */
+  view: string;
+  target: string;
+}
+
+export interface SearchPayload {
+  query: string;
+  results: SearchHit[];
+  truncated: boolean;
+}
+
 export interface ModelsPayload {
   default: string;
   models: LoadedModel[];
@@ -205,6 +223,9 @@ export interface DatasetTable {
   measures: number;
   /** A container holding only measures: a grouping, not a data entity. */
   measures_only: boolean;
+  /** The DAX that produces the rows, when the table is a calculated one.
+   *  Null for a table loaded from a source. */
+  dax: string | null;
 }
 
 export interface DatasetJoin {
@@ -719,6 +740,7 @@ export const api = {
 
   whoami: () => get<WhoAmI>("/whoami"),
   overview: () => get<Overview>("/overview"),
+  search: (q: string) => get<SearchPayload>("/search", { q }),
   graph: () => get<GraphPayload>("/graph"),
   tables: () => get<{ tables: TableSummary[] }>("/tables"),
   measures: () => get<{ measures: MeasureSummary[] }>("/measures"),
