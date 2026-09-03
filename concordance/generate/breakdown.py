@@ -51,6 +51,10 @@ MAX_SLICES = 10
 _NOT_A_DIMENSION = ("id", "key", "guid", "code", "url", "image", "pic", "photo")
 
 
+class Unqueryable(RuntimeError):
+    """The engine answered nothing at all, so silence is not a finding."""
+
+
 @dataclass(frozen=True)
 class Slice:
     label: str
@@ -73,6 +77,12 @@ class Breakdown:
     folded: int = 0
     #: Why there is nothing to draw. Empty when there is.
     reason: str = ""
+    #: The measure's figure for the whole model, when it has one. Carried so
+    #: the parts can be checked against the whole rather than assumed to match.
+    whole: float | None = None
+    #: Whether the parts actually sum to the whole. Measured, never assumed --
+    #: see `_adds_up`.
+    additive: bool = False
 
     @property
     def total(self) -> float:
@@ -147,6 +157,8 @@ def chartable(model, connection) -> list[tuple[str, str, int]]:
     keys = {(r.to_table, r.to_column) for r in model.relationships}
 
     found: list[tuple[str, str, int]] = []
+    tried = 0
+    failed = 0
     for column in model.columns:
         if column.table not in dimensions:
             continue
@@ -155,6 +167,7 @@ def chartable(model, connection) -> list[tuple[str, str, int]]:
         if _named_like_an_id(column.name):
             continue
 
+        tried += 1
         table = column.table.replace('"', '""')
         name = column.name.replace('"', '""')
         try:
@@ -164,6 +177,7 @@ def chartable(model, connection) -> list[tuple[str, str, int]]:
         except Exception:  # noqa: BLE001 - a column that will not count is skipped
             # Calculated columns that were never materialised land here, which
             # is the right outcome: they are not in the data to group by.
+            failed += 1
             continue
         if not row:
             continue
@@ -177,6 +191,19 @@ def chartable(model, connection) -> list[tuple[str, str, int]]:
     # Fewest groups first: a two-way split is the clearest chart on the page
     # and belongs at the front of the row.
     found.sort(key=lambda entry: (entry[2], entry[0], entry[1]))
+
+    # Skipping a column that will not count is right; skipping *every* column
+    # is not a finding about the model, it is the engine being unusable, and
+    # reporting it as "nothing here is chartable" would be a lie told
+    # confidently. This project shipped that lie once -- a threaded server
+    # shared one DuckDB connection between requests, every query failed, and
+    # the page said the model had no dimensions.
+    if tried and failed == tried:
+        raise Unqueryable(
+            f"none of the {tried} candidate columns could be counted, so this "
+            "is the query engine failing rather than the model having nothing "
+            "to chart"
+        )
     return found
 
 
@@ -200,7 +227,38 @@ def _spread(candidates: list[tuple[str, str, int]], most: int) -> list[tuple[str
     return out
 
 
-def one(model, connection, measure: str, table: str, column: str) -> Breakdown:
+#: How close the parts have to come to the whole to count as adding up.
+#: Relative, because a float sum over a million rows does not reproduce a
+#: single-pass sum bit for bit and never has.
+_TOLERANCE = 1e-9
+
+
+def _adds_up(parts: float, whole: float | None) -> bool:
+    """Whether the parts really do sum to the whole -- measured, not assumed.
+
+    This matters more than it looks. `Sales` splits additively: the chains sum
+    to the company. `Average Selling Area Size` does not, and nothing in its
+    name or its DAX says so at a glance -- you have to notice that the outer
+    aggregate is an `AVG`, and that the average of two chains' averages is not
+    the average of the stores. Printing "totals 59,302" under that chart would
+    be stating a figure that is not a quantity of anything.
+
+    So it is checked by arithmetic: run the measure ungrouped, run it grouped,
+    and see whether the two agree. A ratio, an average, a distinct count and a
+    period-over-period delta all fail that check, and all of them fail it for
+    the same honest reason.
+    """
+    if whole is None:
+        return False
+    scale = max(abs(parts), abs(whole))
+    if scale == 0:
+        return True
+    return abs(parts - whole) / scale <= _TOLERANCE
+
+
+def one(
+    model, connection, measure: str, table: str, column: str, whole: float | None = None
+) -> Breakdown:
     """Run one measure grouped by one column."""
     from concordance.generate.sql import Status, translate_all
 
@@ -262,9 +320,11 @@ def one(model, connection, measure: str, table: str, column: str) -> Breakdown:
             Slice(label=f"{folded} more", value=sum(s.value for s in tail))
         ]
 
+    parts = sum(s.value for s in slices)
     return Breakdown(
         measure=measure, by=by, table=table, column=column,
         slices=tuple(slices), sql=translated.sql, folded=folded,
+        whole=whole, additive=_adds_up(parts, whole),
     )
 
 
@@ -273,10 +333,21 @@ def build(model, connection, measure: str, most: int = 4) -> Dashboard:
     if connection is None:
         return Dashboard(measure=measure, available=False, reason="no data is loaded")
 
-    candidates = chartable(model, connection)
+    # The whole-model figure first, so each split can be checked against it
+    # rather than asserted to match. One extra query, run once.
+    from concordance.generate.evaluate import evaluate
+
+    found = evaluate(model, connection=connection).by_name().get(measure)
+    whole = found.value if found is not None else None
+
+    try:
+        candidates = chartable(model, connection)
+    except Unqueryable as exc:
+        return Dashboard(measure=measure, available=False, reason=str(exc))
+
     drawn: list[Breakdown] = []
     for table, column, _count in _spread(candidates, most):
-        result = one(model, connection, measure, table, column)
+        result = one(model, connection, measure, table, column, whole=whole)
         if result.drawable:
             drawn.append(result)
 

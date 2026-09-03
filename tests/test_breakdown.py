@@ -246,3 +246,65 @@ def test_folding_keeps_the_total_intact(store) -> None:
 
     whole = evaluate(model).by_name()["Sales"]
     assert split.total == pytest.approx(whole.value, rel=1e-9)
+
+
+# -- does the measure add up? --------------------------------------------------
+
+
+def test_an_additive_measure_is_marked_as_one(store) -> None:
+    model, connection = store
+    whole = evaluate(model).by_name()["Sales"].value
+    split = B.one(model, connection, "Sales", "Store", "Chain", whole=whole)
+    assert split.additive
+    assert split.total == pytest.approx(whole)
+
+
+def test_an_average_is_not_marked_as_adding_up(store) -> None:
+    """`Average Selling Area Size` splits into a fair comparison whose parts
+    are not a quantity of anything added together.
+
+    Nothing in the measure's name says so, and the DAX says so only if you
+    notice the outer aggregate is an `AVG`. Printing "totals 59,302" under that
+    chart would state a figure the model does not contain -- the whole-model
+    average is 24,327 -- so the two are run and compared instead.
+    """
+    model, connection = store
+    whole = evaluate(model).by_name()["Average Selling Area Size"].value
+    split = B.one(
+        model, connection, "Average Selling Area Size", "Store", "Chain", whole=whole
+    )
+    assert split.drawable
+    assert not split.additive
+    assert split.total != pytest.approx(whole)
+
+
+def test_a_dashboard_marks_additivity_without_being_told(store) -> None:
+    model, connection = store
+    assert all(b.additive for b in B.build(model, connection, "Sales").breakdowns)
+    assert not any(
+        b.additive
+        for b in B.build(model, connection, "Average Selling Area Size").breakdowns
+    )
+
+
+def test_nothing_adds_up_to_a_whole_that_does_not_exist(store) -> None:
+    """A measure with no single figure gets no additivity claim either."""
+    model, connection = store
+    split = B.one(model, connection, "Sales", "Store", "Chain")
+    assert split.whole is None
+    assert not split.additive
+
+
+@pytest.mark.parametrize(
+    ("parts", "whole", "expected"),
+    [
+        (100.0, 100.0, True),
+        (100.0, 100.0000000001, True),  # float drift over a million rows
+        (100.0, 101.0, False),
+        (0.0, 0.0, True),
+        (100.0, None, False),
+        (-50.0, -50.0, True),
+    ],
+)
+def test_the_tolerance_is_relative_not_absolute(parts, whole, expected) -> None:
+    assert B._adds_up(parts, whole) is expected

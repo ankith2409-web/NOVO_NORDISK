@@ -21,7 +21,8 @@ because only the chat accumulates history.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+import threading
+from dataclasses import dataclass, field, replace
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Callable
@@ -107,6 +108,11 @@ class ApiContext:
     _rows: int = 0
     _data_reason: str = ""
     _opened: bool = False
+    #: The server is threaded, so two requests can reach `data()` at once.
+    #: Without this the first load runs twice -- 1.3M rows each -- and, worse,
+    #: two threads issue queries down one DuckDB connection, which is not
+    #: something a single connection supports.
+    _data_lock: Any = field(default_factory=threading.Lock)
 
     def requirements(self, kind: Kind) -> list[Requirement]:
         """Derive requirements on demand.
@@ -126,12 +132,21 @@ class ApiContext:
         """
         from concordance.generate.evaluate import open_data
 
-        if not self._opened:
-            self._opened = True
-            self._connection, self._rows, self._data_reason = open_data(
-                self.graph.model
-            )
-        return self._connection, self._rows, self._data_reason
+        with self._data_lock:
+            if not self._opened:
+                self._opened = True
+                self._connection, self._rows, self._data_reason = open_data(
+                    self.graph.model
+                )
+            if self._connection is None:
+                return None, 0, self._data_reason
+            # A cursor, not the connection itself. DuckDB serves concurrent
+            # readers by giving each its own cursor over the same database;
+            # sharing the one connection between two request threads makes
+            # every query on both of them fail, and this project's own
+            # dashboard found that out by reporting "nothing is chartable" for
+            # a model with fifteen chartable columns.
+            return self._connection.cursor(), self._rows, self._data_reason
 
     def evaluated(self):
         """The model's measures, run against its own data. Computed once."""
@@ -992,7 +1007,7 @@ def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
     from concordance.generate.breakdown import build
 
     model = context.graph.model
-    wanted = str(params.get("measure", "")).strip()
+    wanted = _one(params, "measure", required=False)
     if not wanted:
         # The model's own declaration order, not the translator's: the first
         # measure an author wrote is a defensible default, and the first one
@@ -1026,6 +1041,8 @@ def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
                 "table": b.table,
                 "column": b.column,
                 "total": b.total,
+                "whole": b.whole,
+                "additive": b.additive,
                 "folded": b.folded,
                 "sql": b.sql,
                 "slices": [{"label": s.label, "value": s.value} for s in b.slices],

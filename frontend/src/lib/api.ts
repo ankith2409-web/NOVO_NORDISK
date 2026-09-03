@@ -328,6 +328,46 @@ export interface ValuesPayload {
   values: MeasureValue[];
 }
 
+/** One slice of a chart: a group and the measure's value for it. */
+export interface Slice {
+  label: string;
+  value: number;
+}
+
+/** One measure split by one dimension -- the numbers behind one chart. */
+export interface BreakdownPayload {
+  /** `Item[Category]`, the way this project names a column. */
+  by: string;
+  table: string;
+  column: string;
+  /** The slices summed. Only a quantity of anything when `additive`. */
+  total: number;
+  /** The measure's figure for the whole model, or null when it has none. */
+  whole: number | null;
+  /** Whether the parts really do sum to the whole -- measured on the server by
+   *  running the measure both ways, never inferred from its name. An average
+   *  or a ratio splits into a valid comparison whose parts mean nothing added
+   *  together, and only this flag separates the two cases. */
+  additive: boolean;
+  /** How many groups were folded into the last slice, if any. */
+  folded: number;
+  /** The query that produced these numbers. */
+  sql: string;
+  slices: Slice[];
+}
+
+export interface DashboardPayload {
+  model: string;
+  measure: string;
+  available: boolean;
+  /** Why there is nothing to chart. Shown rather than left blank. */
+  reason: string;
+  breakdowns: BreakdownPayload[];
+  /** Every column worth charting, not only the ones drawn -- so the reader can
+   *  chart by something other than the four picked. */
+  dimensions: { table: string; column: string; value: string }[];
+}
+
 export interface ReportPage {
   name: string;
   ordinal: number;
@@ -772,6 +812,11 @@ export const api = {
   /** Every measure run against the model's own data. The first call for a
    *  model loads its rows and takes a few seconds; the server caches it. */
   values: () => get<ValuesPayload>("/values"),
+  /** One measure split every way the model can honestly split it. Runs against
+   *  the same rows `values` loaded, so a bar and the card agree by
+   *  construction rather than by coincidence. */
+  dashboard: (measure?: string) =>
+    get<DashboardPayload>("/dashboard", measure ? { measure } : undefined),
   graph: () => get<GraphPayload>("/graph"),
   tables: () => get<{ tables: TableSummary[] }>("/tables"),
   measures: () => get<{ measures: MeasureSummary[] }>("/measures"),

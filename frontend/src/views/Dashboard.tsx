@@ -26,12 +26,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
+  type BreakdownPayload,
+  type DashboardPayload,
   type MeasureValue,
   type ReportPayload,
   type Tile,
   type TileField,
   type ValuesPayload,
 } from "@/lib/api";
+import { Bars, Columns, Donut, chartFor, exact, namesAPeriod } from "@/components/Charts";
 import { Chip, Empty, Failure, Loading, Stat } from "@/components/primitives";
 import { ChevronIcon } from "@/components/icons";
 import { cx } from "@/lib/cx";
@@ -200,6 +203,14 @@ export function Dashboard({
     );
 
   const opened = kpis.find((entry) => entry.field.name === picked);
+
+  // The charts follow the cards. Nothing picked means the first card that has
+  // a figure -- so the section is populated the moment the page is, rather
+  // than being an empty frame waiting for a click nobody knows to make.
+  const charting =
+    opened?.field.name ??
+    kpis.find((entry) => figures.get(entry.field.name)?.value != null)?.field.name ??
+    "";
   const c = data.counts;
   const blank = data.pages.filter((page) => page.tiles.length === 0).length;
   const wanted = focus?.target ?? "";
@@ -326,6 +337,8 @@ export function Dashboard({
                 <FieldBody field={opened.field} />
               </article>
             )}
+
+            {charting && <Breakdowns measure={charting} picked={Boolean(opened)} />}
           </>
         )}
       </section>
@@ -557,6 +570,142 @@ function KpiCard({
         {field.table} · on {places} page{places === 1 ? "" : "s"}
       </span>
     </button>
+  );
+}
+
+/**
+ * What one KPI is made of, drawn.
+ *
+ * The card above states a total; these state the parts, from the same rows and
+ * the same translated SQL, so a bar and the card agree by construction rather
+ * than by coincidence -- the parts sum to the total, and the query that
+ * produced them is one click away.
+ *
+ * Which dimensions appear is decided on the server by measuring the data, not
+ * by reading column names, because in a real model the names lie in both
+ * directions: `DM_Pic_fl` holds Flickr URLs and `Segment` holds 1,415 of them.
+ */
+function Breakdowns({ measure, picked }: { measure: string; picked: boolean }) {
+  const { data, error } = useLoad<DashboardPayload>(
+    () => api.dashboard(measure),
+    [measure],
+  );
+
+  if (error) return null;
+
+  return (
+    <section className="flex flex-col gap-2.5 rounded border border-hairline bg-surface p-3.5">
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <h3 className="font-serif text-base font-semibold">
+          What {measure} is made of
+        </h3>
+        <span className="text-[11.5px] text-faint">
+          {picked ? "the card you opened" : "pick a card above to change this"}
+        </span>
+      </div>
+
+      {!data ? (
+        <Loading what={`the splits of ${measure}`} rows={2} />
+      ) : !data.available ? (
+        <Empty>{data.reason}</Empty>
+      ) : (
+        <>
+          {/* `items-start`, so a two-bar panel stays two bars tall instead of
+              being stretched to match a nine-bar one beside it. */}
+          <div className="grid items-start gap-3.5 lg:grid-cols-2">
+            {data.breakdowns.map((breakdown) => (
+              <Panel key={breakdown.by} breakdown={breakdown} measure={measure} />
+            ))}
+          </div>
+          <p className="text-[11.5px] text-muted">
+            Every chart here was produced by running {measure}&rsquo;s own SQL grouped by
+            that column, against the rows this file carries. Where the measure adds up, the
+            parts sum to the figure on the card, and a group beyond the tenth is folded
+            into one slice carrying its value rather than dropped so the total still
+            holds. Where it does not — an average, a ratio — the chart says so rather
+            than printing a total that means nothing.
+            {data.dimensions.length > data.breakdowns.length && (
+              <>
+                {" "}
+                {data.dimensions.length} columns in this model could be charted this way;
+                the {data.breakdowns.length} above are one per table, so they show
+                different angles rather than the same list drawn four times.
+              </>
+            )}
+          </p>
+        </>
+      )}
+    </section>
+  );
+}
+
+/** One chart, with the query that produced it behind a disclosure. */
+function Panel({
+  breakdown,
+  measure,
+}: {
+  breakdown: BreakdownPayload;
+  measure: string;
+}) {
+  const [showSql, setShowSql] = useState(false);
+  const kind = chartFor(breakdown.slices, breakdown.additive, breakdown.column);
+
+  return (
+    <article className="flex min-w-0 flex-col gap-2 rounded border border-hairline bg-ground p-3">
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <h4 className="text-[13px] font-medium">by {breakdown.column}</h4>
+        <span className="font-mono text-[10.5px] text-faint">{breakdown.table}</span>
+        <button
+          type="button"
+          onClick={() => setShowSql((was) => !was)}
+          className="ml-auto text-[11px] text-accent underline underline-offset-2"
+        >
+          {showSql ? "hide the query" : "the query"}
+        </button>
+      </div>
+
+      {kind === "donut" ? (
+        <Donut slices={breakdown.slices} by={breakdown.column} measure={measure} />
+      ) : kind === "columns" ? (
+        <Columns
+          slices={breakdown.slices}
+          by={breakdown.column}
+          measure={measure}
+          additive={breakdown.additive}
+        />
+      ) : (
+        <Bars
+          slices={breakdown.slices}
+          by={breakdown.column}
+          measure={measure}
+          additive={breakdown.additive}
+        />
+      )}
+
+      <p className="text-[11px] text-faint tabular">
+        {breakdown.slices.length} group{breakdown.slices.length === 1 ? "" : "s"}
+        {breakdown.additive ? ` · totals ${exact(breakdown.total)}` : ""}
+        {breakdown.folded > 0 && ` · last slice folds ${breakdown.folded} smaller`}
+      </p>
+      {/* Said where the misreading would happen, not once at the bottom of the
+          page: the sum of a set of averages is a number this chart can produce
+          and nothing in the model means. */}
+      {namesAPeriod(breakdown.column) && (
+        <p className="text-[11px] text-review">
+          Ranked by size, not in date order — Power BI keeps a column&rsquo;s sort order
+          in a sort-by column that this file&rsquo;s reader does not expose, and ordering
+          these names alphabetically would put April first.
+        </p>
+      )}
+      {!breakdown.additive && (
+        <p className="text-[11px] text-review">
+          These parts do not add up to a whole — {measure} is an average or a ratio, so
+          the groups compare against each other but cannot be summed.
+        </p>
+      )}
+
+      {showSql && <Code label="SQL">{breakdown.sql}</Code>}
+    </article>
   );
 }
 
