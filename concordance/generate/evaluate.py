@@ -79,8 +79,13 @@ class Evaluation:
         return {v.measure: v for v in self.values}
 
 
-def _load(model) -> tuple[Any, int, str]:
+def open_data(model) -> tuple[Any, int, str]:
     """Put the model's own rows into an in-memory DuckDB.
+
+    The caller owns the connection and must close it. Kept open by the web
+    layer for the life of the server, because loading a million rows takes
+    three seconds and every chart on the dashboard is another query against
+    the same rows.
 
     Returns the connection, how many rows went in, and a reason string that is
     non-empty only when nothing could be loaded. Failure here is reported, not
@@ -211,19 +216,27 @@ def _single(
     return Value(measure=measure, table=table, value=float(figure), sql=sql)
 
 
-def evaluate(model, grain: tuple[str, ...] = ()) -> Evaluation:
+def evaluate(model, grain: tuple[str, ...] = (), connection: Any = None) -> Evaluation:
     """Run every measure that translates, against the model's own rows.
 
     ``grain`` is passed through to the same translator the rest of the project
     uses, so the query run here is the query shown everywhere else for that
     measure. Two different SQL strings for one measure would make the figure
     unverifiable, which would defeat the point of showing it.
+
+    A ``connection`` may be passed in by a caller that already loaded the rows
+    -- the web layer does, because every chart it draws is another query
+    against the same million -- in which case that caller keeps ownership of
+    it. Opened here only when it was not, and then closed here.
     """
     from concordance.generate.sql import Status, translate_all
 
-    connection, rows, reason = _load(model)
-    if connection is None:
-        return Evaluation(available=False, reason=reason)
+    borrowed = connection is not None
+    rows = 0
+    if not borrowed:
+        connection, rows, reason = open_data(model)
+        if connection is None:
+            return Evaluation(available=False, reason=reason)
 
     try:
         values: list[Value] = []
@@ -277,4 +290,5 @@ def evaluate(model, grain: tuple[str, ...] = ()) -> Evaluation:
             rows_loaded=rows,
         )
     finally:
-        connection.close()
+        if not borrowed:
+            connection.close()

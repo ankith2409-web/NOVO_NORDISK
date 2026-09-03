@@ -21,7 +21,7 @@ because only the chat accumulates history.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Callable
@@ -99,6 +99,14 @@ class ApiContext:
     #: a model's file does not change under a running server, and an uploaded
     #: one lives only as long as the session that uploaded it.
     _evaluated: Any = None
+    #: The model's own rows, in DuckDB, kept open for the life of the context.
+    #: Opened once and shared by every figure and every chart, because the
+    #: three seconds is in the loading and not in the querying: the KPI row and
+    #: the four charts under it are dozens of queries against one load.
+    _connection: Any = None
+    _rows: int = 0
+    _data_reason: str = ""
+    _opened: bool = False
 
     def requirements(self, kind: Kind) -> list[Requirement]:
         """Derive requirements on demand.
@@ -109,12 +117,33 @@ class ApiContext:
         """
         return [r for r in RequirementDeriver(self.graph).derive() if r.kind is kind]
 
+    def data(self):
+        """The model's rows, loaded once. ``(connection, rows, reason)``.
+
+        ``connection`` is ``None`` when the source carries no rows -- a
+        `.SemanticModel` folder is a schema -- and ``reason`` then says so in
+        words meant for a reader rather than a log.
+        """
+        from concordance.generate.evaluate import open_data
+
+        if not self._opened:
+            self._opened = True
+            self._connection, self._rows, self._data_reason = open_data(
+                self.graph.model
+            )
+        return self._connection, self._rows, self._data_reason
+
     def evaluated(self):
         """The model's measures, run against its own data. Computed once."""
-        from concordance.generate.evaluate import evaluate
+        from concordance.generate.evaluate import Evaluation, evaluate
 
         if self._evaluated is None:
-            self._evaluated = evaluate(self.graph.model)
+            connection, rows, reason = self.data()
+            if connection is None:
+                self._evaluated = Evaluation(available=False, reason=reason)
+            else:
+                run = evaluate(self.graph.model, connection=connection)
+                self._evaluated = replace(run, rows_loaded=rows)
         return self._evaluated
 
 
@@ -951,10 +980,67 @@ def values(context: ApiContext, params: Params) -> dict[str, Any]:
     }
 
 
+def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
+    """One measure, split every way the model can honestly split it.
+
+    A KPI card answers "what is the total"; this answers "what is it made of",
+    from the same rows and with the same SQL, so a bar is exactly as checkable
+    as the figure above it. Which splits exist is decided by measuring the data
+    -- see `generate/breakdown.py` -- so a model with nothing chartable says so
+    rather than drawing an empty grid.
+    """
+    from concordance.generate.breakdown import build
+
+    model = context.graph.model
+    wanted = str(params.get("measure", "")).strip()
+    if not wanted:
+        # The model's own declaration order, not the translator's: the first
+        # measure an author wrote is a defensible default, and the first one
+        # that happens to translate is alphabetical accident.
+        computed = {v.measure for v in context.evaluated().values if v.computed}
+        wanted = next(
+            (m.name for m in model.measures if m.name in computed),
+            model.measures[0].name if model.measures else "",
+        )
+
+    connection, _rows, reason = context.data()
+    if connection is None:
+        return {
+            "model": model.name,
+            "measure": wanted,
+            "available": False,
+            "reason": reason,
+            "breakdowns": [],
+            "dimensions": [],
+        }
+
+    built = build(model, connection, wanted)
+    return {
+        "model": model.name,
+        "measure": built.measure,
+        "available": built.available,
+        "reason": built.reason,
+        "breakdowns": [
+            {
+                "by": b.by,
+                "table": b.table,
+                "column": b.column,
+                "total": b.total,
+                "folded": b.folded,
+                "sql": b.sql,
+                "slices": [{"label": s.label, "value": s.value} for s in b.slices],
+            }
+            for b in built.breakdowns
+        ],
+        "dimensions": [dict(d) for d in built.dimensions],
+    }
+
+
 ROUTES: dict[str, Callable[[ApiContext, Params], dict[str, Any]]] = {
     "/api/overview": overview,
     "/api/search": find,
     "/api/values": values,
+    "/api/dashboard": dashboard,
     "/api/graph": graph,
     "/api/tables": tables,
     "/api/table": table,
