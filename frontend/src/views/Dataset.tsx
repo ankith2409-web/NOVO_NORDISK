@@ -31,8 +31,6 @@ import {
   Stat,
 } from "@/components/primitives";
 import { ChevronIcon, CopyIcon, DownloadIcon } from "@/components/icons";
-import { SchemaMap } from "@/components/SchemaMap";
-import { Meter } from "@/components/Chart";
 import { SNAPSHOT_MODE } from "@/lib/api";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
@@ -174,19 +172,6 @@ export function Dataset({ focus = null }: { focus?: FocusRequest | null }) {
           how it is joined with each other and what are the SQL" -- and it is
           above rather than below because a JOIN in the SQL further down means
           nothing until you know what it refers to. */}
-      {/* The same three figures as a proportion. A reviewer asked for the
-          numbers to be shown as a chart, and one ratio is a bar with both
-          numbers on it -- not a two-slice pie, which asks the eye to estimate
-          an angle for a figure that is already known. */}
-      <div className="rounded border border-hairline bg-ground px-3.5 py-3">
-        <Meter
-          value={data.counts.translated}
-          of={data.counts.measures}
-          label="measures can be written as a single SQL query"
-          rest="change their answer with what the report is filtered to, so no one query stands for them."
-        />
-      </div>
-
       <Structure tables={data.tables} joins={data.joins} />
 
       {/* Controls. The grain changes what the SQL means, so it is labelled as
@@ -531,22 +516,10 @@ function Structure({
       </button>
 
       {open && (
-        <div className="flex flex-col gap-4 border-t border-hairline p-3.5">
-          {/* The picture first. A join is a relationship between two tables,
-              and two lists side by side is the one shape that cannot show
-              one -- it leaves the reader holding the whole graph in their head
-              to notice that everything hangs off `Sales`. */}
-          <SchemaMap
-            tables={tables}
-            joins={joins}
-            selected={focusTable}
-            onSelect={setFocusTable}
-          />
-
-        <div className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        <div className="grid gap-4 border-t border-hairline p-3.5 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
           <div className="flex min-w-0 flex-col gap-1.5">
             <span className="font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
-              tables
+              tables — click one to see only its joins
             </span>
             <ul className="flex flex-col gap-1">
               {tables.map((table) => (
@@ -658,7 +631,6 @@ function Structure({
               </ul>
             )}
           </div>
-        </div>
         </div>
       )}
     </section>

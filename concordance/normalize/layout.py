@@ -110,25 +110,10 @@ class Visual:
     visual_type: str
     title: str
     fields: tuple[VisualField, ...] = ()
-    #: Where the author put it, in the report's own coordinates. Power BI
-    #: stores these as floats against a page whose size it also records; they
-    #: are kept raw here and scaled by whoever draws them.
-    x: float = 0.0
-    y: float = 0.0
-    width: float = 0.0
-    height: float = 0.0
-    #: Stacking order. Two tiles may overlap, and the one with the higher `z`
-    #: is the one on top -- which is what the reader saw.
-    z: float = 0.0
 
     @property
     def is_titled(self) -> bool:
         return bool(self.title)
-
-    @property
-    def is_placed(self) -> bool:
-        """False when the file recorded no size for it, so nothing can be drawn."""
-        return self.width > 0 and self.height > 0
 
 
 @dataclass
@@ -138,31 +123,6 @@ class ReportPage:
     name: str
     ordinal: int
     visuals: list[Visual] = field(default_factory=list)
-    #: The canvas the author laid the tiles out on, in the same coordinates the
-    #: tiles use. Power BI's default is 1280x720; a report set to a different
-    #: size records that here, and drawing tiles against the wrong canvas would
-    #: put them in the wrong places or off the edge entirely.
-    width: float = 0.0
-    height: float = 0.0
-
-    @property
-    def canvas(self) -> tuple[float, float]:
-        """The canvas to draw against, falling back to what the tiles need.
-
-        A page that records no size still has tiles with coordinates, and the
-        box those tiles occupy is a truthful canvas for them -- the layout is
-        right relative to itself, which is what the drawing is for. The
-        fallback is only ever reached when the file does not say.
-        """
-        if self.width > 0 and self.height > 0:
-            return self.width, self.height
-        placed = [v for v in self.visuals if v.is_placed]
-        if not placed:
-            return 0.0, 0.0
-        return (
-            max(v.x + v.width for v in placed),
-            max(v.y + v.height for v in placed),
-        )
 
 
 def read_report(archive) -> list[ReportPage]:
@@ -200,12 +160,9 @@ def read_layout(raw: bytes) -> list[ReportPage]:
     for ordinal, section in enumerate(document.get("sections") or []):
         if not isinstance(section, dict):
             continue
-        size = _placement(section)
         page = ReportPage(
             name=str(section.get("displayName") or f"Page {ordinal + 1}"),
             ordinal=ordinal,
-            width=size.get("width", 0.0),
-            height=size.get("height", 0.0),
         )
         for container in section.get("visualContainers") or []:
             visual = _visual(container, page.name)
@@ -249,12 +206,9 @@ def _read_pbir(archive, names: set[str]) -> list[ReportPage]:
         definition = _load(archive, f"{root}{folder}/page.json")
         if not isinstance(definition, dict):
             continue
-        size = _placement(definition)
         page = ReportPage(
             name=str(definition.get("displayName") or folder),
             ordinal=ordinal,
-            width=size.get("width", 0.0),
-            height=size.get("height", 0.0),
         )
         prefix = f"{root}{folder}/visuals/"
         for entry in sorted(n for n in names if n.startswith(prefix) and n.endswith("/visual.json")):
@@ -300,13 +254,11 @@ def _pbir_visual(document: Any, page: str) -> Visual | None:
                 if field is not None:
                     fields.append(field)
 
-    at = document.get("position")
     return Visual(
         page=page,
         visual_type=str(visual.get("visualType") or "unknown"),
         title=_title(visual.get("visualContainerObjects") or {}, key="title"),
         fields=tuple(fields),
-        **_placement(at if isinstance(at, dict) else {}),
     )
 
 
@@ -400,34 +352,12 @@ def _visual(container: Any, page: str) -> Visual | None:
                         )
                     )
 
-    # On the container rather than inside `config`: the older format keeps a
-    # visual's geometry outside the JSON string that holds everything else
-    # about it.
     return Visual(
         page=page,
         visual_type=str(single.get("visualType") or "unknown"),
         title=_title(single.get("vcObjects") or {}, key="title"),
         fields=tuple(fields),
-        **_placement(container),
     )
-
-
-def _placement(source: Any) -> dict[str, float]:
-    """Where a tile sits, from whichever of the two shapes carries it.
-
-    Both formats use the same five keys; they differ only in where the object
-    holding them lives. A value that will not read as a number is taken as zero
-    rather than raising -- a tile whose geometry is unreadable is still a tile,
-    and losing the whole visual over a coordinate would be a poor trade.
-    """
-    if not isinstance(source, dict):
-        return {}
-    out: dict[str, float] = {}
-    for key in ("x", "y", "width", "height", "z"):
-        value = source.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            out[key] = float(value)
-    return out
 
 
 def _title(objects: Any, key: str = "title") -> str:

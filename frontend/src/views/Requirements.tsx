@@ -27,7 +27,6 @@ import {
   controlClasses,
 } from "@/components/primitives";
 import { RichText } from "@/components/RichText";
-import { Bars } from "@/components/Chart";
 import { ChevronIcon, DownloadIcon } from "@/components/icons";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
@@ -108,35 +107,6 @@ export function Requirements() {
               value={data.counts.low}
               tone={data.counts.low > 0 ? "review" : "neutral"}
               hint="Low confidence"
-            />
-          </div>
-
-          {/* The same four figures as bars. One hue throughout: the row label
-              says which level it is, and the three status colours this app
-              uses for confidence measure ΔE 3.6 apart under deuteranopia -- a
-              reader with common colour blindness cannot tell "medium" from
-              "low" by colour alone. */}
-          <div className="rounded border border-hairline bg-ground px-3.5 py-3">
-            <Bars
-              unit="requirements"
-              rows={[
-                {
-                  label: "stated by the model",
-                  value: data.counts.high,
-                  title: "High confidence — the model declares this outright",
-                },
-                {
-                  label: "from a structural rule",
-                  value: data.counts.medium,
-                  title: "Medium confidence — it follows from the model's shape",
-                },
-                {
-                  label: "needs a person",
-                  value: data.counts.low,
-                  title: "Low confidence — inferred, and awaiting confirmation",
-                },
-              ]}
-              caption="How much of this document the model states for itself, and how much was inferred from its shape."
             />
           </div>
 

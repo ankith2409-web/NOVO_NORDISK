@@ -30,8 +30,6 @@ export interface Overview {
   user_hierarchies: number;
   unresolved_references: { from: string; to: string; reason: string }[];
   not_extracted: CoverageGap[];
-  /** Per-table counts, for the "where the weight sits" chart. */
-  by_table: { name: string; columns: number; measures: number }[];
   capabilities: { drift: boolean; reconcile: boolean };
 }
 
@@ -286,13 +284,6 @@ export interface Tile {
    * representation".
    */
   is_kpi: boolean;
-  /** Where the author put it, in the page's own coordinates. */
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  /** Stacking order: two overlapping tiles, and the higher one is on top. */
-  z: number;
   fields: TileField[];
 }
 
@@ -318,9 +309,6 @@ export interface ReportPayload {
 export interface ReportPage {
   name: string;
   ordinal: number;
-  /** The canvas the tiles were laid out on, in their own coordinates. */
-  width: number;
-  height: number;
   tiles: Tile[];
 }
 
