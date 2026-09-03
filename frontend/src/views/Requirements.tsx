@@ -27,7 +27,8 @@ import {
   controlClasses,
 } from "@/components/primitives";
 import { RichText } from "@/components/RichText";
-import { ChevronIcon, DownloadIcon } from "@/components/icons";
+import { ChevronIcon, DownloadIcon, PageIcon } from "@/components/icons";
+import { DocumentPreview } from "@/components/DocumentPreview";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
 
@@ -165,12 +166,30 @@ export function Requirements() {
  * and that is a .docx.
  */
 function Download({ kind }: { kind: Kind }) {
+  const [reading, setReading] = useState(false);
+
   // A snapshot is a static capture with no server behind it, so there is
   // nothing to render the document. Saying that beats a link that 404s.
   if (SNAPSHOT_MODE) return null;
 
+  const name = kind === "business" ? "BRD" : "FRD";
+
   return (
     <span className="flex items-center gap-1">
+      {/* Reading comes before saving, in that order, because it is the cheaper
+          of the two and answers the question the save button raises. */}
+      <Button onClick={() => setReading(true)}>
+        <PageIcon size={11} className="flex-none" />
+        Read
+      </Button>
+      {reading && (
+        <DocumentPreview
+          kind={kind}
+          title={kind === "business" ? "Business Requirements Document" : "Functional Requirements Document"}
+          onClose={() => setReading(false)}
+        />
+      )}
+      <span className="mx-0.5 h-4 w-px bg-hairline" />
       <span className="font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
         save
       </span>
@@ -185,7 +204,7 @@ function Download({ kind }: { kind: Kind }) {
           href={api.documentUrl(kind, format)}
           download
           className={controlClasses("quiet")}
-          title={`Download the ${kind === "business" ? "BRD" : "FRD"} as ${label}`}
+          title={`Download the ${name} as ${label}`}
         >
           <DownloadIcon size={11} className="flex-none" />
           {label}

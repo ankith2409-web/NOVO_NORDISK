@@ -30,7 +30,8 @@ import {
   Loading,
   Stat,
 } from "@/components/primitives";
-import { ChevronIcon, CopyIcon, DownloadIcon } from "@/components/icons";
+import { ChevronIcon, CopyIcon, DownloadIcon, PageIcon } from "@/components/icons";
+import { DocumentPreview } from "@/components/DocumentPreview";
 import { SNAPSHOT_MODE } from "@/lib/api";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
@@ -63,6 +64,7 @@ export function Dataset({ focus = null }: { focus?: FocusRequest | null }) {
   const [dialect, setDialect] = useState("duckdb");
   const [onlyTranslated, setOnlyTranslated] = useState(false);
   const [copied, setCopied] = useState("");
+  const [readingFrd, setReadingFrd] = useState(false);
 
   const grains = useMemo(
     () => (grain === WHOLE_MODEL ? [] : [grain]),
@@ -228,8 +230,15 @@ export function Dataset({ focus = null }: { focus?: FocusRequest | null }) {
           {!SNAPSHOT_MODE && (
             <>
               <span className="text-[12.5px] text-muted">
-                Download the FRD, with these queries in it
+                The FRD, with these queries in it
               </span>
+              {/* Reading uses the grain and dialect chosen above, exactly as
+                  saving does -- one URL, so the two cannot disagree. */}
+              <Button onClick={() => setReadingFrd(true)}>
+                <PageIcon size={11} className="flex-none" />
+                Read
+              </Button>
+              <span className="mx-0.5 h-4 w-px bg-hairline" />
               {(
                 [
                   { format: "md", label: ".md" },
@@ -254,6 +263,15 @@ export function Dataset({ focus = null }: { focus?: FocusRequest | null }) {
           )}
         </div>
       </div>
+
+      {readingFrd && (
+        <DocumentPreview
+          kind="functional"
+          title="Functional Requirements Document"
+          sql={{ grain: grains, dialect }}
+          onClose={() => setReadingFrd(false)}
+        />
+      )}
 
       {data.grain_options.length === 0 && data.counts.measures > 0 && (
         <p className="text-xs text-faint">

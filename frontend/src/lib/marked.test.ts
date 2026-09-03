@@ -60,3 +60,34 @@ describe("splitMarked", () => {
     ]);
   });
 });
+
+describe("emphasis", () => {
+  it("reads a single-asterisk label as emphasis, not as an object name", () => {
+    // The generated documents label a paragraph `*Rationale:*`. Setting that
+    // in the object-name face would claim the model has a measure called
+    // Rationale.
+    expect(splitMarked("*Rationale:* it joins.")).toEqual([
+      { text: "Rationale:", marked: false, emphasis: true },
+      { text: " it joins.", marked: false },
+    ]);
+  });
+
+  it("still claims bold first, so ** never splits into two emphases", () => {
+    expect(splitMarked("**Sales**")).toEqual([{ text: "Sales", marked: true }]);
+  });
+
+  it("leaves arithmetic alone", () => {
+    // `2 * 3 * 4` would otherwise emphasise " 3 ", which is why the emphasis
+    // branch refuses a leading space.
+    expect(splitMarked("2 * 3 * 4")).toEqual([{ text: "2 * 3 * 4", marked: false }]);
+    expect(splitMarked("2 ** 3")).toEqual([{ text: "2 ** 3", marked: false }]);
+  });
+
+  it("handles the two forms in one line", () => {
+    expect(splitMarked("*Confidence:* high for **Sales**")).toEqual([
+      { text: "Confidence:", marked: false, emphasis: true },
+      { text: " high for ", marked: false },
+      { text: "Sales", marked: true },
+    ]);
+  });
+});

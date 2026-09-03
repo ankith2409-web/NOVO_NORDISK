@@ -23,15 +23,21 @@ export function RichText({ children }: { children: string }) {
 
   return (
     <>
-      {runs.map((run, index) =>
-        run.marked ? (
-          <span key={index} className="font-mono text-[0.92em] font-medium text-ink">
-            {run.text}
-          </span>
-        ) : (
-          run.text
-        ),
-      )}
+      {runs.map((run, index) => {
+        if (run.marked) {
+          return (
+            <span key={index} className="font-mono text-[0.92em] font-medium text-ink">
+              {run.text}
+            </span>
+          );
+        }
+        // Emphasis stays emphasis rather than becoming another object name:
+        // the generated documents label a paragraph `*Rationale:*`, and
+        // setting that in the object-name face would claim there is a measure
+        // called Rationale.
+        if (run.emphasis) return <em key={index}>{run.text}</em>;
+        return run.text;
+      })}
     </>
   );
 }

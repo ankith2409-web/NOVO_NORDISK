@@ -697,6 +697,50 @@ export const api = {
     return `/api/document?${params}`;
   },
 
+  /**
+   * The document itself, as text, for reading on screen.
+   *
+   * Deliberately the same URL the save buttons point at, with the same
+   * parameters: a second code path that rendered the document its own way
+   * would be a second thing to keep true, and the two could then disagree
+   * without anybody noticing. `get` is not reused because it parses JSON and
+   * this endpoint answers with the document.
+   */
+  documentText: async (
+    kind: "business" | "functional",
+    sql?: { grain: string[]; dialect: string },
+  ): Promise<Result<string>> => {
+    if (SNAPSHOT_MODE) {
+      return {
+        ok: false,
+        status: 0,
+        message:
+          "A snapshot is a static capture with no server behind it, so there is nothing here to render the document.",
+      };
+    }
+    let response: Response;
+    try {
+      response = await fetch(api.documentUrl(kind, "md", sql), {
+        credentials: "same-origin",
+      });
+    } catch {
+      return {
+        ok: false,
+        status: 0,
+        message:
+          "Cannot reach the Concordance server. Start it with `concordance serve <model>`.",
+      };
+    }
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        message: `The server could not render the document (${response.status}).`,
+      };
+    }
+    return { ok: true, data: await response.text() };
+  },
+
   models: async (): Promise<Result<ModelsPayload>> => {
     if (SNAPSHOT_MODE) {
       // A snapshot is one captured model, so the switcher has nothing to offer

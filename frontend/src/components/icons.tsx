@@ -185,3 +185,15 @@ export function SearchIcon(props: IconProps) {
     </Glyph>
   );
 }
+
+/** An open page. Reading, as against saving -- which is the tray glyph above. */
+export function PageIcon(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <path d="M6 3h7l5 5v13H6z" />
+      <path d="M13 3v5h5" />
+      <path d="M9 13h6" />
+      <path d="M9 17h4" />
+    </Glyph>
+  );
+}
