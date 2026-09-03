@@ -8,12 +8,24 @@
 # boundary here to make stateless. A container on a platform that runs a
 # persistent process (Render, Fly.io, a VM) is the honest fit.
 #
-# What this image serves is the sample data already in the repository --
-# ClinicalTrialSafety, with its v2 for a live drift comparison, plus
-# QualityControl as a second browsable model -- the same models used
-# throughout this project's own screenshots. Pointing it at a real model
-# instead means replacing the COPY lines below and start.sh's arguments;
-# nothing else in the image changes.
+# What this image serves is the sample data already in the repository.
+# StoreSales -- Microsoft's own Store Sales sample, unmodified -- is the model
+# the deployment opens on, because sales, cost, profit and margin need no
+# domain explained to a reviewer before they can judge the documentation.
+# ClinicalTrialSafety (with its v2 for a live drift comparison), QualityControl
+# (with its warehouse for the reconciliation tab) and DiabetesCare sit
+# alongside it as browsable models, and Supply Chain and Sales & Returns --
+# also Microsoft's own, unmodified -- are the honest test of a .pbix nobody
+# here authored. Pointing this at a different model instead means replacing
+# the COPY lines below and start.sh's arguments; nothing else in the image
+# changes.
+#
+# Every COPY line below must name a path `start.sh` actually lists, and every
+# .pbix among them must be un-ignored in `.dockerignore` (which excludes
+# `data/models/*.pbix` outright) as well as `.gitignore` (which is what keeps
+# it in the repo this image is built from at all) -- three lists that all have
+# to agree, and the way this drifts silently is a model going missing from the
+# deployed container while every other list still claims it is there.
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -31,18 +43,35 @@ COPY concordance ./concordance
 RUN pip install --no-cache-dir .
 
 # The models this image serves live. Copied explicitly rather than the whole
-# `data/` tree, which also holds the .pbix samples this image has no use for.
+# `data/` tree, which also holds sample data (data/samples, data/warehouse)
+# this image has no use for.
 #
-# DiabetesCare earns its place by being the only one of the four that defines
-# row-level security, object-level security, a KPI and a calculation group.
-# Without it the copilot's `describe_security`, `list_kpis` and
-# `list_calculation_groups` answer "this model defines none" on every model
-# the deployment can reach -- three working features that would look broken
-# to anyone who asked, which is worse than not having built them.
+# StoreSales is first because `concordance serve` treats the first model given
+# to it as the default -- the one the interface opens on -- and `start.sh`
+# passes these in the same order they are listed here. It is Microsoft's own
+# Store Sales sample, unmodified, so it also carries the report layer none of
+# the TMDL folders below can have: five tables, a real dashboard, a domain
+# that needs no explaining before a reviewer can judge the documentation.
+#
+# DiabetesCare earns its place among the TMDL folders by being the only one of
+# the three that defines row-level security, object-level security, a KPI and
+# a calculation group. Without it the copilot's `describe_security`,
+# `list_kpis` and `list_calculation_groups` answer "this model defines none"
+# on every model the deployment can reach -- three working features that would
+# look broken to anyone who asked, which is worse than not having built them.
+#
+# Supply Chain and Sales & Returns close the list: also Microsoft's own,
+# unmodified, and the only honest test of a .pbix nobody here authored -- one
+# translates completely, the other refuses most of its measures for stated
+# reasons rather than guessing, and both carry a report layer for the
+# Dashboard tab to correlate.
+COPY data/models/StoreSales.pbix ./data/models/StoreSales.pbix
 COPY data/models/ClinicalTrialSafety.SemanticModel ./data/models/ClinicalTrialSafety.SemanticModel
 COPY data/models/ClinicalTrialSafety_v2.SemanticModel ./data/models/ClinicalTrialSafety_v2.SemanticModel
 COPY data/models/QualityControl.SemanticModel ./data/models/QualityControl.SemanticModel
 COPY data/models/DiabetesCare.SemanticModel ./data/models/DiabetesCare.SemanticModel
+COPY data/models/Supply_Chain_Sample.pbix ./data/models/Supply_Chain_Sample.pbix
+COPY data/models/Sales_Returns_Sample.pbix ./data/models/Sales_Returns_Sample.pbix
 
 # The demo warehouse is built here rather than copied: `data/warehouse/` is a
 # generated artefact and gitignored, so it is never in the repo this image is

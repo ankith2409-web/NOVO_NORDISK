@@ -1,6 +1,6 @@
 # Trimmed to what the build context actually needs. Nothing here changes
 # which files land in the image -- the Dockerfile's COPY lines already name
-# those explicitly -- this only stops an 8MB .pbix sample or a checked-out
+# those explicitly -- this only stops an unused .pbix sample or a checked-out
 # .git history from being sent to the Docker daemon on every build.
 .git
 .venv
@@ -11,6 +11,16 @@ frontend/dist
 frontend/dist-embedded
 frontend/node_modules
 data/models/*.pbix
+# The three the Dockerfile actually COPYs back in -- StoreSales is the model
+# the deployment opens on, and the mismatch here (this file excluded every
+# .pbix with no exceptions, while the Dockerfile only ever copied the TMDL
+# folders) is exactly why a deployed container was silently serving
+# ClinicalTrialSafety instead of StoreSales: the file simply never reached the
+# build context, so `start.sh`'s own "if [ -e "$model" ]" check saw nothing
+# there and skipped it without failing the build.
+!data/models/StoreSales.pbix
+!data/models/Supply_Chain_Sample.pbix
+!data/models/Sales_Returns_Sample.pbix
 data/samples
 tests
 docs
