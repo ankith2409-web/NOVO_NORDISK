@@ -2,10 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!-- Inlined: the embedded build is one self-contained file the
-         Python server hands over whole, with no asset routes to
-         miss. A separate favicon.svg 404s on every page load. -->
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+CiAgPHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBGNkU3MiIvPgogIDxwYXRoIGQ9Ik05IDExaDE0TTkgMTZoMTRNOSAyMWg5IiBzdHJva2U9IiNGQ0ZDRkQiIHN0cm9rZS13aWR0aD0iMi41IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc+Cg==" />
+    <!-- The mark, byte-for-byte what `components/Logo.tsx` exports as
+         FAVICON_MARKUP. Inlined because the embedded build is one
+         self-contained file the Python server hands over whole, with no
+         asset routes to miss -- a separate favicon.svg 404s on every page
+         load. This copy and the one in Logo.tsx must stay identical, and
+         `Logo.test.ts` fails if they drift: they already did once, so the
+         tab icon visibly changed the moment React booted. -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNyIgZmlsbD0iIzBmNmU3MiIvPjxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKDQgNCkiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZjZmNmZCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTEwIDQuNEg2LjhBMi40IDIuNCAwIDAgMCA0LjQgNi44djEwLjRhMi40IDIuNCAwIDAgMCAyLjQgMi40SDEwVjQuNFoiLz48cGF0aCBkPSJNMTQgNC40aDMuMmEyLjQgMi40IDAgMCAxIDIuNCAyLjR2MTAuNGEyLjQgMi40IDAgMCAxLTIuNCAyLjRIMTRWNC40WiIvPjxwYXRoIGQ9Ik0xMC4yIDEyaDMuNiIvPjwvZz48L3N2Zz4=" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Concordance</title>
   </head>
