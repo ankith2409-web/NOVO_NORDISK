@@ -17,7 +17,11 @@ import {
   brief,
   canOrderByTime,
   chartFor,
+  degrees,
   exact,
+  gridStep,
+  placeLabels,
+  scaleBar,
   ranks,
 } from "./Charts";
 
@@ -245,5 +249,163 @@ describe("which groups get picked out", () => {
 
   it("picks out three, so a two-group split is not all-accent-and-nothing", () => {
     expect(LEADERS).toBe(3);
+  });
+});
+
+/**
+ * The map's furniture.
+ *
+ * Without a basemap the first version of the map was a scatter plot -- circles
+ * in an empty box with nothing to say where on the earth they were or how far
+ * apart. A coastline was the obvious fix and the wrong one: the public vector
+ * sets small enough to inline are simplified to kilometres, and at the
+ * twenty-five kilometre extent of a store list that draws shops out in the
+ * lake.
+ *
+ * So the map is built from things that can be computed exactly instead, and
+ * these are those things. Each is arithmetic on the coordinates, so each can be
+ * checked against an answer known in advance -- which is the point, because a
+ * scale bar that is quietly wrong is worse than no scale bar at all.
+ */
+
+describe("the coordinate grid", () => {
+  it("picks a step that puts a few lines across the span, not one or fifty", () => {
+    // Chicago's store spread, about a fifth of a degree.
+    const step = gridStep(0.2);
+    expect(0.2 / step).toBeGreaterThanOrEqual(3);
+    expect(0.2 / step).toBeLessThan(12);
+  });
+
+  it("lands on round numbers a reader recognises", () => {
+    // The whole reason not to use span/5, which gives lines at 41.8437.
+    for (const span of [0.05, 0.2, 1, 4, 30, 120]) {
+      const step = gridStep(span);
+      expect([30, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001])
+        .toContain(step);
+    }
+  });
+
+  it("gets finer as the span gets smaller", () => {
+    expect(gridStep(0.01)).toBeLessThan(gridStep(1));
+    expect(gridStep(1)).toBeLessThan(gridStep(50));
+  });
+
+  it("still returns a usable step for a span of nearly nothing", () => {
+    // Two stores on the same street. Never zero, or the grid loop never ends.
+    expect(gridStep(0.0001)).toBeGreaterThan(0);
+  });
+});
+
+describe("degrees", () => {
+  it("names the hemisphere rather than printing a minus sign", () => {
+    expect(degrees(41.85, "lat", 0.05)).toBe("41.85°N");
+    expect(degrees(-87.65, "lon", 0.05)).toBe("87.65°W");
+    expect(degrees(-33.87, "lat", 0.01)).toBe("33.87°S");
+    expect(degrees(151.21, "lon", 0.01)).toBe("151.21°E");
+  });
+
+  it("does not print trailing zeros", () => {
+    expect(degrees(42, "lat", 1)).toBe("42°N");
+    expect(degrees(41.9, "lat", 0.1)).toBe("41.9°N");
+  });
+
+  it("keeps enough places to tell adjacent grid lines apart", () => {
+    // The bug this replaced: rounding by magnitude gave 41.85 and 41.90 one
+    // decimal each, so two lines of the grid both read "41.9°N".
+    for (const step of [1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005]) {
+      const first = degrees(41.8, "lat", step);
+      const second = degrees(41.8 + step, "lat", step);
+      expect(first).not.toBe(second);
+    }
+  });
+
+  it("prints a whole number of degrees without a stray point", () => {
+    expect(degrees(42, "lat", 1)).not.toContain(".");
+    expect(degrees(0, "lon", 10)).toBe("0°E");
+  });
+});
+
+describe("the scale bar", () => {
+  it("reads as a round distance, never as arithmetic", () => {
+    // 7.4 km is a calculation; 5 km is something you can lay against the map.
+    expect(scaleBar(7.4)).toBe(5);
+    expect(scaleBar(23)).toBe(20);
+    expect(scaleBar(0.9)).toBe(0.5);
+  });
+
+  it("never claims more than it was given", () => {
+    for (const room of [0.3, 1.1, 4.9, 60, 900, 4000]) {
+      expect(scaleBar(room)).toBeLessThanOrEqual(room);
+    }
+  });
+
+  it("falls back to its smallest bar rather than to zero", () => {
+    // A bar of length zero would be drawn as a dot labelled "0 km".
+    expect(scaleBar(0.001)).toBeGreaterThan(0);
+  });
+});
+
+describe("point labels", () => {
+  const BOX = { width: 400, height: 300 };
+
+  it("gives a lone point the position above it", () => {
+    const [spot] = placeLabels([{ x: 200, y: 150, r: 10, width: 40 }], BOX);
+    expect(spot).not.toBeNull();
+    expect(spot!.y).toBeLessThan(150);
+    expect(spot!.anchor).toBe("middle");
+  });
+
+  it("moves the second of two touching points instead of overlapping it", () => {
+    const spots = placeLabels(
+      [
+        { x: 200, y: 150, r: 10, width: 60 },
+        { x: 205, y: 152, r: 10, width: 60 },
+      ],
+      BOX,
+    );
+    expect(spots[0]).not.toBeNull();
+    if (spots[1]) {
+      // Somewhere else, whatever else it is.
+      expect(spots[1]!.y !== spots[0]!.y || spots[1]!.anchor !== spots[0]!.anchor)
+        .toBe(true);
+    }
+  });
+
+  it("drops a name it cannot fit rather than overlapping one", () => {
+    // Ten points stacked on one spot. Some must go unlabelled; they stay
+    // readable by pointing at them.
+    const spots = placeLabels(
+      Array.from({ length: 10 }, () => ({ x: 200, y: 150, r: 8, width: 70 })),
+      BOX,
+    );
+    expect(spots.filter(Boolean).length).toBeLessThan(10);
+    expect(spots.filter(Boolean).length).toBeGreaterThan(0);
+  });
+
+  it("never places a name off the edge of the drawing", () => {
+    const spots = placeLabels(
+      [
+        { x: 4, y: 4, r: 6, width: 80 },
+        { x: 396, y: 296, r: 6, width: 80 },
+      ],
+      BOX,
+    );
+    for (const spot of spots) {
+      if (!spot) continue;
+      expect(spot.y).toBeGreaterThanOrEqual(0);
+      expect(spot.y).toBeLessThanOrEqual(BOX.height);
+    }
+  });
+
+  it("returns one answer per point, in the order given", () => {
+    const spots = placeLabels(
+      [
+        { x: 50, y: 50, r: 5, width: 20 },
+        { x: 150, y: 100, r: 5, width: 20 },
+        { x: 250, y: 200, r: 5, width: 20 },
+      ],
+      BOX,
+    );
+    expect(spots).toHaveLength(3);
   });
 });

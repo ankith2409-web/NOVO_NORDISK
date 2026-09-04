@@ -552,22 +552,137 @@ export function Tabular({
 }
 
 /**
+ * Nice round numbers for a coordinate grid.
+ *
+ * Degrees, coarse to fine. A graticule is only legible when its lines fall on
+ * numbers a reader recognises -- 41.8, 41.9 -- so the step is picked from this
+ * list rather than computed as span/5, which produces lines at 41.8437.
+ */
+const GRID_STEPS = [
+  30, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001,
+];
+
+/** The coarsest step that still puts at least `least` lines across `span`. */
+export function gridStep(span: number, least = 3): number {
+  for (const step of GRID_STEPS) if (span / step >= least) return step;
+  return GRID_STEPS[GRID_STEPS.length - 1];
+}
+
+/**
+ * Degrees written the way a map writes them.
+ *
+ * The decimal count comes from `step`, the spacing of the grid, and not from
+ * the size of the number -- which is the version this replaced, and it was
+ * wrong in a way that only shows up on a real map. Rounding by magnitude gave
+ * 41.85 and 41.90 one decimal each, so two adjacent grid lines both read
+ * "41.9°N" and the grid claimed the same latitude twice.
+ */
+export function degrees(value: number, axis: "lat" | "lon", step = 0.01): string {
+  const hemisphere = axis === "lat" ? (value < 0 ? "S" : "N") : value < 0 ? "W" : "E";
+  const places = Math.min(4, Math.max(0, Math.ceil(-Math.log10(step) + 1e-9)));
+  const size = Math.abs(value).toFixed(places);
+  // No trailing zeros, but never strip the whole fractional part of an integer.
+  const trimmed = places > 0 ? size.replace(/\.?0+$/, "") : size;
+  return `${trimmed}\u00b0${hemisphere}`;
+}
+
+//: Kilometres per degree of latitude. A degree of longitude is this times
+//: cos(latitude), which is the same squeeze the projection applies.
+const KM_PER_DEGREE = 111.32;
+
+//: Bar lengths worth printing. A scale bar reading "7.4 km" is arithmetic; one
+//: reading "5 km" is a measurement a reader can lay against the map.
+const BAR_KM = [
+  0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000,
+];
+
+/** The longest round distance that fits in `available` km. */
+export function scaleBar(available: number): number {
+  let best = BAR_KM[0];
+  for (const km of BAR_KM) if (km <= available) best = km;
+  return best;
+}
+
+/**
+ * Where to put each point's name so the names do not sit on top of each other.
+ *
+ * Greedy, in the order given -- which is largest-value first, so when two
+ * labels collide the bigger figure keeps the good position. Four candidate
+ * placements around the point; a name that fits none of them is dropped rather
+ * than overlapped, and is still readable by pointing at the point.
+ */
+export function placeLabels(
+  points: { x: number; y: number; r: number; width: number }[],
+  box: { width: number; height: number },
+): ({ x: number; y: number; anchor: "middle" | "start" | "end" } | null)[] {
+  const taken: { left: number; right: number; top: number; bottom: number }[] = [];
+  const HEIGHT = 11;
+
+  return points.map((point) => {
+    const options: { x: number; y: number; anchor: "middle" | "start" | "end" }[] = [
+      { x: point.x, y: point.y - point.r - 4, anchor: "middle" },
+      { x: point.x, y: point.y + point.r + 10, anchor: "middle" },
+      { x: point.x + point.r + 4, y: point.y + 3.5, anchor: "start" },
+      { x: point.x - point.r - 4, y: point.y + 3.5, anchor: "end" },
+    ];
+
+    for (const option of options) {
+      const left =
+        option.anchor === "middle"
+          ? option.x - point.width / 2
+          : option.anchor === "start"
+            ? option.x
+            : option.x - point.width;
+      const found = {
+        left,
+        right: left + point.width,
+        top: option.y - HEIGHT,
+        bottom: option.y + 2,
+      };
+      if (found.left < 2 || found.right > box.width - 2) continue;
+      if (found.top < 2 || found.bottom > box.height - 2) continue;
+      const clashes = taken.some(
+        (other) =>
+          found.left < other.right &&
+          found.right > other.left &&
+          found.top < other.bottom &&
+          found.bottom > other.top,
+      );
+      if (clashes) continue;
+      taken.push(found);
+      return option;
+    }
+    return null;
+  });
+}
+
+/**
  * One measure, plotted where it happened.
  *
  * Drawn as SVG from the file's own coordinates, with no tiles fetched from
  * anywhere -- this page ships as one inlined file served by a Python
  * `http.server` that routes `/` and `/api` and nothing else, so a basemap
- * request would be a blank square on an air-gapped machine. What that costs is
- * coastlines; what it buys is that every mark on the drawing came out of the
- * model.
+ * request would be a blank square on an air-gapped machine.
  *
- * The projection is deliberately the simple one: latitude and longitude
- * scaled linearly to the box, with longitude squeezed by `cos(latitude)` so a
- * degree of longitude is drawn as the shorter distance it actually is at that
- * latitude. Over one city -- which is what a store list usually is -- that is
- * indistinguishable from a proper projection and has no constants in it to get
- * wrong. Across a continent it would visibly lean, which is why the caption
- * says what the extent is rather than implying a world map.
+ * Which leaves the problem this component actually has to solve. Without a
+ * basemap the first version was a scatter plot: circles floating in an empty
+ * box, with nothing to say where on the earth they were or how far apart. A
+ * coastline was the obvious fix and is the wrong one -- the public vector sets
+ * small enough to inline are simplified to kilometres, and at the twenty-five
+ * kilometre extent of a store list that error draws shops out in the lake. A
+ * basemap that is confidently in the wrong place is worse than none.
+ *
+ * So the map is built from what *can* be computed exactly: a graticule on
+ * round degrees, a scale bar in kilometres, north, and a size legend. Those
+ * are arithmetic on the coordinates rather than a picture of the world, they
+ * cannot be off by a kilometre, and between them they answer the two questions
+ * an empty box could not -- where is this, and how big is it.
+ *
+ * The projection is the simple one: latitude and longitude scaled linearly,
+ * with longitude squeezed by `cos(latitude)` so a degree of longitude is drawn
+ * as the shorter distance it actually is at that latitude. Over one city that
+ * is indistinguishable from a proper projection and has no constants in it to
+ * get wrong.
  */
 export function Atlas({
   places,
@@ -582,32 +697,44 @@ export function Atlas({
   const [active, setActive] = useState<number | null>(null);
   const titleId = useId();
 
-  const W = 460;
-  const H = 300;
-  const PAD = 34;
+  const W = 520;
+  const H = 340;
+  // Asymmetric: the left and bottom margins carry the grid labels, and the top
+  // carries the highest point's name.
+  const PAD = { top: 18, right: 16, bottom: 26, left: 44 };
+  const box = {
+    width: W - PAD.left - PAD.right,
+    height: H - PAD.top - PAD.bottom,
+  };
 
   const lats = places.map((p) => p.lat);
   const lons = places.map((p) => p.lon);
-  const minLat = Math.min(...lats);
-  const maxLat = Math.max(...lats);
-  const minLon = Math.min(...lons);
-  const maxLon = Math.max(...lons);
+  // A margin in *data* units, so a point never sits on the frame. A single
+  // point has no span at all, hence the floor.
+  const rawLat = Math.max(...lats) - Math.min(...lats);
+  const rawLon = Math.max(...lons) - Math.min(...lons);
+  const marginLat = Math.max(rawLat * 0.12, 0.004);
+  const marginLon = Math.max(rawLon * 0.12, 0.004);
+  const minLat = Math.min(...lats) - marginLat;
+  const maxLat = Math.max(...lats) + marginLat;
+  const minLon = Math.min(...lons) - marginLon;
+  const maxLon = Math.max(...lons) + marginLon;
   const midLat = (minLat + maxLat) / 2;
 
   // A degree of longitude is shorter than a degree of latitude everywhere but
   // the equator. Without this a city block of stores comes out stretched
   // sideways, which reads as a distribution the data does not have.
   const squeeze = Math.cos((midLat * Math.PI) / 180) || 1;
-  const spanLat = Math.max(maxLat - minLat, 1e-6);
-  const spanLon = Math.max((maxLon - minLon) * squeeze, 1e-6);
+  const spanLat = maxLat - minLat;
+  const spanLon = (maxLon - minLon) * squeeze;
   // One scale for both axes, so the shape is not distorted to fill the box.
-  const scale = Math.min((W - PAD * 2) / spanLon, (H - PAD * 2) / spanLat);
-  const offsetX = (W - spanLon * scale) / 2;
-  const offsetY = (H - spanLat * scale) / 2;
+  const scale = Math.min(box.width / spanLon, box.height / spanLat);
+  const offsetX = PAD.left + (box.width - spanLon * scale) / 2;
+  const offsetY = PAD.top + (box.height - spanLat * scale) / 2;
 
   const x = (lon: number) => offsetX + (lon - minLon) * squeeze * scale;
   // Screen y grows downward and latitude grows northward, so it is flipped.
-  const y = (lat: number) => H - offsetY - (lat - minLat) * scale;
+  const y = (lat: number) => offsetY + (maxLat - lat) * scale;
 
   const biggest = Math.max(...places.map((p) => Math.abs(p.value)), 1);
   // Area, not radius, carries the value: a circle of twice the radius reads as
@@ -619,17 +746,126 @@ export function Atlas({
     places.map((p) => ({ label: p.label, value: p.value, order: "" })),
   );
 
+  // -- the grid ---------------------------------------------------------------
+
+  const latStep = gridStep(spanLat);
+  const lonStep = gridStep(maxLon - minLon);
+  const latLines: number[] = [];
+  for (
+    let at = Math.ceil(minLat / latStep) * latStep;
+    at <= maxLat;
+    at += latStep
+  ) {
+    latLines.push(Number(at.toFixed(6)));
+  }
+  const lonLines: number[] = [];
+  for (
+    let at = Math.ceil(minLon / lonStep) * lonStep;
+    at <= maxLon;
+    at += lonStep
+  ) {
+    lonLines.push(Number(at.toFixed(6)));
+  }
+
+  // -- the scale bar ----------------------------------------------------------
+
+  const kmPerPixel = 1 / (scale / KM_PER_DEGREE);
+  const km = scaleBar((box.width / 3) * kmPerPixel);
+  const barPixels = km / kmPerPixel;
+  // Below the longitude labels, not level with them. At `H - PAD.bottom + 14`
+  // the bar and the westmost label sat three pixels apart and overprinted.
+  const barY = H + 4;
+  const barX = PAD.left;
+
+  // -- the labels -------------------------------------------------------------
+
+  // Largest first, so the biggest figure wins any contested position. Roughly
+  // 5.6px a character at 10px in the page's face -- close enough to reserve
+  // the right amount of room without measuring text in the DOM.
+  const order = places
+    .map((_place, at) => at)
+    .sort((a, b) => Math.abs(places[b].value) - Math.abs(places[a].value));
+  const placed = placeLabels(
+    order.map((at) => ({
+      x: x(places[at].lon),
+      y: y(places[at].lat),
+      r: radius(places[at].value),
+      width: places[at].label.length * 5.6,
+    })),
+    { width: W, height: H - PAD.bottom },
+  );
+  const labelAt = new Map(order.map((at, position) => [at, placed[position]]));
+
   return (
     <div className="flex flex-col gap-2">
       <svg
-        viewBox={`0 0 ${W} ${H}`}
+        viewBox={`0 0 ${W} ${H + 18}`}
         className="w-full rounded border border-hairline bg-surface"
         role="img"
         aria-labelledby={titleId}
       >
         <title id={titleId}>
-          {measure} by {label}, plotted at each location&rsquo;s own coordinates
+          {measure} by {label}, plotted at each location&rsquo;s own coordinates,
+          across {Math.round(spanLat * KM_PER_DEGREE)} kilometres
         </title>
+
+        {/* The graticule. Real degrees on round numbers, which is what makes
+            this a map rather than a scatter plot: the reader can say where on
+            the earth they are looking without a basemap under it. */}
+        <g className="stroke-hairline" strokeWidth="0.5">
+          {latLines.map((at) => (
+            <line key={`lat${at}`} x1={PAD.left} x2={W - PAD.right} y1={y(at)} y2={y(at)} />
+          ))}
+          {lonLines.map((at) => (
+            <line
+              key={`lon${at}`}
+              y1={PAD.top}
+              y2={H - PAD.bottom}
+              x1={x(at)}
+              x2={x(at)}
+            />
+          ))}
+        </g>
+        <g className="fill-faint" fontSize="9">
+          {latLines.map((at) => (
+            <text key={`latt${at}`} x={PAD.left - 5} y={y(at) + 3} textAnchor="end">
+              {degrees(at, "lat", latStep)}
+            </text>
+          ))}
+          {lonLines.map((at) => (
+            <text
+              key={`lont${at}`}
+              x={x(at)}
+              y={H - PAD.bottom + 11}
+              textAnchor="middle"
+            >
+              {degrees(at, "lon", lonStep)}
+            </text>
+          ))}
+        </g>
+        <rect
+          x={PAD.left}
+          y={PAD.top}
+          width={box.width}
+          height={box.height}
+          fill="none"
+          className="stroke-edge"
+          strokeWidth="0.8"
+        />
+
+        {/* North, so the drawing declares its orientation rather than assuming
+            it. Cheap, and it is the first thing a reader looks for. */}
+        <g
+          transform={`translate(${W - PAD.right - 12} ${PAD.top + 12})`}
+          className="fill-faint stroke-faint"
+        >
+          <line x1="0" y1="8" x2="0" y2="-6" strokeWidth="0.8" />
+          <polygon points="0,-9 3,-3 -3,-3" stroke="none" />
+          <text x="0" y="18" textAnchor="middle" fontSize="8" stroke="none">
+            N
+          </text>
+        </g>
+
         {places.map((place, at) => (
           <circle
             key={place.label}
@@ -640,28 +876,83 @@ export function Atlas({
               "cursor-pointer transition-opacity",
               rank[at] < LEADERS ? "fill-accent" : "fill-edge",
             )}
-            fillOpacity={active === null || active === at ? 0.75 : 0.3}
+            fillOpacity={active === null || active === at ? 0.72 : 0.28}
             stroke="var(--color-accent)"
-            strokeWidth={active === at ? 1.6 : 0.6}
+            strokeWidth={active === at ? 1.8 : 0.7}
             onMouseEnter={() => setActive(at)}
             onMouseLeave={() => setActive(null)}
           />
         ))}
-        {/* The labels last, so a point never covers a name. */}
-        {places.map((place, at) =>
-          rank[at] < LEADERS || active === at ? (
+
+        {/* Names last, so a point never covers one. Every point that can hold a
+            name gets one -- a store list is a dozen places, not a thousand,
+            and "which one is that" is the question a map is asked. */}
+        {places.map((place, at) => {
+          const spot = labelAt.get(at);
+          if (!spot && active !== at) return null;
+          const where = spot ?? {
+            x: x(place.lon),
+            y: y(place.lat) - radius(place.value) - 4,
+            anchor: "middle" as const,
+          };
+          return (
             <text
               key={`${place.label}-name`}
-              x={x(place.lon)}
-              y={y(place.lat) - radius(place.value) - 4}
-              textAnchor="middle"
+              x={where.x}
+              y={where.y}
+              textAnchor={where.anchor}
               fontSize="10"
-              className="pointer-events-none fill-ink"
+              className={cx(
+                "pointer-events-none",
+                active === at || rank[at] < LEADERS
+                  ? "fill-ink font-medium"
+                  : "fill-muted",
+              )}
+              // A halo, so a name crossing a circle stays readable without a
+              // solid box behind it hiding the data.
+              stroke="var(--color-surface)"
+              strokeWidth="2.4"
+              paintOrder="stroke"
             >
               {place.label}
             </text>
-          ) : null,
-        )}
+          );
+        })}
+
+        {/* Scale, so "how far apart" has an answer. Computed from the
+            projection, so it is exact rather than indicative. */}
+        <g className="fill-muted">
+          <line
+            x1={barX}
+            x2={barX + barPixels}
+            y1={barY}
+            y2={barY}
+            className="stroke-muted"
+            strokeWidth="1.2"
+          />
+          <line x1={barX} x2={barX} y1={barY - 3} y2={barY + 3} className="stroke-muted" strokeWidth="1.2" />
+          <line
+            x1={barX + barPixels}
+            x2={barX + barPixels}
+            y1={barY - 3}
+            y2={barY + 3}
+            className="stroke-muted"
+            strokeWidth="1.2"
+          />
+          <text x={barX + barPixels + 6} y={barY + 3} fontSize="9">
+            {km < 1 ? `${km * 1000} m` : `${km} km`}
+          </text>
+        </g>
+
+        {/* And what the circles mean. Area is proportional to the value, which
+            nobody can read off a picture without being told the biggest. */}
+        <g transform={`translate(${W - PAD.right - 120} ${barY})`} className="fill-muted">
+          <circle cx="6" cy="0" r="4" className="fill-edge" fillOpacity="0.72" />
+          <circle cx="26" cy="0" r="10" className="fill-accent" fillOpacity="0.72" />
+          <text x="42" y="3" fontSize="9">
+            area = {measure}
+          </text>
+        </g>
       </svg>
       <Readout
         slice={
@@ -670,7 +961,9 @@ export function Atlas({
             : { label: places[active].label, value: places[active].value, order: "" }
         }
         total={0}
-        fallback={`${places.length} ${label.toLowerCase()}s, at the coordinates this file records. Point at one for its figure.`}
+        fallback={`${places.length} ${label.toLowerCase()}s across ${
+          Math.round(spanLat * KM_PER_DEGREE * 10) / 10
+        } km, at the coordinates this file records. Point at one for its figure.`}
       />
     </div>
   );
