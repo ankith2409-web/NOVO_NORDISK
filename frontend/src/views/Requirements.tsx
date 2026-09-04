@@ -109,6 +109,14 @@ export function Requirements() {
               tone={data.counts.low > 0 ? "review" : "neutral"}
               hint="Low confidence"
             />
+            {data.counts.uncorroborated > 0 && (
+              <Stat
+                label="Not shown in use"
+                value={data.counts.uncorroborated}
+                tone="review"
+                hint="Declared by the model, but no report tile shows it and no other measure reads it. A question for a person, not a defect."
+              />
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5">
@@ -235,9 +243,19 @@ function Row({ requirement }: { requirement: Requirement }) {
           <p className="mt-1 text-xs text-muted">
             <RichText>{requirement.rationale}</RichText>
           </p>
+          {/* Kept apart from the rationale on purpose. Confidence says where
+              the statement came from; this says whether anything corroborates
+              that the metric is used, and the reader has to be able to see
+              those are different questions. */}
+          {requirement.caveat && (
+            <p className="mt-1 text-xs text-review">{requirement.caveat}</p>
+          )}
         </div>
         <div className="flex flex-none flex-col items-end gap-1">
           <ConfidenceChip level={requirement.confidence} />
+          {requirement.corroboration === "nothing_in_this_file" && (
+            <Chip tone="review">not shown in use</Chip>
+          )}
           <Chip>{requirement.category}</Chip>
         </div>
       </div>

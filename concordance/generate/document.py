@@ -112,6 +112,9 @@ class Document:
             "medium": sum(1 for r in reqs if r.confidence is Confidence.MEDIUM),
             "low": sum(1 for r in reqs if r.confidence is Confidence.LOW),
             "needs_review": len(self.review_queue),
+            # Metrics nothing in the file shows in use. A separate axis from
+            # confidence: see `requirements.Corroboration`.
+            "uncorroborated": sum(1 for r in reqs if r.uncorroborated),
         }
 
 
@@ -360,6 +363,11 @@ def to_markdown(document: Document) -> str:
         f"**Requirements:** {counts['requirements']} "
         f"({counts['high']} stated, {counts['medium']} inferred, {counts['low']} need confirmation)"
     )
+    if counts.get("uncorroborated"):
+        lines.append(
+            f"**In use:** {counts['uncorroborated']} metric(s) below are not shown on "
+            "any report page in this file and are read by no other measure  "
+        )
     if document.sql:
         translated = sum(1 for t in document.sql.values() if getattr(t, "sql", ""))
         grain = ", ".join(f"`{g}`" for g in document.sql_grain) or "the whole model"
@@ -408,6 +416,13 @@ def to_markdown(document: Document) -> str:
             lines.append("")
             lines.append(f"*Confidence:* {requirement.confidence.value}")
             lines.append("")
+            # Deliberately its own line rather than folded into the rationale.
+            # Confidence says where the statement came from; this says whether
+            # anything corroborates that the metric is actually used, and a
+            # reader has to be able to see the two are different questions.
+            if requirement.caveat:
+                lines.append(f"*In use:* {requirement.caveat}")
+                lines.append("")
             # Show the implementation only when a single piece of evidence *is*
             # the implementation. For a requirement spanning many objects, one
             # arbitrary detail line would misrepresent what it is bound to.
@@ -477,10 +492,33 @@ def to_markdown(document: Document) -> str:
 #: omitting them silently, which makes the document look complete when it is
 #: not, or inventing them, which is the exact failure this whole project
 #: exists to prevent.
+#: What a complete BRD needs that no semantic model records.
+#:
+#: Named rather than left out, and named precisely: a reader who is told "the
+#: audience is not recorded" can go and ask somebody, while a reader told
+#: nothing assumes the question was considered and answered.
+#:
+#: Two of these are here because a reviewer asked for them by name, and both
+#: are cases where the model carries a *partial* signal that must not be
+#: mistaken for the whole answer. Perspectives and security roles say who
+#: *may* see a metric, which is a permission and not a persona; and an
+#: author's description is the only place intent is ever written down.
 _NOT_IN_A_MODEL = (
     (
         "Business objectives and success measures",
         "why this reporting exists and what it is expected to change",
+    ),
+    (
+        "Which audience each metric is for",
+        "who actually reads it -- a regional manager, a finance team, an auditor. "
+        "Where this model defines perspectives or security roles they are documented "
+        "above, but those record who *may* see a metric, not who relies on it",
+    ),
+    (
+        "Why each metric matters",
+        "the business reason a quantity is worth tracking. The model records this "
+        "only where an author wrote a description; everywhere else its existence is "
+        "the only evidence of its importance, which is not evidence of importance",
     ),
     (
         "Stakeholders and approvers",
@@ -541,7 +579,14 @@ def front_matter_blocks(
     constraints = [
         "This document was generated from the model itself, so it describes what is "
         "implemented rather than what was intended. Where the two differ, the model is "
-        "what this reports."
+        "what this reports.",
+        "That cuts both ways, and it is worth stating plainly: a metric left behind by "
+        "a developer is declared by the model exactly as clearly as the company's "
+        "headline figure, so both are stated here with the same confidence. Confidence "
+        "records where a statement came from, never whether the thing it describes is "
+        "sound business logic. Where nothing in this file shows a metric being used -- "
+        "no report tile displays it and no other measure reads it -- that is marked on "
+        "the requirement itself, as a question for a person rather than a verdict.",
     ]
     bullets: list[str] = []
     if document.limits:

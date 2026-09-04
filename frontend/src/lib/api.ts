@@ -94,6 +94,12 @@ export interface Requirement {
   statement: string;
   rationale: string;
   confidence: Confidence;
+  /** Whether anything in the file shows this metric being used. A different
+   *  question from confidence, which is only about where the statement came
+   *  from -- a measure nobody uses is still declared by the model. */
+  corroboration: string;
+  /** That, in words. Empty when there is nothing to qualify. */
+  caveat: string;
   needs_review: boolean;
   evidence: Evidence[];
 }
@@ -101,7 +107,14 @@ export interface Requirement {
 export interface RequirementsPayload {
   kind: string;
   model: string;
-  counts: { total: number; high: number; medium: number; low: number };
+  counts: {
+    total: number;
+    high: number;
+    medium: number;
+    low: number;
+    /** Metrics nothing in the file shows in use. */
+    uncorroborated: number;
+  };
   requirements: Requirement[];
 }
 

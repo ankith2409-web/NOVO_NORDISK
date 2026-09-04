@@ -56,6 +56,37 @@ class Kind(Enum):
     FUNCTIONAL = "functional"
 
 
+class Corroboration(Enum):
+    """Whether anything in the file shows this metric actually being used.
+
+    A second axis, and the reason it exists is a fair criticism of the first
+    one: `Confidence` says where a statement came from, never whether the
+    thing it describes is good business logic. A measure left behind by a
+    developer is *stated by the model* exactly as loudly as the company's
+    headline KPI, so both were being asserted at HIGH confidence -- and a
+    reader could not tell them apart.
+
+    Confidence is not the place to fix that. Downgrading a real, declared
+    measure to "medium" would be a lie about provenance to smuggle in a hint
+    about quality. So quality-of-evidence gets its own axis, computed from
+    facts the file carries: is the metric shown on a report page, or read by
+    another measure, or neither?
+
+    None of these is a verdict. A metric nothing corroborates may be brand
+    new, or consumed by something outside this file. It is flagged as
+    *uncorroborated*, which is a question for a person, not a defect.
+    """
+
+    #: A report tile shows it. The strongest evidence a file can carry.
+    SHOWN_ON_REPORT = "shown_on_report"
+    #: Another measure reads it, so it is a building block.
+    READ_BY_A_MEASURE = "read_by_a_measure"
+    #: Neither. Worth a human's attention before this is signed off.
+    NOTHING_IN_THIS_FILE = "nothing_in_this_file"
+    #: The requirement is not about a metric, so the question does not arise.
+    NOT_A_METRIC = "not_a_metric"
+
+
 @dataclass(frozen=True)
 class Evidence:
     """The extracted fact a requirement rests on."""
@@ -74,6 +105,16 @@ class Requirement:
     rationale: str
     confidence: Confidence
     evidence: tuple[Evidence, ...] = field(default_factory=tuple)
+    #: Whether anything in the file shows this metric in use. See `Corroboration`.
+    corroboration: Corroboration = Corroboration.NOT_A_METRIC
+    #: What the reader should know about that, in words. Empty when there is
+    #: nothing to qualify.
+    caveat: str = ""
+
+    @property
+    def uncorroborated(self) -> bool:
+        """True for a metric nothing in this file shows being used."""
+        return self.corroboration is Corroboration.NOTHING_IN_THIS_FILE
 
     @property
     def needs_review(self) -> bool:
@@ -97,6 +138,39 @@ class RequirementDeriver:
         self.graph = graph
         self.model = graph.model
         self._system_tables = {t.name for t in self.model.tables if t.is_system}
+        # Every measure a report tile projects, by name. A `.SemanticModel`
+        # folder carries no report, so this is empty there and corroboration
+        # falls back to the dependency graph alone -- which is the honest
+        # outcome: the absence of a report is not evidence of disuse.
+        self._on_report = {
+            field.name
+            for visual in self.model.visuals()
+            for field in visual.fields
+        }
+
+    def _corroborate(self, measure) -> tuple["Corroboration", str]:
+        """Whether anything in this file shows a measure being used."""
+        if measure.name in self._on_report:
+            return (
+                Corroboration.SHOWN_ON_REPORT,
+                "",
+            )
+        if self.graph.dependents_of(measure_id(measure.table, measure.name)):
+            return (Corroboration.READ_BY_A_MEASURE, "")
+
+        has_report = bool(self._on_report)
+        where = (
+            "no report tile in this file shows it and no other measure reads it"
+            if has_report
+            else "no other measure reads it, and this source carries no report layer "
+            "to check against"
+        )
+        return (
+            Corroboration.NOTHING_IN_THIS_FILE,
+            f"Nothing in this file shows this metric in use: {where}. It may be new, "
+            "consumed by something outside this file, or left behind -- the model "
+            "cannot tell those apart, so a person should.",
+        )
 
     def derive(self) -> list[Requirement]:
         out: list[Requirement] = []
@@ -155,6 +229,7 @@ class RequirementDeriver:
                 )
                 continue
 
+            corroboration, caveat = self._corroborate(measure)
             detected = patterns.detect(measure.expression)
             behaviour = detected[0] if detected else None
 
@@ -192,6 +267,8 @@ class RequirementDeriver:
                     ),
                     confidence=Confidence.HIGH,
                     evidence=evidence,
+                    corroboration=corroboration,
+                    caveat=caveat,
                 )
             )
 

@@ -253,6 +253,10 @@ def _requirement_dict(requirement: Requirement) -> dict[str, Any]:
         "statement": requirement.statement,
         "rationale": requirement.rationale,
         "confidence": requirement.confidence.value,
+        # A second axis. Confidence says where the statement came from;
+        # this says whether anything in the file shows the metric in use.
+        "corroboration": requirement.corroboration.value,
+        "caveat": requirement.caveat,
         "needs_review": requirement.needs_review,
         "evidence": [
             {
@@ -376,6 +380,7 @@ def requirements(context: ApiContext, params: Params) -> dict[str, Any]:
                 level.value: sum(1 for r in derived if r.confidence is level)
                 for level in Confidence
             },
+            "uncorroborated": sum(1 for r in derived if r.uncorroborated),
         },
         "requirements": [_requirement_dict(r) for r in derived],
     }
