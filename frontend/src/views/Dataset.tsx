@@ -716,7 +716,11 @@ function MeasureRow({
           // Deliberately not an empty panel. The reason is the useful content
           // here, and a reader who sees only a blank cannot tell "we could not"
           // from "we did not try".
-          <div className="flex flex-col gap-1.5 rounded border border-review/40 bg-review-soft px-3 py-2.5">
+          // `self-start` so the panel is the height of its own words. The grid
+          // stretches both columns to the taller one, and a long DAX expression
+          // beside a three-line explanation left most of a screen of empty
+          // amber box, which reads as something failing to load.
+          <div className="flex flex-col gap-1.5 self-start rounded border border-review/40 bg-review-soft px-3 py-2.5">
             <span className="font-mono text-[10px] tracking-[0.08em] text-review uppercase">
               no single query can do this
             </span>

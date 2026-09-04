@@ -51,6 +51,13 @@ MAX_SLICES = 10
 _NOT_A_DIMENSION = ("id", "key", "guid", "code", "url", "image", "pic", "photo")
 
 
+#: Points on a time series. Higher than `MAX_SLICES` on purpose: a monthly
+#: series over three years is thirty-six points and is *more* readable for
+#: having all of them, whereas folding it would print "26 more" and destroy the
+#: one thing a time chart is for.
+MAX_PERIODS = 120
+
+
 class Unqueryable(RuntimeError):
     """The engine answered nothing at all, so silence is not a finding."""
 
@@ -118,6 +125,10 @@ class Dashboard:
     years: tuple[int, ...] = ()
     #: The year actually applied, or None for every year.
     year: int | None = None
+    #: The date periods this measure can be grouped into -- see `usable_periods`.
+    periods: tuple[str, ...] = ()
+    #: The measure over time, when a period was asked for and one could be cut.
+    over_time: "Breakdown | None" = None
 
 
 def _named_like_an_id(column: str) -> bool:
@@ -237,6 +248,154 @@ def usable_years(model, connection, measure: str) -> list[int]:
     table, column = calendar
     probe = translate(model, found, only_year=(table, column, years[0]))
     return years if probe.status is Status.EXACT else []
+
+
+def usable_periods(model, connection, measure: str) -> list[str]:
+    """The date periods this measure can honestly be grouped into.
+
+    Two filters, both measured rather than reasoned about.
+
+    The translation has to reach the calendar from the table this measure
+    reads -- the same join-path question `usable_years` answers, and answered
+    the same way: by trying it.
+
+    Then each period has to produce a *chart*. A period is offered only if the
+    data actually falls into at least `MIN_CLASSES` buckets of it and no more
+    than `MAX_PERIODS`. That is what keeps "by hour" off a model whose dates
+    are all midnight (one bucket, no chart) and "by day" off a decade of daily
+    rows (3,650 points, no chart either). Both are properties of the data, so
+    both are asked of the data.
+    """
+    from concordance.generate.sql import PERIODS, Status, translate
+
+    calendar = calendar_column(model)
+    found = next((m for m in model.measures if m.name == measure), None)
+    if calendar is None or found is None or connection is None:
+        return []
+
+    table, column = calendar
+    probe = translate(model, found, period=(PERIODS[0], table, column))
+    if probe.status is not Status.EXACT:
+        return []
+
+    quoted = f'"{table.replace(chr(34), chr(34) * 2)}"."{column.replace(chr(34), chr(34) * 2)}"'
+    offered: list[str] = []
+    for period in PERIODS:
+        try:
+            rows = connection.execute(
+                f"SELECT COUNT(DISTINCT DATE_TRUNC('{period}', {quoted})) "
+                f'FROM "{table.replace(chr(34), chr(34) * 2)}"'
+            ).fetchone()
+        except Exception:  # noqa: BLE001 - a period that will not count is not offered
+            continue
+        if rows and rows[0] and MIN_CLASSES <= int(rows[0]) <= MAX_PERIODS:
+            offered.append(period)
+    return offered
+
+
+def over_time(
+    model, connection, measure: str, period: str, year: int | None = None
+) -> Breakdown:
+    """One measure grouped by a calendar period rather than by a dimension.
+
+    Deliberately not folded. Every other breakdown keeps ten bars and sums the
+    tail, because the eleventh-largest category is genuinely less interesting
+    than the total it belongs to. A time series has no such tail: the last
+    twelve months are not "the rest", they are the recent half of the picture,
+    and a chart that folded them would answer the opposite question.
+    """
+    from concordance.generate.sql import Status, translate
+
+    found = next((m for m in model.measures if m.name == measure), None)
+    calendar = calendar_column(model)
+    by = f"by {period}"
+    if found is None or calendar is None:
+        return Breakdown(
+            measure=measure, by=by, table="", column=period,
+            reason="this model carries no single calendar to group time by",
+        )
+
+    table, column = calendar
+    only_year = (table, column, year) if year is not None else None
+    translated = translate(
+        model, found, only_year=only_year, period=(period, table, column)
+    )
+    if translated.status is not Status.EXACT:
+        return Breakdown(
+            measure=measure, by=by, table=table, column=column,
+            reason=translated.reason,
+        )
+
+    try:
+        cursor = connection.execute(translated.sql)
+        columns = [c[0] for c in cursor.description or []]
+        rows = cursor.fetchall()
+    except Exception as exc:  # noqa: BLE001 - a bad query is a finding, not a crash
+        return Breakdown(
+            measure=measure, by=by, table=table, column=column, sql=translated.sql,
+            reason=f"the generated query did not run: {exc}",
+        )
+
+    wanted = measure.casefold()
+    at = next((i for i, name in enumerate(columns) if name.casefold() == wanted), None)
+    bucket_at = next((i for i, name in enumerate(columns) if name.casefold() == period), None)
+    if at is None or bucket_at is None:
+        return Breakdown(
+            measure=measure, by=by, table=table, column=column, sql=translated.sql,
+            reason=f"the query returned no column named {measure!r}",
+        )
+
+    slices: list[Slice] = []
+    for row in rows:
+        value = row[at]
+        moment = row[bucket_at]
+        if moment is None or value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        # The bucket *is* its own anchor -- it is a real timestamp out of the
+        # query, so date order needs no separate lookup here.
+        stamp = moment.isoformat() if hasattr(moment, "isoformat") else str(moment)
+        slices.append(
+            Slice(label=_period_label(moment, period), value=float(value), order=stamp)
+        )
+
+    if len(slices) < MIN_CLASSES:
+        return Breakdown(
+            measure=measure, by=by, table=table, column=column, sql=translated.sql,
+            reason=(
+                f"the calendar in this file falls into fewer than {MIN_CLASSES} "
+                f"{period}s, so there is no series to draw"
+            ),
+        )
+
+    slices.sort(key=lambda s: s.order)
+    slices = slices[:MAX_PERIODS]
+    return Breakdown(
+        measure=measure, by=by, table=table, column=column,
+        slices=tuple(slices), sql=translated.sql,
+        whole=None, additive=False,
+    )
+
+
+#: How each period is written on an axis. Year is bare; the rest carry enough
+#: to be unambiguous across years, because `Jan` appearing twice in one chart
+#: with no year on it is the mistake this avoids.
+_PERIOD_FORMATS = {
+    "year": "%Y",
+    "month": "%b %Y",
+    "day": "%d %b %Y",
+    "hour": "%d %b %H:00",
+}
+
+
+def _period_label(moment: Any, period: str) -> str:
+    """One bucket, written the way it would be said."""
+    if not hasattr(moment, "strftime"):
+        return str(moment)
+    if period == "quarter":
+        return f"Q{(moment.month - 1) // 3 + 1} {moment.year}"
+    return moment.strftime(_PERIOD_FORMATS.get(period, "%Y-%m-%d"))
 
 
 def _anchors(model, connection, table: str, column: str) -> dict[str, str]:
@@ -542,9 +701,20 @@ def _whole(model, connection, measure: str, year: int | None) -> float | None:
 
 
 def build(
-    model, connection, measure: str, most: int = 4, year: int | None = None
+    model,
+    connection,
+    measure: str,
+    most: int = 4,
+    year: int | None = None,
+    period: str | None = None,
 ) -> Dashboard:
-    """Every chart worth drawing for one measure, optionally within one year."""
+    """Every chart worth drawing for one measure, optionally within one year.
+
+    ``period`` additionally cuts the measure over time -- by year, quarter,
+    month, day or hour. It is a separate chart rather than one of the four,
+    because time is the one dimension every reader asks about first and the
+    only one whose bars must not be reordered by size.
+    """
     if connection is None:
         return Dashboard(measure=measure, available=False, reason="no data is loaded")
 
@@ -573,9 +743,17 @@ def build(
 
     drawn.sort(key=lambda b: len(b.slices))
 
+    periods = usable_periods(model, connection, measure)
+    series = None
+    if period is not None and period in periods:
+        cut = over_time(model, connection, measure, period, year=year)
+        series = cut if cut.drawable else None
+
     return Dashboard(
         measure=measure,
-        available=bool(drawn),
+        # A model with no chartable dimension but a readable calendar still has
+        # something to show, so the time series counts towards "available".
+        available=bool(drawn) or series is not None,
         reason=(
             ""
             if drawn
@@ -592,4 +770,6 @@ def build(
         ),
         years=tuple(offered),
         year=year,
+        periods=tuple(periods),
+        over_time=series,
     )

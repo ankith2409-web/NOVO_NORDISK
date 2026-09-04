@@ -1060,6 +1060,11 @@ def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
     raw_year = _one(params, "year", required=False)
     year = int(raw_year) if raw_year.isdigit() else None
 
+    # Same posture as the year: `build` drops a period it did not itself offer,
+    # and the response says which periods exist, so a caller cannot talk the
+    # dashboard into a cut the data does not support.
+    period = _one(params, "period", required=False) or None
+
     connection, _rows, reason = context.data()
     if connection is None:
         return {
@@ -1071,34 +1076,80 @@ def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
             "dimensions": [],
             "years": [],
             "year": None,
+            "periods": [],
+            "over_time": None,
         }
 
-    built = build(model, connection, wanted, year=year)
+    built = build(model, connection, wanted, year=year, period=period)
+
+    def rendered(b) -> dict[str, Any]:
+        return {
+            "by": b.by,
+            "table": b.table,
+            "column": b.column,
+            "total": b.total,
+            "whole": b.whole,
+            "additive": b.additive,
+            "folded": b.folded,
+            "sql": b.sql,
+            "reason": b.reason,
+            "slices": [
+                {"label": s.label, "value": s.value, "order": s.order} for s in b.slices
+            ],
+        }
+
     return {
         "model": model.name,
         "measure": built.measure,
         "available": built.available,
         "reason": built.reason,
-        "breakdowns": [
-            {
-                "by": b.by,
-                "table": b.table,
-                "column": b.column,
-                "total": b.total,
-                "whole": b.whole,
-                "additive": b.additive,
-                "folded": b.folded,
-                "sql": b.sql,
-                "slices": [
-                    {"label": s.label, "value": s.value, "order": s.order}
-                    for s in b.slices
-                ],
-            }
-            for b in built.breakdowns
-        ],
+        "breakdowns": [rendered(b) for b in built.breakdowns],
         "dimensions": [dict(d) for d in built.dimensions],
         "years": list(built.years),
         "year": built.year,
+        "periods": list(built.periods),
+        "over_time": rendered(built.over_time) if built.over_time else None,
+    }
+
+
+def atlas(context: ApiContext, params: Params) -> dict[str, Any]:
+    """One measure, plotted where it happened.
+
+    Answered for a model that records coordinates and refused, with the reason,
+    for one that does not. Turning a postal code into a position would mean a
+    lookup against data outside the file, and a map drawn from a guess puts a
+    location somewhere it is not.
+    """
+    from concordance.generate.geo import build
+
+    model = context.graph.model
+    wanted = _one(params, "measure", required=False)
+    if not wanted:
+        computed = {v.measure for v in context.evaluated().values if v.computed}
+        wanted = next(
+            (m.name for m in model.measures if m.name in computed),
+            model.measures[0].name if model.measures else "",
+        )
+
+    connection, _rows, reason = context.data()
+    if connection is None:
+        return {"model": model.name, "measure": wanted, "available": False,
+                "reason": reason, "places": [], "bounds": []}
+
+    built = build(model, connection, wanted)
+    return {
+        "model": model.name,
+        "measure": built.measure,
+        "available": built.available,
+        "reason": built.reason,
+        "table": built.table,
+        "label_column": built.label_column,
+        "sql": built.sql,
+        "bounds": list(built.bounds),
+        "places": [
+            {"label": p.label, "lat": p.latitude, "lon": p.longitude, "value": p.value}
+            for p in built.places
+        ],
     }
 
 
@@ -1107,6 +1158,7 @@ ROUTES: dict[str, Callable[[ApiContext, Params], dict[str, Any]]] = {
     "/api/search": find,
     "/api/values": values,
     "/api/dashboard": dashboard,
+    "/api/map": atlas,
     "/api/graph": graph,
     "/api/tables": tables,
     "/api/table": table,

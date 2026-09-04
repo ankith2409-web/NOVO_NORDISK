@@ -386,6 +386,8 @@ export interface BreakdownPayload {
   folded: number;
   /** The query that produced these numbers. */
   sql: string;
+  /** Why there is nothing to draw, when there is not. */
+  reason?: string;
   slices: Slice[];
 }
 
@@ -404,6 +406,36 @@ export interface DashboardPayload {
   years: number[];
   /** The year actually applied, or null for every year. */
   year: number | null;
+  /** Calendar periods this measure can be cut over -- "month", "quarter" and
+   *  so on. Offered only where the data really falls into that many buckets,
+   *  so a model whose dates are all midnight is never offered "by hour". */
+  periods: string[];
+  /** The measure over time, when a period was asked for. Kept apart from
+   *  `breakdowns` because a time series must not be reordered by size. */
+  over_time: BreakdownPayload | null;
+}
+
+/** One location, and the measure's value there. */
+export interface Place {
+  label: string;
+  lat: number;
+  lon: number;
+  value: number;
+}
+
+export interface MapPayload {
+  model: string;
+  measure: string;
+  available: boolean;
+  /** Why there is no map. Stated rather than left blank -- a model with no
+   *  coordinates cannot be mapped without inventing positions. */
+  reason: string;
+  table?: string;
+  label_column?: string;
+  sql?: string;
+  /** `[minLat, minLon, maxLat, maxLon]` over the plotted points. */
+  bounds: number[];
+  places: Place[];
 }
 
 export interface ReportPage {
@@ -897,10 +929,15 @@ export const api = {
   /** One measure split every way the model can honestly split it. Runs against
    *  the same rows `values` loaded, so a bar and the card agree by
    *  construction rather than by coincidence. */
-  dashboard: (measure?: string, year?: number | null) => {
+  /** One measure plotted where it happened, when the model records where. */
+  atlas: (measure?: string) =>
+    get<MapPayload>("/map", measure ? { measure } : undefined),
+
+  dashboard: (measure?: string, year?: number | null, period?: string | null) => {
     const params: Record<string, string> = {};
     if (measure) params.measure = measure;
     if (year != null) params.year = String(year);
+    if (period) params.period = period;
     return get<DashboardPayload>(
       "/dashboard",
       Object.keys(params).length ? params : undefined,

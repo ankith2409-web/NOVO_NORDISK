@@ -550,3 +550,128 @@ export function Tabular({
     </div>
   );
 }
+
+/**
+ * One measure, plotted where it happened.
+ *
+ * Drawn as SVG from the file's own coordinates, with no tiles fetched from
+ * anywhere -- this page ships as one inlined file served by a Python
+ * `http.server` that routes `/` and `/api` and nothing else, so a basemap
+ * request would be a blank square on an air-gapped machine. What that costs is
+ * coastlines; what it buys is that every mark on the drawing came out of the
+ * model.
+ *
+ * The projection is deliberately the simple one: latitude and longitude
+ * scaled linearly to the box, with longitude squeezed by `cos(latitude)` so a
+ * degree of longitude is drawn as the shorter distance it actually is at that
+ * latitude. Over one city -- which is what a store list usually is -- that is
+ * indistinguishable from a proper projection and has no constants in it to get
+ * wrong. Across a continent it would visibly lean, which is why the caption
+ * says what the extent is rather than implying a world map.
+ */
+export function Atlas({
+  places,
+  measure,
+  label,
+}: {
+  places: { label: string; lat: number; lon: number; value: number }[];
+  measure: string;
+  /** What one point is, e.g. "Store". */
+  label: string;
+}) {
+  const [active, setActive] = useState<number | null>(null);
+  const titleId = useId();
+
+  const W = 460;
+  const H = 300;
+  const PAD = 34;
+
+  const lats = places.map((p) => p.lat);
+  const lons = places.map((p) => p.lon);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLon = Math.min(...lons);
+  const maxLon = Math.max(...lons);
+  const midLat = (minLat + maxLat) / 2;
+
+  // A degree of longitude is shorter than a degree of latitude everywhere but
+  // the equator. Without this a city block of stores comes out stretched
+  // sideways, which reads as a distribution the data does not have.
+  const squeeze = Math.cos((midLat * Math.PI) / 180) || 1;
+  const spanLat = Math.max(maxLat - minLat, 1e-6);
+  const spanLon = Math.max((maxLon - minLon) * squeeze, 1e-6);
+  // One scale for both axes, so the shape is not distorted to fill the box.
+  const scale = Math.min((W - PAD * 2) / spanLon, (H - PAD * 2) / spanLat);
+  const offsetX = (W - spanLon * scale) / 2;
+  const offsetY = (H - spanLat * scale) / 2;
+
+  const x = (lon: number) => offsetX + (lon - minLon) * squeeze * scale;
+  // Screen y grows downward and latitude grows northward, so it is flipped.
+  const y = (lat: number) => H - offsetY - (lat - minLat) * scale;
+
+  const biggest = Math.max(...places.map((p) => Math.abs(p.value)), 1);
+  // Area, not radius, carries the value: a circle of twice the radius reads as
+  // four times the quantity, which would overstate every large point.
+  const radius = (v: number) => 4 + Math.sqrt(Math.abs(v) / biggest) * 13;
+  // `ranks` speaks in slices, so the places are lent that shape for one call.
+  // Only label and value matter to it; a place has no time anchor.
+  const rank = ranks(
+    places.map((p) => ({ label: p.label, value: p.value, order: "" })),
+  );
+
+  return (
+    <div className="flex flex-col gap-2">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="w-full rounded border border-hairline bg-surface"
+        role="img"
+        aria-labelledby={titleId}
+      >
+        <title id={titleId}>
+          {measure} by {label}, plotted at each location&rsquo;s own coordinates
+        </title>
+        {places.map((place, at) => (
+          <circle
+            key={place.label}
+            cx={x(place.lon)}
+            cy={y(place.lat)}
+            r={radius(place.value)}
+            className={cx(
+              "cursor-pointer transition-opacity",
+              rank[at] < LEADERS ? "fill-accent" : "fill-edge",
+            )}
+            fillOpacity={active === null || active === at ? 0.75 : 0.3}
+            stroke="var(--color-accent)"
+            strokeWidth={active === at ? 1.6 : 0.6}
+            onMouseEnter={() => setActive(at)}
+            onMouseLeave={() => setActive(null)}
+          />
+        ))}
+        {/* The labels last, so a point never covers a name. */}
+        {places.map((place, at) =>
+          rank[at] < LEADERS || active === at ? (
+            <text
+              key={`${place.label}-name`}
+              x={x(place.lon)}
+              y={y(place.lat) - radius(place.value) - 4}
+              textAnchor="middle"
+              fontSize="10"
+              className="pointer-events-none fill-ink"
+            >
+              {place.label}
+            </text>
+          ) : null,
+        )}
+      </svg>
+      <Readout
+        slice={
+          active === null
+            ? null
+            : { label: places[active].label, value: places[active].value, order: "" }
+        }
+        total={0}
+        fallback={`${places.length} ${label.toLowerCase()}s, at the coordinates this file records. Point at one for its figure.`}
+      />
+    </div>
+  );
+}

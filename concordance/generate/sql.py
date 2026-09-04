@@ -118,6 +118,14 @@ _ONE_PERIOD_BACK: dict[str, str] = {
 }
 
 
+#: The periods a date column can be grouped into, coarsest first. `DATE_TRUNC`
+#: takes each of these on every dialect this project emits, which is why the
+#: list stops here: a "week" truncation disagrees between platforms about which
+#: day a week starts on, and a chart whose buckets shift with the warehouse is
+#: worse than one that was never offered.
+PERIODS: tuple[str, ...] = ("year", "quarter", "month", "day", "hour")
+
+
 class Status(Enum):
     """How far the translation got."""
 
@@ -1103,6 +1111,7 @@ def translate(
     grain: tuple[str, ...] = (),
     quote: str = '"',
     only_year: tuple[str, str, int] | None = None,
+    period: tuple[str, str, str] | None = None,
 ) -> Translation:
     """Render one measure as SQL at ``grain``, or say why it cannot be.
 
@@ -1117,7 +1126,30 @@ def translate(
     denominator drawn from every year, which is exactly the class of quiet
     wrong answer this project exists to avoid. The year is rendered as an
     integer, never interpolated as text, so it cannot carry SQL with it.
+
+    ``period`` groups by a date column truncated to a calendar period, as
+    ``(period, table, column)``. It is a *grain*, not a filter: it joins the
+    ``GROUP BY`` alongside anything in ``grain``, so "Net Sales by month" and
+    "Net Sales by month and by store" are both sayable. Truncation happens in
+    the query rather than on the returned labels, because grouping by a
+    rendered month name would put January 2019 and January 2020 in one bucket
+    and there would be nothing on screen to say it had.
     """
+    if period is not None and period[0] not in PERIODS:
+        # Checked, not trusted: the period name is interpolated straight into
+        # `DATE_TRUNC`, so an unchecked one is a hole. Refused by name rather
+        # than silently falling back to a period nobody asked for.
+        return Translation(
+            measure=measure.name,
+            grain=grain,
+            status=Status.UNSUPPORTED,
+            reason=(
+                f"{period[0]!r} is not a period this translates. "
+                f"Available: {', '.join(PERIODS)}."
+            ),
+            blocked_by=period[0],
+        )
+
     try:
         grain_cols = _grain_columns(model, grain)
     except Unsupported as stop:
@@ -1142,6 +1174,8 @@ def translate(
             # The date table joins in like any other, so a year filter works
             # through a relationship rather than only on the fact table.
             needed.add(only_year[0])
+        if period is not None:
+            needed.add(period[1])
         if not needed:
             # Blocked, not unsupported. A measure that reads no column is a
             # constant -- a label, a tooltip, a hard-coded target -- and there
@@ -1183,6 +1217,18 @@ def translate(
             period_sql = compiler.period_expr(compiler.shift)
             select.append(f"{period_sql} AS {compiler.q(compiler.shift[0])}")
             group_by.append(period_sql)
+        # A measure that already brings its own period grain has one; adding a
+        # second truncation of the same column would emit two columns with the
+        # same alias. The measure's own wins, because it is load-bearing -- the
+        # LAG orders over it.
+        if period is not None and compiler.shift is not None:
+            period = None
+        if period is not None:
+            # Named for what it is -- `month`, `quarter` -- so the caller reads
+            # the bucket off the column name rather than off its position.
+            bucket = compiler.period_expr(period)
+            select.insert(0, f"{bucket} AS {compiler.q(period[0])}")
+            group_by.insert(0, bucket)
         select.append(f"{body.sql} AS {compiler.q(measure.name)}")
 
         lines = [f"SELECT {', '.join(select)}", f"FROM {compiler.q(base)}"]

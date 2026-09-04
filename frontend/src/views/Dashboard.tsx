@@ -28,6 +28,7 @@ import {
   api,
   type BreakdownPayload,
   type DashboardPayload,
+  type MapPayload,
   type MeasureValue,
   type ReportFilterPayload,
   type ReportPayload,
@@ -36,6 +37,7 @@ import {
   type ValuesPayload,
 } from "@/lib/api";
 import {
+  Atlas,
   Bars,
   Columns,
   Donut,
@@ -363,6 +365,7 @@ export function Dashboard({
             )}
 
             {charting && <Breakdowns measure={charting} picked={Boolean(opened)} />}
+            {charting && <Where measure={charting} />}
           </>
         )}
       </section>
@@ -700,10 +703,13 @@ function Breakdowns({ measure, picked }: { measure: string; picked: boolean }) {
   // aggregated, which has to happen in the query or the answer is wrong.
   const [order, setOrder] = useState<Order>("largest");
   const [year, setYear] = useState<number | null>(null);
+  // Cutting by a period is a different query, not a different view of one, so
+  // it goes to the server like the year does.
+  const [period, setPeriod] = useState<string | null>(null);
 
   const { data, error } = useLoad<DashboardPayload>(
-    () => api.dashboard(measure, year),
-    [measure, year],
+    () => api.dashboard(measure, year, period),
+    [measure, year, period],
   );
 
   if (error) return null;
@@ -735,6 +741,29 @@ function Breakdowns({ measure, picked }: { measure: string; picked: boolean }) {
               ))}
             </select>
           </label>
+
+          {/* Same rule as the year: offered only where the calendar really
+              falls into that many buckets, so a model whose timestamps are all
+              midnight is never offered "by hour". */}
+          {data && data.periods.length > 0 && (
+            <label className="flex items-center gap-1.5 text-[11.5px] text-muted">
+              <span className="font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
+                over time
+              </span>
+              <select
+                value={period ?? ""}
+                onChange={(event) => setPeriod(event.target.value || null)}
+                className={controlClasses("quiet")}
+              >
+                <option value="">Not by date</option>
+                {data.periods.map((option) => (
+                  <option key={option} value={option}>
+                    by {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
 
           {/* Shown only where a year filter is real. A model whose calendar no
               relationship reaches cannot be filtered by year, and a disabled
@@ -771,6 +800,25 @@ function Breakdowns({ measure, picked }: { measure: string; picked: boolean }) {
         <>
           {/* `items-start`, so a two-bar panel stays two bars tall instead of
               being stretched to match a nine-bar one beside it. */}
+          {/* Time first and full width. It is the cut every reader asks for
+              before any other, and a series squeezed into a half column loses
+              the shape that is the whole reason to draw it. */}
+          {data.over_time && (
+            <Panel
+              breakdown={data.over_time}
+              measure={measure}
+              heading={data.over_time.by}
+              // Always chronological. A time series ranked by size is a bar
+              // chart of months in a meaningless sequence.
+              order="time"
+            />
+          )}
+          {period && !data.over_time && (
+            <Empty>
+              {measure} could not be cut by {period} against this file&rsquo;s calendar.
+            </Empty>
+          )}
+
           <div className="grid items-start gap-3.5 lg:grid-cols-2">
             {data.breakdowns.map((breakdown) => (
               <Panel
@@ -810,15 +858,86 @@ function Breakdowns({ measure, picked }: { measure: string; picked: boolean }) {
   );
 }
 
+/**
+ * The measure on a map, or the reason there is none.
+ *
+ * Kept as its own section rather than folded in with the splits, because it
+ * answers a question none of them can and fails for a reason none of them
+ * share: a model either records where its rows happened or it does not, and no
+ * amount of data makes coordinates appear. When it does not, the refusal is
+ * the content -- a reader who is told "this file carries no coordinates" knows
+ * something, and a reader shown nothing concludes the feature is broken.
+ */
+function Where({ measure }: { measure: string }) {
+  const { data, error } = useLoad<MapPayload>(
+    () => api.atlas(measure),
+    [measure],
+  );
+  const [showSql, setShowSql] = useState(false);
+
+  if (error) return null;
+
+  return (
+    <section className="flex flex-col gap-2.5 rounded border border-hairline bg-surface p-3.5">
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <h3 className="font-serif text-base font-semibold">Where {measure} happened</h3>
+        {data?.available && (
+          <span className="font-mono text-[10.5px] text-faint">
+            {data.table}[{data.label_column}]
+          </span>
+        )}
+        {data?.available && data.sql && (
+          <button
+            type="button"
+            onClick={() => setShowSql((was) => !was)}
+            className="ml-auto text-[11px] text-accent underline underline-offset-2"
+          >
+            {showSql ? "hide the query" : "the query"}
+          </button>
+        )}
+      </div>
+
+      {!data ? (
+        <Loading what={`where ${measure} happened`} rows={2} />
+      ) : !data.available ? (
+        <Empty>{data.reason}</Empty>
+      ) : (
+        <>
+          <div className="max-w-xl">
+            <Atlas
+              places={data.places}
+              measure={measure}
+              label={data.label_column || "location"}
+            />
+          </div>
+          <p className="text-[11.5px] text-muted">
+            Every point sits at the latitude and longitude this file records for it, and
+            its area is {measure} there — run as {measure}&rsquo;s own SQL grouped by{" "}
+            {data.table}[{data.label_column}]. There is no basemap under it because the
+            page loads nothing from the network; what you are looking at came entirely
+            out of the model.
+          </p>
+          {showSql && data.sql && <Code label="SQL">{`${data.sql}`}</Code>}
+        </>
+      )}
+    </section>
+  );
+}
+
 /** One chart, with the query that produced it behind a disclosure. */
 function Panel({
   breakdown,
   measure,
   order,
+  heading,
 }: {
   breakdown: BreakdownPayload;
   measure: string;
   order: Order;
+  /** Overrides "by {column}". A time cut is headed by the period, not by the
+   *  date column it was cut from, because "by Date" is what the reader was
+   *  trying to get away from. */
+  heading?: string;
 }) {
   const [showSql, setShowSql] = useState(false);
   // A chart whose groups have no place in time cannot honour "in date order",
@@ -840,7 +959,7 @@ function Panel({
           Power BI reader already knows a panel by. */}
       <div className="h-[3px] rounded-t bg-accent" aria-hidden />
       <div className="flex flex-wrap items-baseline gap-x-2 px-3 pt-1">
-        <h4 className="text-[13px] font-medium">by {breakdown.column}</h4>
+        <h4 className="text-[13px] font-medium">{heading ?? `by ${breakdown.column}`}</h4>
         <span className="font-mono text-[10.5px] text-faint">{breakdown.table}</span>
         <button
           type="button"
