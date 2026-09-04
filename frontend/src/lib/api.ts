@@ -332,6 +332,11 @@ export interface ValuesPayload {
 export interface Slice {
   label: string;
   value: number;
+  /** Where this group sits in time, as a date string, when the model can say.
+   *  Empty otherwise. This is what makes "in date order" real rather than a
+   *  guess about what month names mean -- it is the earliest date the data
+   *  itself records for the group. */
+  order: string;
 }
 
 /** One measure split by one dimension -- the numbers behind one chart. */
@@ -366,6 +371,11 @@ export interface DashboardPayload {
   /** Every column worth charting, not only the ones drawn -- so the reader can
    *  chart by something other than the four picked. */
   dimensions: { table: string; column: string; value: string }[];
+  /** Years this measure can be restricted to. Empty when the model carries no
+   *  calendar a filter could safely stand on. */
+  years: number[];
+  /** The year actually applied, or null for every year. */
+  year: number | null;
 }
 
 export interface ReportPage {
@@ -859,8 +869,15 @@ export const api = {
   /** One measure split every way the model can honestly split it. Runs against
    *  the same rows `values` loaded, so a bar and the card agree by
    *  construction rather than by coincidence. */
-  dashboard: (measure?: string) =>
-    get<DashboardPayload>("/dashboard", measure ? { measure } : undefined),
+  dashboard: (measure?: string, year?: number | null) => {
+    const params: Record<string, string> = {};
+    if (measure) params.measure = measure;
+    if (year != null) params.year = String(year);
+    return get<DashboardPayload>(
+      "/dashboard",
+      Object.keys(params).length ? params : undefined,
+    );
+  },
   graph: () => get<GraphPayload>("/graph"),
   tables: () => get<{ tables: TableSummary[] }>("/tables"),
   measures: () => get<{ measures: MeasureSummary[] }>("/measures"),

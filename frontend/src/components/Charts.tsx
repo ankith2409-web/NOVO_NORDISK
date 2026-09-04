@@ -34,6 +34,40 @@ export const LABEL_MAX = 11;
  * a delta -- is never one: a negative arc is not a smaller share of anything,
  * and drawing its magnitude would state the opposite of what the number says.
  */
+/** How the reader has asked for the groups to be arranged. */
+export type Order = "largest" | "smallest" | "label" | "time";
+
+/**
+ * The groups, arranged.
+ *
+ * `time` is the one that needs the data's help: the labels alone cannot be put
+ * in date order, because sorting `Jan, Feb, Mar` as text puts April first. Each
+ * slice carries the earliest date its group actually occupies, and that is what
+ * this sorts on. A slice with no such date -- the folded "N more", which is
+ * several groups at several times -- goes last, which is the only honest place
+ * for it.
+ */
+export function arrange(slices: Slice[], order: Order): Slice[] {
+  const out = [...slices];
+  if (order === "largest") return out.sort((a, b) => b.value - a.value);
+  if (order === "smallest") return out.sort((a, b) => a.value - b.value);
+  if (order === "label") {
+    return out.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+  }
+  return out.sort((a, b) => {
+    if (!a.order) return 1;
+    if (!b.order) return -1;
+    return a.order.localeCompare(b.order);
+  });
+}
+
+/** True when every group says where it sits in time, so `time` is offerable. */
+export function canOrderByTime(slices: Slice[]): boolean {
+  const dated = slices.filter((s) => s.order);
+  // The folded slice never has one, so "all but at most the fold" is the test.
+  return dated.length >= slices.length - 1 && dated.length >= 2;
+}
+
 /** Words that mean the split is a sequence rather than a set of parts. */
 const TEMPORAL = /\b(year|quarter|month|week|day|date|period|fiscal)\b/i;
 

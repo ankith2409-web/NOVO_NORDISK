@@ -1018,6 +1018,12 @@ def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
             model.measures[0].name if model.measures else "",
         )
 
+    # A year the caller cannot have meant is refused here rather than coerced:
+    # `build` drops any year it did not itself offer, so a bad one charts every
+    # year, and the response says which was applied.
+    raw_year = _one(params, "year", required=False)
+    year = int(raw_year) if raw_year.isdigit() else None
+
     connection, _rows, reason = context.data()
     if connection is None:
         return {
@@ -1027,9 +1033,11 @@ def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
             "reason": reason,
             "breakdowns": [],
             "dimensions": [],
+            "years": [],
+            "year": None,
         }
 
-    built = build(model, connection, wanted)
+    built = build(model, connection, wanted, year=year)
     return {
         "model": model.name,
         "measure": built.measure,
@@ -1045,11 +1053,16 @@ def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
                 "additive": b.additive,
                 "folded": b.folded,
                 "sql": b.sql,
-                "slices": [{"label": s.label, "value": s.value} for s in b.slices],
+                "slices": [
+                    {"label": s.label, "value": s.value, "order": s.order}
+                    for s in b.slices
+                ],
             }
             for b in built.breakdowns
         ],
         "dimensions": [dict(d) for d in built.dimensions],
+        "years": list(built.years),
+        "year": built.year,
     }
 
 

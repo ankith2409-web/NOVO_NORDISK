@@ -34,8 +34,24 @@ import {
   type TileField,
   type ValuesPayload,
 } from "@/lib/api";
-import { Bars, Columns, Donut, chartFor, exact, namesAPeriod } from "@/components/Charts";
-import { Chip, Empty, Failure, Loading, Stat } from "@/components/primitives";
+import {
+  Bars,
+  Columns,
+  Donut,
+  arrange,
+  canOrderByTime,
+  chartFor,
+  exact,
+  type Order,
+} from "@/components/Charts";
+import {
+  Chip,
+  Empty,
+  Failure,
+  Loading,
+  Stat,
+  controlClasses,
+} from "@/components/primitives";
 import { ChevronIcon } from "@/components/icons";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
@@ -585,23 +601,84 @@ function KpiCard({
  * by reading column names, because in a real model the names lie in both
  * directions: `DM_Pic_fl` holds Flickr URLs and `Segment` holds 1,415 of them.
  */
+//: The arrangements offered, in the order a reader is likely to want them.
+//: `time` is offered only where the data can support it, which is decided per
+//: chart rather than for the section -- `Calendar[Month]` can be put in date
+//: order and `Store[Chain]` cannot.
+const ORDERS: { value: Order; label: string }[] = [
+  { value: "largest", label: "Largest first" },
+  { value: "smallest", label: "Smallest first" },
+  { value: "label", label: "A\u2013Z" },
+  { value: "time", label: "In date order" },
+];
+
 function Breakdowns({ measure, picked }: { measure: string; picked: boolean }) {
+  // Sorting is the reader's view of the same numbers, so it stays in the
+  // browser and costs no round trip. The year is not: it changes which rows are
+  // aggregated, which has to happen in the query or the answer is wrong.
+  const [order, setOrder] = useState<Order>("largest");
+  const [year, setYear] = useState<number | null>(null);
+
   const { data, error } = useLoad<DashboardPayload>(
-    () => api.dashboard(measure),
-    [measure],
+    () => api.dashboard(measure, year),
+    [measure, year],
   );
 
   if (error) return null;
 
   return (
     <section className="flex flex-col gap-2.5 rounded border border-hairline bg-surface p-3.5">
-      <div className="flex flex-wrap items-baseline gap-x-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <h3 className="font-serif text-base font-semibold">
           What {measure} is made of
         </h3>
         <span className="text-[11.5px] text-faint">
           {picked ? "the card you opened" : "pick a card above to change this"}
         </span>
+
+        <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          <label className="flex items-center gap-1.5 text-[11.5px] text-muted">
+            <span className="font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
+              order
+            </span>
+            <select
+              value={order}
+              onChange={(event) => setOrder(event.target.value as Order)}
+              className={controlClasses("quiet")}
+            >
+              {ORDERS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {/* Shown only where a year filter is real. A model whose calendar no
+              relationship reaches cannot be filtered by year, and a disabled
+              control that never works is worse than no control. */}
+          {data && data.years.length > 0 && (
+            <label className="flex items-center gap-1.5 text-[11.5px] text-muted">
+              <span className="font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
+                year
+              </span>
+              <select
+                value={year ?? ""}
+                onChange={(event) =>
+                  setYear(event.target.value ? Number(event.target.value) : null)
+                }
+                className={controlClasses("quiet")}
+              >
+                <option value="">All years</option>
+                {data.years.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
       </div>
 
       {!data ? (
@@ -614,7 +691,12 @@ function Breakdowns({ measure, picked }: { measure: string; picked: boolean }) {
               being stretched to match a nine-bar one beside it. */}
           <div className="grid items-start gap-3.5 lg:grid-cols-2">
             {data.breakdowns.map((breakdown) => (
-              <Panel key={breakdown.by} breakdown={breakdown} measure={measure} />
+              <Panel
+                key={breakdown.by}
+                breakdown={breakdown}
+                measure={measure}
+                order={order}
+              />
             ))}
           </div>
           <p className="text-[11.5px] text-muted">
@@ -624,6 +706,13 @@ function Breakdowns({ measure, picked }: { measure: string; picked: boolean }) {
             into one slice carrying its value rather than dropped so the total still
             holds. Where it does not — an average, a ratio — the chart says so rather
             than printing a total that means nothing.
+            {data.year != null && (
+              <>
+                {" "}
+                Restricted to {data.year}: the year is applied in the query, before
+                anything is added up, so every figure here is that year&rsquo;s.
+              </>
+            )}
             {data.dimensions.length > data.breakdowns.length && (
               <>
                 {" "}
@@ -643,12 +732,20 @@ function Breakdowns({ measure, picked }: { measure: string; picked: boolean }) {
 function Panel({
   breakdown,
   measure,
+  order,
 }: {
   breakdown: BreakdownPayload;
   measure: string;
+  order: Order;
 }) {
   const [showSql, setShowSql] = useState(false);
-  const kind = chartFor(breakdown.slices, breakdown.additive, breakdown.column);
+  // A chart whose groups have no place in time cannot honour "in date order",
+  // so it keeps the ranking and says so, rather than silently ignoring the
+  // control or shuffling into an order that means nothing.
+  const timeable = canOrderByTime(breakdown.slices);
+  const applied: Order = order === "time" && !timeable ? "largest" : order;
+  const slices = arrange(breakdown.slices, applied);
+  const kind = chartFor(slices, breakdown.additive, breakdown.column);
 
   return (
     <article className="flex min-w-0 flex-col gap-2 rounded border border-hairline bg-ground p-3">
@@ -665,17 +762,17 @@ function Panel({
       </div>
 
       {kind === "donut" ? (
-        <Donut slices={breakdown.slices} by={breakdown.column} measure={measure} />
+        <Donut slices={slices} by={breakdown.column} measure={measure} />
       ) : kind === "columns" ? (
         <Columns
-          slices={breakdown.slices}
+          slices={slices}
           by={breakdown.column}
           measure={measure}
           additive={breakdown.additive}
         />
       ) : (
         <Bars
-          slices={breakdown.slices}
+          slices={slices}
           by={breakdown.column}
           measure={measure}
           additive={breakdown.additive}
@@ -690,11 +787,10 @@ function Panel({
       {/* Said where the misreading would happen, not once at the bottom of the
           page: the sum of a set of averages is a number this chart can produce
           and nothing in the model means. */}
-      {namesAPeriod(breakdown.column) && (
+      {order === "time" && !timeable && (
         <p className="text-[11px] text-review">
-          Ranked by size, not in date order — Power BI keeps a column&rsquo;s sort order
-          in a sort-by column that this file&rsquo;s reader does not expose, and ordering
-          these names alphabetically would put April first.
+          Ranked by size — these groups are not points in time, so there is no date
+          order to put them in.
         </p>
       )}
       {!breakdown.additive && (

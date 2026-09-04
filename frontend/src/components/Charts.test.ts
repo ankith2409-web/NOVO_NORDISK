@@ -9,10 +9,25 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { LABEL_MAX, RING_MAX, brief, chartFor, exact } from "./Charts";
+import {
+  LABEL_MAX,
+  RING_MAX,
+  arrange,
+  brief,
+  canOrderByTime,
+  chartFor,
+  exact,
+} from "./Charts";
 
+//: `order` is what a slice carries to say where its group sits in time. These
+//: cases are about shape and magnitude, so they leave it empty -- which is also
+//: what a real slice from a non-temporal column carries.
 const slices = (...pairs: [string, number][]) =>
-  pairs.map(([label, value]) => ({ label, value }));
+  pairs.map(([label, value]) => ({ label, value, order: "" }));
+
+/** The same, with a date anchor on each group, for the ordering tests. */
+const dated = (...triples: [string, number, string][]) =>
+  triples.map(([label, value, order]) => ({ label, value, order }));
 
 describe("chartFor", () => {
   it("draws a small split as a ring", () => {
@@ -46,7 +61,7 @@ describe("chartFor", () => {
 
   it("puts a ring's ceiling exactly at RING_MAX", () => {
     const at = slices(...Array.from({ length: RING_MAX }, (_, i): [string, number] => [`g${i}`, 1]));
-    const over = [...at, { label: "g", value: 1 }];
+    const over = [...at, { label: "g", value: 1, order: "" }];
     expect(chartFor(at)).toBe("donut");
     expect(chartFor(over)).not.toBe("donut");
   });
@@ -130,5 +145,72 @@ describe("a period is a sequence, not a set of parts", () => {
   it("still falls back to bars when a period's labels are long", () => {
     const long = slices(["January 2019", 2], ["February 2019", 1]);
     expect(chartFor(long, true, "Month")).toBe("bars");
+  });
+});
+
+
+describe("arranging the groups", () => {
+  // Deliberately in neither size nor alphabetical order to start with, so a
+  // sort that silently did nothing would fail rather than accidentally pass.
+  const months = dated(
+    ["Mar", 79, "2019-03-03"],
+    ["Jun", 387, "2019-06-02"],
+    ["Jan", 246, "2019-01-01"],
+    ["Apr", 122, "2019-04-07"],
+  );
+  const labels = (list: { label: string }[]) => list.map((s) => s.label);
+
+  it("ranks largest first", () => {
+    expect(labels(arrange(months, "largest"))).toEqual(["Jun", "Jan", "Apr", "Mar"]);
+  });
+
+  it("ranks smallest first", () => {
+    expect(labels(arrange(months, "smallest"))).toEqual(["Mar", "Apr", "Jan", "Jun"]);
+  });
+
+  it("sorts A-Z by label", () => {
+    expect(labels(arrange(months, "label"))).toEqual(["Apr", "Jan", "Jun", "Mar"]);
+  });
+
+  it("puts months in real date order, which A-Z never would", () => {
+    // This is the whole point of carrying an anchor: alphabetically, April
+    // comes first, and that is not what a reader means by date order.
+    expect(labels(arrange(months, "time"))).toEqual(["Jan", "Mar", "Apr", "Jun"]);
+    expect(labels(arrange(months, "label"))[0]).toBe("Apr");
+  });
+
+  it("does not mutate what it was given", () => {
+    const before = labels(months);
+    arrange(months, "time");
+    expect(labels(months)).toEqual(before);
+  });
+
+  it("sends a group with no place in time to the end", () => {
+    // The folded "N more" slice is several groups at several times, so it has
+    // no anchor and belongs last rather than first.
+    const withFold = [...months, { label: "2 more", value: 10, order: "" }];
+    expect(labels(arrange(withFold, "time")).at(-1)).toBe("2 more");
+  });
+});
+
+describe("when date order is offered at all", () => {
+  it("is offered when the groups carry dates", () => {
+    expect(canOrderByTime(dated(["Jan", 1, "2019-01-01"], ["Feb", 2, "2019-02-01"]))).toBe(true);
+  });
+
+  it("is not offered for groups that are not points in time", () => {
+    expect(canOrderByTime(slices(["Fashions Direct", 32], ["Lindseys", 13]))).toBe(false);
+  });
+
+  it("is still offered when only the folded slice lacks a date", () => {
+    const withFold = [
+      ...dated(["Jan", 1, "2019-01-01"], ["Feb", 2, "2019-02-01"]),
+      { label: "3 more", value: 1, order: "" },
+    ];
+    expect(canOrderByTime(withFold)).toBe(true);
+  });
+
+  it("is not offered for a single dated group, which is not an order", () => {
+    expect(canOrderByTime(dated(["Jan", 1, "2019-01-01"]))).toBe(false);
   });
 });

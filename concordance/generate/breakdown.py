@@ -59,6 +59,17 @@ class Unqueryable(RuntimeError):
 class Slice:
     label: str
     value: float
+    #: Where this group falls in time, as an ISO date, when the model carries
+    #: something to say so. Empty when it does not.
+    #:
+    #: This is what makes "in date order" an option rather than a guess. Power
+    #: BI records a column's display order in a sort-by column that this file's
+    #: reader does not expose, so `Jan, Feb, Mar` cannot be ordered by reading
+    #: the labels -- alphabetically that is April first. But the `Calendar`
+    #: table those labels come from also holds real dates, and the earliest
+    #: date in each group is a fact in the data rather than an inference about
+    #: what the words mean. That is what this holds.
+    order: str = ""
 
 
 @dataclass(frozen=True)
@@ -102,6 +113,11 @@ class Dashboard:
     reason: str = ""
     breakdowns: tuple[Breakdown, ...] = ()
     dimensions: tuple[dict[str, str], ...] = field(default_factory=tuple)
+    #: The years this measure can be restricted to. Empty when the model has no
+    #: calendar a filter could safely stand on -- see `usable_years`.
+    years: tuple[int, ...] = ()
+    #: The year actually applied, or None for every year.
+    year: int | None = None
 
 
 def _named_like_an_id(column: str) -> bool:
@@ -132,6 +148,138 @@ def _unreadable(sample: Any) -> bool:
         if len(text) > 60:
             return True
     return False
+
+
+#: Column types that carry a point in time.
+_DATE_TYPES = ("date", "time")
+
+
+def _date_columns(model, table: str) -> list[str]:
+    """Date-typed columns on one table, in model order."""
+    return [
+        column.name
+        for column in model.columns
+        if column.table == table
+        and any(kind in (column.data_type or "").casefold() for kind in _DATE_TYPES)
+    ]
+
+
+def calendar_column(model) -> tuple[str, str] | None:
+    """The one date column a year filter can safely stand on, if there is one.
+
+    Deliberately conservative, and it declines more often than it accepts.
+
+    The table must be a *leaf* -- pointed at, and pointing at nothing itself.
+    Being pointed at is not enough on its own: in Microsoft's Sales & Returns,
+    `Customer` points at `Sales`, which makes `Sales` something-pointed-at
+    while it is plainly the fact table, and it carries a `Date` column of its
+    own. The leaf test keeps `Calendar` and drops `Sales`.
+
+    And if two leaves still qualify there is no principled way to choose
+    between them, so the filter is not offered at all rather than applied to
+    whichever happened to sort first.
+
+    Whether the column can actually be *reached* from a given measure is a
+    separate question this cannot answer, because it depends on the measure.
+    `usable_years` settles that by trying it.
+    """
+    referenced = {r.to_table for r in model.relationships}
+    references = {r.from_table for r in model.relationships}
+    found = [
+        (table, column)
+        for table in sorted(referenced - references)
+        for column in _date_columns(model, table)
+    ]
+    return found[0] if len(found) == 1 else None
+
+
+def available_years(model, connection) -> list[int]:
+    """Every year the model's calendar actually contains."""
+    calendar = calendar_column(model)
+    if calendar is None:
+        return []
+    table, column = calendar
+    try:
+        rows = connection.execute(
+            f'SELECT DISTINCT EXTRACT(YEAR FROM "{table.replace(chr(34), chr(34) * 2)}"'
+            f'."{column.replace(chr(34), chr(34) * 2)}") AS y '
+            f'FROM "{table.replace(chr(34), chr(34) * 2)}" WHERE y IS NOT NULL ORDER BY y'
+        ).fetchall()
+    except Exception:  # noqa: BLE001 - a calendar that will not read is no filter
+        return []
+    return [int(row[0]) for row in rows if row[0] is not None]
+
+
+def usable_years(model, connection, measure: str) -> list[int]:
+    """The years this measure can actually be filtered to.
+
+    Verified by attempting the translation rather than reasoned about, because
+    the thing that decides it -- whether a join path reaches the calendar from
+    the table this particular measure reads -- is exactly what the translator
+    already works out. Store Sales is why: its `Fiscal calendar` is a proper
+    leaf holding real dates, and no active relationship joins it to `Sales`, so
+    a year filter there would silently drop every row. Offering the control and
+    having it return nothing is worse than not offering it.
+    """
+    from concordance.generate.sql import Status, translate
+
+    calendar = calendar_column(model)
+    if calendar is None:
+        return []
+    found = next((m for m in model.measures if m.name == measure), None)
+    if found is None:
+        return []
+
+    years = available_years(model, connection)
+    if not years:
+        return []
+
+    table, column = calendar
+    probe = translate(model, found, only_year=(table, column, years[0]))
+    return years if probe.status is Status.EXACT else []
+
+
+def _anchors(model, connection, table: str, column: str) -> dict[str, str]:
+    """Each group's place in time, but only where the groups *are* places in time.
+
+    Two questions, and the second is the one that matters. Getting the earliest
+    date per group is easy. Deciding whether that date means anything is not,
+    and it cannot be decided by reading the column's name.
+
+    The test is whether the groups partition time: sorted by their earliest
+    date, does each group finish before the next one starts? Real periods do.
+    `Store[Chain]` does not -- both chains have been opening stores across the
+    same decade, so "Lindseys, then Fashions Direct" would be an ordering of
+    nothing, silently presented as a chronology.
+
+    It also, correctly, declines `Fiscal calendar[FiscalMonth]` in Store Sales:
+    that table covers three years, so its "Jan" is January 2013 *and* January
+    2014, and there is no single point in time to put it at. Restrict the model
+    to one year and the same column passes, because then there is.
+    """
+    dates = _date_columns(model, table)
+    if not dates:
+        return {}
+    quoted_table = table.replace('"', '""')
+    quoted_label = column.replace('"', '""')
+    quoted_date = dates[0].replace('"', '""')
+    try:
+        rows = connection.execute(
+            f'SELECT "{quoted_label}", MIN("{quoted_date}"), MAX("{quoted_date}") '
+            f'FROM "{quoted_table}" GROUP BY 1 ORDER BY 2'
+        ).fetchall()
+    except Exception:  # noqa: BLE001 - no anchor is a missing option, not a failure
+        return {}
+
+    spans = [(str(label), first, last) for label, first, last in rows if first is not None]
+    if len(spans) < MIN_CLASSES:
+        return {}
+    # Sorted by start already, so one pass settles it: any group still running
+    # when the next one begins means these are not periods.
+    for (_, _, ends), (_, starts, _) in zip(spans, spans[1:]):
+        if ends >= starts:
+            return {}
+    return {label: str(first) for label, first, _ in spans}
 
 
 def _dimension_tables(model) -> set[str]:
@@ -257,14 +405,29 @@ def _adds_up(parts: float, whole: float | None) -> bool:
 
 
 def one(
-    model, connection, measure: str, table: str, column: str, whole: float | None = None
+    model,
+    connection,
+    measure: str,
+    table: str,
+    column: str,
+    whole: float | None = None,
+    year: int | None = None,
 ) -> Breakdown:
-    """Run one measure grouped by one column."""
-    from concordance.generate.sql import Status, translate_all
+    """Run one measure grouped by one column, optionally within one year."""
+    from concordance.generate.sql import Status, translate
 
     by = f"{table}[{column}]"
-    translated = next(
-        (r for r in translate_all(model, (by,)) if r.measure == measure), None
+    only_year = None
+    if year is not None:
+        calendar = calendar_column(model)
+        if calendar is not None:
+            only_year = (calendar[0], calendar[1], year)
+
+    found = next((m for m in model.measures if m.name == measure), None)
+    translated = (
+        translate(model, found, grain=(by,), only_year=only_year)
+        if found is not None
+        else None
     )
     if translated is None:
         return Breakdown(
@@ -301,8 +464,16 @@ def one(
         )
     label_at = 0 if at != 0 else (1 if len(columns) > 1 else 0)
 
+    # Where each group sits in time, when the model can say. Fetched once per
+    # breakdown, against the dimension table only.
+    anchors = _anchors(model, connection, table, column)
+
     slices = [
-        Slice(label=str(row[label_at]), value=float(row[at]))
+        Slice(
+            label=str(row[label_at]),
+            value=float(row[at]),
+            order=anchors.get(str(row[label_at]), ""),
+        )
         for row in rows
         # A group with no figure is dropped rather than drawn as zero: an empty
         # bar and a bar at zero look identical and mean different things.
@@ -316,6 +487,9 @@ def one(
     if len(slices) > MAX_SLICES:
         tail = slices[MAX_SLICES:]
         folded = len(tail)
+        # The folded slice carries no anchor and cannot: it is several groups
+        # from several points in time. In date order it sorts last, which is
+        # the honest place for a group that is not one place in time.
         slices = slices[:MAX_SLICES] + [
             Slice(label=f"{folded} more", value=sum(s.value for s in tail))
         ]
@@ -328,17 +502,63 @@ def one(
     )
 
 
-def build(model, connection, measure: str, most: int = 4) -> Dashboard:
-    """Every chart worth drawing for one measure."""
+def _whole(model, connection, measure: str, year: int | None) -> float | None:
+    """The measure's single figure over exactly the rows the charts cover.
+
+    The year has to be carried into this too. Comparing one year's parts
+    against every year's total finds them unequal and concludes the measure is
+    non-additive -- so a plain `SUM` filtered to 2019 would announce itself as
+    "an average or a ratio", which is both wrong and confidently worded. The
+    additivity test is only a test of additivity when both sides read the same
+    rows.
+    """
+    from concordance.generate.evaluate import evaluate
+    from concordance.generate.sql import Status, translate
+
+    if year is None:
+        found = evaluate(model, connection=connection).by_name().get(measure)
+        return found.value if found is not None else None
+
+    calendar = calendar_column(model)
+    found = next((m for m in model.measures if m.name == measure), None)
+    if calendar is None or found is None:
+        return None
+    rendered = translate(
+        model, found, only_year=(calendar[0], calendar[1], year)
+    )
+    if rendered.status is not Status.EXACT:
+        return None
+    try:
+        rows = connection.execute(rendered.sql).fetchmany(2)
+    except Exception:  # noqa: BLE001 - no whole is a missing check, not a crash
+        return None
+    # Exactly one row, or there is no single figure to check the parts against.
+    if len(rows) != 1 or not rows[0]:
+        return None
+    value = rows[0][-1]
+    if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def build(
+    model, connection, measure: str, most: int = 4, year: int | None = None
+) -> Dashboard:
+    """Every chart worth drawing for one measure, optionally within one year."""
     if connection is None:
         return Dashboard(measure=measure, available=False, reason="no data is loaded")
 
     # The whole-model figure first, so each split can be checked against it
     # rather than asserted to match. One extra query, run once.
-    from concordance.generate.evaluate import evaluate
+    offered = usable_years(model, connection, measure)
+    # A year nobody offered is not applied. Silently charting every year while
+    # the control says otherwise would be the worst of the available outcomes.
+    if year is not None and year not in offered:
+        year = None
 
-    found = evaluate(model, connection=connection).by_name().get(measure)
-    whole = found.value if found is not None else None
+    # The whole-model figure is only a fair check on the parts when both cover
+    # the same rows, so a filtered chart is compared against a filtered whole.
+    whole = _whole(model, connection, measure, year)
 
     try:
         candidates = chartable(model, connection)
@@ -347,7 +567,7 @@ def build(model, connection, measure: str, most: int = 4) -> Dashboard:
 
     drawn: list[Breakdown] = []
     for table, column, _count in _spread(candidates, most):
-        result = one(model, connection, measure, table, column, whole=whole)
+        result = one(model, connection, measure, table, column, whole=whole, year=year)
         if result.drawable:
             drawn.append(result)
 
@@ -370,4 +590,6 @@ def build(model, connection, measure: str, most: int = 4) -> Dashboard:
         dimensions=tuple(
             {"table": t, "column": c, "value": f"{t}[{c}]"} for t, c, _ in candidates
         ),
+        years=tuple(offered),
+        year=year,
     )

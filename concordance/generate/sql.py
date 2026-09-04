@@ -1097,12 +1097,26 @@ def to_dialect(sql: str, dialect: str) -> str:
         return sql
 
 
-def translate(model, measure, grain: tuple[str, ...] = (), quote: str = '"') -> Translation:
+def translate(
+    model,
+    measure,
+    grain: tuple[str, ...] = (),
+    quote: str = '"',
+    only_year: tuple[str, str, int] | None = None,
+) -> Translation:
     """Render one measure as SQL at ``grain``, or say why it cannot be.
 
     ``grain`` is a tuple of ``Table[Column]`` strings. An empty grain means the
     whole model -- a single row, which is the honest reading of a measure with
     no filter context applied.
+
+    ``only_year`` restricts the query to one calendar year, as
+    ``(table, column, year)``. It becomes a ``WHERE`` on the date column named,
+    which puts the restriction *before* aggregation -- the only place it can go
+    and still be right. Filtering the result rows instead would divide by a
+    denominator drawn from every year, which is exactly the class of quiet
+    wrong answer this project exists to avoid. The year is rendered as an
+    integer, never interpolated as text, so it cannot carry SQL with it.
     """
     try:
         grain_cols = _grain_columns(model, grain)
@@ -1124,6 +1138,10 @@ def translate(model, measure, grain: tuple[str, ...] = (), quote: str = '"') -> 
         needed = set(body.tables) | {t for t, _ in grain_cols}
         if compiler.shift is not None:
             needed.add(compiler.shift[1])
+        if only_year is not None:
+            # The date table joins in like any other, so a year filter works
+            # through a relationship rather than only on the fact table.
+            needed.add(only_year[0])
         if not needed:
             # Blocked, not unsupported. A measure that reads no column is a
             # constant -- a label, a tooltip, a hard-coded target -- and there
@@ -1169,6 +1187,14 @@ def translate(model, measure, grain: tuple[str, ...] = (), quote: str = '"') -> 
 
         lines = [f"SELECT {', '.join(select)}", f"FROM {compiler.q(base)}"]
         lines.extend(joins)
+        if only_year is not None:
+            table, column, year = only_year
+            # `EXTRACT` rather than `YEAR()`: it is standard SQL and runs
+            # unchanged on DuckDB, Snowflake, Databricks, Redshift and Athena,
+            # where `YEAR()` is not available everywhere.
+            lines.append(
+                f"WHERE EXTRACT(YEAR FROM {compiler.col(table, column)}) = {int(year)}"
+            )
         if group_by:
             group = ", ".join(group_by)
             lines.append(f"GROUP BY {group}")

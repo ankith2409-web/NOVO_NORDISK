@@ -308,3 +308,152 @@ def test_nothing_adds_up_to_a_whole_that_does_not_exist(store) -> None:
 )
 def test_the_tolerance_is_relative_not_absolute(parts, whole, expected) -> None:
     assert B._adds_up(parts, whole) is expected
+
+
+# -- ordering and the year filter ----------------------------------------------
+
+
+def test_a_real_period_carries_the_date_it_sits_at(store) -> None:
+    """The anchor is what makes "in date order" real rather than a guess.
+
+    Power BI records a column's display order in a sort-by column this file's
+    reader does not expose, so year and month labels cannot be ordered by
+    reading them. The table those labels come from also holds real dates, and
+    the earliest date in each group is a fact in the data rather than an
+    inference about what the words mean.
+    """
+    model, connection = store
+    anchors = B._anchors(model, connection, "Fiscal calendar", "FiscalYear")
+    assert len(anchors) == 3
+    assert [y for y, _ in sorted(anchors.items(), key=lambda kv: kv[1])] == [
+        "2012",
+        "2013",
+        "2014",
+    ]
+
+
+def test_a_column_that_merely_owns_a_date_is_not_a_period(store) -> None:
+    """`Store` holds an opening date, so every chain has an earliest one.
+
+    That number is real and ordering by it would still be a lie: both chains
+    have been opening stores across the same decade, so "Lindseys, then
+    Fashions Direct" is an ordering of nothing presented as a chronology. What
+    separates the two cases is whether the groups' date spans overlap, which is
+    measured rather than guessed from the column's name.
+    """
+    model, connection = store
+    assert B._date_columns(model, "Store") == ["Opening date"]
+    assert B._anchors(model, connection, "Store", "Chain") == {}
+
+
+def test_a_month_that_repeats_across_years_is_not_one_point_in_time(store) -> None:
+    """Store Sales' fiscal calendar covers three years, so its "Jan" is January
+    2013 *and* January 2014.
+
+    Ordering those twelve labels would imply a chronology the data does not
+    have. This is the case a name-based rule gets wrong in the confident
+    direction -- `FiscalMonth` could hardly sound more like a period.
+    """
+    model, connection = store
+    assert B._anchors(model, connection, "Fiscal calendar", "FiscalMonth") == {}
+
+
+def test_a_split_that_is_not_a_period_carries_no_order(store) -> None:
+    model, connection = store
+    split = B.one(model, connection, "Sales", "Store", "Chain")
+    assert all(s.order == "" for s in split.slices)
+
+
+def test_store_sales_refuses_a_year_filter_it_cannot_honour(store) -> None:
+    """`Fiscal calendar` is a proper leaf holding real dates, and no active
+    relationship joins it to `Sales`.
+
+    So the years are *present* in the model and still not usable: filtering on
+    them would silently drop every row. Offering the control and having it
+    return nothing is worse than not offering it, so the option list is empty
+    while the raw year list is not.
+    """
+    model, connection = store
+    assert B.available_years(model, connection)
+    assert B.usable_years(model, connection, "Sales") == []
+    assert B.build(model, connection, "Sales").years == ()
+
+
+def test_a_year_that_was_never_offered_is_not_applied(store) -> None:
+    model, connection = store
+    built = B.build(model, connection, "Sales", year=2013)
+    assert built.year is None
+    assert "EXTRACT(YEAR" not in built.breakdowns[0].sql
+
+
+def test_the_leaf_rule_keeps_the_calendar_and_drops_the_fact_table(store) -> None:
+    """Being pointed at is not enough to be a date dimension.
+
+    In Sales & Returns, `Customer` points at `Sales`, which makes `Sales`
+    something-pointed-at while it is plainly the fact table -- and it carries a
+    `Date` column of its own. Only the leaf test separates them.
+    """
+    model, _ = store
+    referenced = {r.to_table for r in model.relationships}
+    references = {r.from_table for r in model.relationships}
+    for table in referenced & references:
+        assert B.calendar_column(model) != (table, "Date")
+
+
+@pytest.fixture(scope="module")
+def sales_returns():
+    """Microsoft's Sales & Returns sample -- the one model here with a calendar
+    a year filter can safely stand on."""
+    path = Path("data/models/Sales_Returns_Sample.pbix")
+    if not path.exists():
+        pytest.skip(f"model not present: {path}")
+    model = PbixAdapter().extract(str(path))
+    connection, _rows, reason = open_data(model)
+    if connection is None:
+        pytest.skip(reason)
+    try:
+        yield model, connection
+    finally:
+        connection.close()
+
+
+def test_a_year_can_be_applied_where_the_calendar_is_reachable(sales_returns) -> None:
+    model, connection = sales_returns
+    built = B.build(model, connection, "Net Sales", year=2019)
+    assert built.years == (2019,)
+    assert built.year == 2019
+    assert all("EXTRACT(YEAR" in b.sql for b in built.breakdowns)
+
+
+def test_a_filtered_chart_is_still_known_to_add_up(sales_returns) -> None:
+    """The regression that shipped for one build and was caught on screen.
+
+    Filtering to a year while checking the parts against *every* year's total
+    finds them unequal and concludes the measure is non-additive -- so every
+    chart announced `Net Sales` as "an average or a ratio", which is wrong and
+    confidently worded. The additivity test is only a test of additivity when
+    both sides read the same rows.
+    """
+    model, connection = sales_returns
+    built = B.build(model, connection, "Net Sales", year=2019)
+    assert built.available
+    assert all(b.additive for b in built.breakdowns), [
+        (b.by, b.total, b.whole) for b in built.breakdowns
+    ]
+    for breakdown in built.breakdowns:
+        assert breakdown.total == pytest.approx(breakdown.whole, rel=1e-9)
+
+
+def test_months_of_a_single_year_are_orderable(sales_returns) -> None:
+    """The chart from the screenshot that started this.
+
+    Every month of 2019 occupies its own stretch of the calendar, so the groups
+    partition time and can be put in real date order -- which alphabetical
+    never would, since that leads with April.
+    """
+    model, connection = sales_returns
+    split = B.one(model, connection, "Net Sales", "Calendar", "Month")
+    assert all(s.order for s in split.slices)
+    in_time = [s.label for s in sorted(split.slices, key=lambda s: s.order)]
+    assert in_time == ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
+    assert in_time != sorted(in_time)
