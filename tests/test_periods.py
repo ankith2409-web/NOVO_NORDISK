@@ -178,3 +178,33 @@ def test_the_dashboard_carries_the_series_when_a_period_is_asked_for(sales) -> N
     built = B.build(*sales, "Net Sales", period="month")
     assert built.over_time is not None
     assert built.over_time.by == "by month"
+
+
+def test_a_summed_measure_over_time_is_reported_as_additive(sales) -> None:
+    """The panel prints a sentence under the chart, and it has to be earned.
+
+    The first version of `over_time` had no whole to check against and said
+    `additive=False`, so the interface told a reader that Net Sales -- a plain
+    filtered SUM -- "is an average or a ratio". Caught on screen, not by a
+    test, which is why this one exists.
+    """
+    model, connection = sales
+    whole = B._whole(model, connection, "Net Sales", None)
+    cut = B.over_time(model, connection, "Net Sales", "month", whole=whole)
+    assert cut.additive
+    assert cut.whole == whole
+
+
+def test_a_ratio_over_time_is_still_reported_as_non_additive(sales) -> None:
+    """The check is a measurement, so it has to fail where it should."""
+    model, connection = sales
+    whole = B._whole(model, connection, "Return Rate", None)
+    cut = B.over_time(model, connection, "Return Rate", "month", whole=whole)
+    if cut.drawable and whole is not None:
+        assert not cut.additive
+
+
+def test_the_dashboard_hands_the_series_its_whole(sales) -> None:
+    built = B.build(*sales, "Net Sales", period="month")
+    assert built.over_time is not None
+    assert built.over_time.additive

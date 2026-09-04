@@ -294,7 +294,12 @@ def usable_periods(model, connection, measure: str) -> list[str]:
 
 
 def over_time(
-    model, connection, measure: str, period: str, year: int | None = None
+    model,
+    connection,
+    measure: str,
+    period: str,
+    year: int | None = None,
+    whole: float | None = None,
 ) -> Breakdown:
     """One measure grouped by a calendar period rather than by a dimension.
 
@@ -371,10 +376,11 @@ def over_time(
 
     slices.sort(key=lambda s: s.order)
     slices = slices[:MAX_PERIODS]
+    parts = sum(s.value for s in slices)
     return Breakdown(
         measure=measure, by=by, table=table, column=column,
         slices=tuple(slices), sql=translated.sql,
-        whole=None, additive=False,
+        whole=whole, additive=_adds_up(parts, whole),
     )
 
 
@@ -746,7 +752,7 @@ def build(
     periods = usable_periods(model, connection, measure)
     series = None
     if period is not None and period in periods:
-        cut = over_time(model, connection, measure, period, year=year)
+        cut = over_time(model, connection, measure, period, year=year, whole=whole)
         series = cut if cut.drawable else None
 
     return Dashboard(
