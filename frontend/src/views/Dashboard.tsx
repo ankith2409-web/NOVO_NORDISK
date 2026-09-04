@@ -29,6 +29,7 @@ import {
   type BreakdownPayload,
   type DashboardPayload,
   type MeasureValue,
+  type ReportFilterPayload,
   type ReportPayload,
   type Tile,
   type TileField,
@@ -259,6 +260,12 @@ export function Dashboard({
           hint="Fields a tile is bound to that this semantic model does not contain."
         />
       </div>
+
+      {/* Why a figure here can differ from the same card in Power BI, said
+          where the two get compared rather than buried in a footnote. This is
+          the first question the report raises the moment somebody opens the
+          .pbix beside the tool. */}
+      {data.filters.length > 0 && <ReportFilters filters={data.filters} />}
 
       {/* The KPIs, open. This is the answer the page was built to give, and it
           is on screen the moment the page is. */}
@@ -587,6 +594,80 @@ function KpiCard({
         {field.table} · on {places} page{places === 1 ? "" : "s"}
       </span>
     </button>
+  );
+}
+
+/**
+ * The filters the report applies to itself, before any of its numbers exist.
+ *
+ * This began as a bug report that was not a bug: Power BI showed 387.1K for
+ * `Net Sales` where this tool showed 1.2M, on the same file, for the same
+ * measure. Both were right. Microsoft's report carries a report-level filter
+ * pinning every page to June, so the card is that measure inside that filter,
+ * while the figure here is the measure over every row in the file.
+ *
+ * Nothing was wrong except that the tool knew only one of the two questions
+ * had been asked and said nothing about the other -- which, on a tool whose
+ * whole claim is that a number can be checked, is the worst kind of silence.
+ * So the report's filters are read out and shown beside the figures they
+ * explain. It is also the project's own thesis restated: a measure has no
+ * value until a filter context is named.
+ */
+function ReportFilters({ filters }: { filters: ReportFilterPayload[] }) {
+  const [open, setOpen] = useState(false);
+  const everywhere = filters.filter((f) => f.scope === "report");
+  const perPage = filters.filter((f) => f.scope !== "report");
+
+  return (
+    <section className="rounded border border-review/40 bg-review-soft px-3.5 py-2.5">
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <h2 className="text-[13px] font-medium text-ink">
+          This report filters itself before it computes anything
+        </h2>
+        {perPage.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setOpen((was) => !was)}
+            className="ml-auto text-[11.5px] text-accent underline underline-offset-2"
+          >
+            {open ? "hide the per-page filters" : `all ${filters.length}`}
+          </button>
+        )}
+      </div>
+
+      {everywhere.length > 0 ? (
+        <p className="mt-1.5 max-w-prose text-[12.5px] text-ink">
+          Every page is narrowed to{" "}
+          {everywhere.map((filter, at) => (
+            <span key={filter.text}>
+              {at > 0 && ", "}
+              <span className="font-mono text-[11.5px] font-medium">{filter.text}</span>
+            </span>
+          ))}
+          . The figures on this page are those same measures over <em>every</em> row in
+          the file, so a card opened in Power BI will read lower. Both are right, and
+          they answer different questions.
+        </p>
+      ) : (
+        <p className="mt-1.5 max-w-prose text-[12.5px] text-ink">
+          Individual pages narrow what they show, so a card in Power BI can differ from
+          the same measure computed here over every row in the file.
+        </p>
+      )}
+
+      {open && perPage.length > 0 && (
+        <ul className="mt-2 flex flex-col gap-1 border-t border-review/30 pt-2">
+          {perPage.map((filter) => (
+            <li key={`${filter.page}-${filter.text}`} className="text-[11.5px]">
+              <span className="font-mono text-faint">{filter.page}</span>{" "}
+              <span className={filter.readable ? "text-muted" : "text-review"}>
+                {filter.text}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

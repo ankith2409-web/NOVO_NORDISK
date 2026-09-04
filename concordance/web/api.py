@@ -769,6 +769,20 @@ def report(context: ApiContext, params: Params) -> dict[str, Any]:
         "dialect": dialect,
         "grain": list(grain),
         "counts": counts(pages),
+        # The filters the report applies before any figure on it is computed.
+        # Without these a card cannot be reconciled against the same measure
+        # computed here, and the difference reads as a defect rather than as
+        # two answers to two questions.
+        "filters": [
+            {
+                "scope": f.scope,
+                "page": f.page,
+                "target": f.target,
+                "text": f.text,
+                "readable": f.readable,
+            }
+            for f in context.graph.model.report_filters
+        ],
         "pages": [
             {
                 "name": page.name,

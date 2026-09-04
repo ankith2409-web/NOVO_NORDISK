@@ -16,6 +16,7 @@ from enum import Enum
 # concordance.model import Visual` works alongside every other object kind --
 # a caller should not have to know which of these came from a different file.
 from concordance.normalize.layout import ReportPage, Visual, VisualField as VisualField
+from concordance.normalize.filters import ReportFilter
 
 
 class ObjectKind(Enum):
@@ -374,6 +375,13 @@ class SemanticModel:
     #: for a source that carries no report -- a .SemanticModel folder is the
     #: model alone, and a tile it does not describe must not be invented for it.
     report_pages: list[ReportPage] = field(default_factory=list)
+    #: The filters the report applies before any of its numbers are computed.
+    #: Without these a card's figure cannot be reconciled against the same
+    #: measure computed here: Microsoft's Sales & Returns pins its whole report
+    #: to June, so its `Net Sales` card reads 387K where the measure over every
+    #: row of the file is 1.2M. Both are right; only one of them says which
+    #: question it answered.
+    report_filters: list[ReportFilter] = field(default_factory=list)
 
     def visuals(self) -> list[Visual]:
         """Every tile in the report, across all pages."""
@@ -403,5 +411,6 @@ class SemanticModel:
             "kpis": len(self.kpis),
             "perspectives": len(self.perspectives),
             "report_pages": len(self.report_pages),
+            "report_filters": len(self.report_filters),
             "visuals": len(self.visuals()),
         }

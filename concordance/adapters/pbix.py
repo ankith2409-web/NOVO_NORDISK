@@ -239,6 +239,7 @@ class PbixAdapter:
             _safe(raw, "tmschema_variations"), _safe(raw, "tmschema_hierarchies")
         )
         model.report_pages = self._report_pages(path)
+        model.report_filters = self._report_filters(path)
         model.coverage_gaps = self._coverage_gaps(raw)
         resolve_table_dependencies(model)
         return model
@@ -261,6 +262,27 @@ class PbixAdapter:
         try:
             with zipfile.ZipFile(path) as archive:
                 return read_report(archive)
+        except (KeyError, OSError, zipfile.BadZipFile):
+            return []
+
+    def _report_filters(self, path: Path):
+        """The report's own filters, from the same archive as its pages.
+
+        Only the legacy `Report/Layout` format carries them where this can read
+        them; the newer per-file format keeps filters elsewhere and is left
+        reporting none rather than guessing. Failing costs the filters and
+        nothing else, for the same reason `_report_pages` fails softly.
+        """
+        import zipfile
+
+        from concordance.normalize.filters import read_filters
+        from concordance.normalize.layout import _decode
+
+        try:
+            with zipfile.ZipFile(path) as archive:
+                if "Report/Layout" not in archive.namelist():
+                    return []
+                return read_filters(_decode(archive.read("Report/Layout")))
         except (KeyError, OSError, zipfile.BadZipFile):
             return []
 

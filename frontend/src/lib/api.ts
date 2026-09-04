@@ -304,6 +304,21 @@ export interface ReportPayload {
     unresolved: number;
   };
   pages: ReportPage[];
+  /** What the report narrows itself to before computing anything. A card's
+   *  figure cannot be compared with the same measure computed here without
+   *  these -- Sales & Returns pins its whole report to June. */
+  filters: ReportFilterPayload[];
+}
+
+export interface ReportFilterPayload {
+  /** "report" reaches every page; "page" reaches one. */
+  scope: string;
+  page: string;
+  target: string;
+  text: string;
+  /** False when the filter's shape was not one the reader understands. It is
+   *  still listed, because a filter nobody mentions is one nobody checks. */
+  readable: boolean;
 }
 
 /** One measure, run against the model's own rows. */
