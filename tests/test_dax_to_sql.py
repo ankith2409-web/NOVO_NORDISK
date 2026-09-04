@@ -617,14 +617,36 @@ def test_a_blocked_measure_carries_its_reason_not_an_empty_string(model):
             assert row["blocked_by"]
 
 
-def test_grain_options_offer_dimensions_not_facts(model):
-    """Batch is pointed at by TestResult but also points at Product, Site and
-    Calendar, which makes it a fact table. Grouping by one of its own numbers
-    is legal SQL and never the question."""
+def test_grain_options_offer_every_table_on_the_one_side(model):
+    """Anything pointed at, not only the leaves.
+
+    This replaced a stricter rule that offered leaf dimensions alone -- tables
+    pointed at that point at nothing themselves. It was meant to keep a fact
+    table out of the list and it did, but it took the middle of every snowflake
+    with it: `Store` is pointed at by `Sales` and points at `District`, so the
+    leaf rule dropped `Store[Chain]` and `Store[Territory]`, the two splits
+    that demonstrate a join across two tables at all. The same rule hid
+    `Product[Category]` in two other models and `Patient[Sex]` in the clinical
+    one, which is a dimension a trial safety analysis is mostly *about*.
+
+    `Batch` now appears, which the old rule existed to prevent. That is the
+    accepted cost and it is a small one: a grain that turns out not to reach a
+    measure is answered with a stated reason rather than a wrong number, so
+    being generous costs a refusal while being strict costs a column nobody can
+    find.
+    """
     _, payload = _dataset(model)
     tables = {o["table"] for o in payload["grain_options"]}
-    assert "Batch" not in tables
-    assert {"Site", "Calendar", "Product"} <= tables
+    assert {"Site", "Calendar", "Product", "Batch"} <= tables
+
+
+def test_grain_options_still_exclude_what_reads_as_nothing(model):
+    """Being generous about tables is not being generous about columns."""
+    _, payload = _dataset(model)
+    offered = {o["value"] for o in payload["grain_options"]}
+    # A join key is an opaque id whichever table it sits on.
+    assert not any(v.endswith("[SiteID]") for v in offered)
+    assert not any(v.endswith("[ProductID]") for v in offered)
 
 
 def test_a_join_key_is_not_offered_as_a_grain(model):

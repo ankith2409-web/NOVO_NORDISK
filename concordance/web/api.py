@@ -937,17 +937,30 @@ def dataset(context: ApiContext, params: Params) -> dict[str, Any]:
 def _grain_options(model) -> list[dict[str, str]]:
     """Columns worth grouping by, so the caller need not know the schema.
 
-    Offered from dimension tables only: the ones other tables point at, which
-    point at nothing themselves. That leaf test is what separates Site and
-    Calendar from Batch -- Batch is pointed at by TestResult but also points at
-    Product, Site and Calendar, which makes it a fact table. Grouping a fact
-    table by one of its own measures-in-waiting ("yield per yield") is legal
-    SQL and never the question, and offering every column in the model would
-    bury the handful that are.
+    Offered from any table something points at -- the "one" side of a
+    relationship, where grouping cannot multiply rows.
+
+    This deliberately replaced a stricter rule that offered only *leaf*
+    dimensions: tables pointed at that point at nothing themselves. That test
+    was meant to keep a fact table out of the list, and it did, but it took the
+    middle of every snowflake with it. `Store` is pointed at by `Sales` and
+    points at `District`, so the leaf rule dropped it -- and with it
+    `Store[Chain]` and `Store[Territory]`, two of the most useful splits in the
+    file, and the ones that demonstrate a join across two tables at all. The
+    same rule was hiding `Product[Category]` in two other models and
+    `Patient[Sex]` and `Patient[AgeGroup]` in the clinical one, which are the
+    dimensions a trial safety analysis is mostly *about*.
+
+    Offering a grain that turns out not to reach a given measure is safe: the
+    translator answers with a stated reason -- "no active relationship path
+    joins Sales to Fiscal calendar" -- rather than a wrong number. That makes
+    the cost of being generous here a refusal, and the cost of being strict a
+    column nobody can find. `generate/breakdown.py` reached the same conclusion
+    for charts and uses the same rule, deliberately.
     """
-    referenced = {r.to_table for r in model.relationships}
-    references = {r.from_table for r in model.relationships}
-    dimensions = referenced - references
+    from concordance.generate.breakdown import _named_like_an_id
+
+    dimensions = {r.to_table for r in model.relationships}
     keys = {(r.to_table, r.to_column) for r in model.relationships}
     options: list[dict[str, str]] = []
     for column in model.columns:
@@ -957,6 +970,10 @@ def _grain_options(model) -> list[dict[str, str]]:
             continue  # a join key groups by an opaque id
         if (getattr(column, "expression", "") or "").strip():
             continue  # calculated, so not present in the source
+        # The same name test the chart picker uses, for the same reason: an id
+        # or an image column groups legally and reads as nothing.
+        if _named_like_an_id(column.name):
+            continue
         options.append(
             {
                 "value": f"{column.table}[{column.name}]",
