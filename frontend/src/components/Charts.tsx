@@ -123,6 +123,29 @@ function shade(rank: number, total: number): number {
   return 1 - step * rank;
 }
 
+/** How many groups are picked out in the accent colour; the rest go quiet. */
+export const LEADERS = 3;
+
+/**
+ * Each group's rank by value, regardless of the order it is drawn in.
+ *
+ * Rank and position are the same thing only while the chart is sorted by size.
+ * Put the months in date order and they part company, and picking out "the
+ * first three drawn" would then highlight January, February and March for no
+ * reason. The three *largest* stay the three largest however the chart is
+ * arranged, which is the thing worth pointing at.
+ */
+export function ranks(slices: Slice[]): number[] {
+  const order = slices
+    .map((slice, at) => ({ at, value: Math.abs(slice.value) }))
+    .sort((a, b) => b.value - a.value);
+  const out = new Array<number>(slices.length);
+  order.forEach((entry, rank) => {
+    out[entry.at] = rank;
+  });
+  return out;
+}
+
 /** Magnitude, short enough to sit inside a chart. */
 export function brief(value: number): string {
   const size = Math.abs(value);
@@ -301,6 +324,7 @@ export function Donut({ slices, by, measure }: ChartProps) {
  */
 export function Bars({ slices, by, measure, additive = true }: ChartProps) {
   const [active, setActive] = useState<number | null>(null);
+  const rank = ranks(slices);
   const total = slices.reduce((sum, s) => sum + Math.abs(s.value), 0);
   // Scaled against the largest bar, not against the total: a chart where the
   // biggest bar fills a third of the track wastes the two-thirds that would
@@ -334,11 +358,14 @@ export function Bars({ slices, by, measure, additive = true }: ChartProps) {
               </span>
               <span className="relative h-3.5 min-w-0 flex-1 rounded-[2px] bg-hairline">
                 <span
-                  className="absolute inset-y-0 rounded-[2px] bg-accent transition-[width] duration-200"
+                  className={cx(
+                    "absolute inset-y-0 rounded-[2px] transition-[width] duration-200",
+                    rank[at] < LEADERS ? "bg-accent" : "bg-edge",
+                  )}
                   style={{
                     width: `${extent}%`,
                     left: signed ? (slice.value < 0 ? `${50 - extent}%` : "50%") : 0,
-                    opacity: shade(at, slices.length),
+                    opacity: rank[at] < LEADERS ? shade(rank[at], LEADERS) : 1,
                   }}
                 />
                 {signed && (
@@ -379,6 +406,7 @@ export function Bars({ slices, by, measure, additive = true }: ChartProps) {
  */
 export function Columns({ slices, by, measure, additive = true }: ChartProps) {
   const [active, setActive] = useState<number | null>(null);
+  const rank = ranks(slices);
   const total = slices.reduce((sum, s) => sum + Math.abs(s.value), 0);
   const tallest = Math.max(...slices.map((s) => Math.abs(s.value)), 1);
 
@@ -408,10 +436,14 @@ export function Columns({ slices, by, measure, additive = true }: ChartProps) {
               {brief(slice.value)}
             </span>
             <span
-              className="w-full rounded-t-[2px] bg-accent transition-[height] duration-200"
+              className={cx(
+                "w-full rounded-t-[2px] transition-[height] duration-200",
+                rank[at] < LEADERS ? "bg-accent" : "bg-edge",
+              )}
               style={{
                 height: `${(Math.abs(slice.value) / tallest) * 100}%`,
-                opacity: active === at ? 1 : shade(at, slices.length),
+                opacity:
+                  active === at || rank[at] >= LEADERS ? 1 : shade(rank[at], LEADERS),
               }}
             />
             <span className="truncate text-center text-[9.5px] text-muted">
@@ -425,6 +457,96 @@ export function Columns({ slices, by, measure, additive = true }: ChartProps) {
         total={additive ? total : 0}
         fallback="Point at a column for its exact figure."
       />
+    </div>
+  );
+}
+
+
+/**
+ * The same split as a table: label, figure, share, and a bar in the cell.
+ *
+ * Every panel offers this beside the chart, because the two answer different
+ * questions and a dashboard that only draws forces the second one out to a
+ * tooltip. A chart answers "which is bigger"; a table answers "what is it,
+ * exactly" -- and this is a documentation tool, where the exact figure is
+ * frequently the whole point.
+ *
+ * The total row appears only where the parts genuinely sum to a whole. Under a
+ * measure that does not add up -- an average, a ratio -- a total row would be
+ * a number the model does not contain, printed in the most authoritative place
+ * on the table.
+ */
+export function Tabular({
+  slices,
+  by,
+  measure,
+  additive = true,
+}: ChartProps) {
+  const rank = ranks(slices);
+  const widest = Math.max(...slices.map((s) => Math.abs(s.value)), 1);
+  const total = slices.reduce((sum, s) => sum + s.value, 0);
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-[11.5px]">
+        <caption className="sr-only">
+          {measure} by {by}
+        </caption>
+        <thead>
+          <tr className="border-b border-edge text-faint">
+            <th scope="col" className="py-1 pr-2 text-left font-medium">
+              {by}
+            </th>
+            <th scope="col" className="py-1 pr-2 text-right font-medium">
+              {measure}
+            </th>
+            <th scope="col" className="w-[38%] py-1 text-left font-medium">
+              <span className="sr-only">Relative size</span>
+            </th>
+            {additive && (
+              <th scope="col" className="py-1 pl-2 text-right font-medium">
+                Share
+              </th>
+            )}
+          </tr>
+        </thead>
+        <tbody>
+          {slices.map((slice, at) => (
+            <tr key={slice.label} className="border-b border-hairline">
+              <td className="max-w-[10rem] truncate py-1 pr-2" title={slice.label}>
+                {slice.label}
+              </td>
+              <td className="py-1 pr-2 text-right tabular">{exact(slice.value)}</td>
+              <td className="py-1">
+                <span className="block h-2.5 rounded-[2px] bg-hairline">
+                  <span
+                    className={cx(
+                      "block h-full rounded-[2px]",
+                      rank[at] < LEADERS ? "bg-accent" : "bg-edge",
+                    )}
+                    style={{ width: `${(Math.abs(slice.value) / widest) * 100}%` }}
+                  />
+                </span>
+              </td>
+              {additive && (
+                <td className="py-1 pl-2 text-right tabular text-muted">
+                  {share(slice.value, total) || "—"}
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+        {additive && (
+          <tfoot>
+            <tr className="font-semibold text-ink">
+              <td className="py-1.5 pr-2">Total</td>
+              <td className="py-1.5 pr-2 text-right tabular">{exact(total)}</td>
+              <td />
+              <td className="py-1.5 pl-2 text-right tabular">100%</td>
+            </tr>
+          </tfoot>
+        )}
+      </table>
     </div>
   );
 }

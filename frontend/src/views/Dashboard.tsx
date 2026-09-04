@@ -38,6 +38,7 @@ import {
   Bars,
   Columns,
   Donut,
+  Tabular,
   arrange,
   canOrderByTime,
   chartFor,
@@ -746,10 +747,18 @@ function Panel({
   const applied: Order = order === "time" && !timeable ? "largest" : order;
   const slices = arrange(breakdown.slices, applied);
   const kind = chartFor(slices, breakdown.additive, breakdown.column);
+  // Which reading of the split is showing. Kept per panel rather than for the
+  // section: a reader checking one figure exactly still wants the shape of the
+  // others, and forcing every panel to switch together would take that away.
+  const [as, setAs] = useState<"visual" | "tabular">("visual");
 
   return (
-    <article className="flex min-w-0 flex-col gap-2 rounded border border-hairline bg-ground p-3">
-      <div className="flex flex-wrap items-baseline gap-x-2">
+    <article className="flex min-w-0 flex-col gap-2 rounded border border-hairline bg-ground">
+      {/* A rule in the accent across the top, and the column centred under it.
+          Both are borrowed from the report this documents: it is the shape a
+          Power BI reader already knows a panel by. */}
+      <div className="h-[3px] rounded-t bg-accent" aria-hidden />
+      <div className="flex flex-wrap items-baseline gap-x-2 px-3 pt-1">
         <h4 className="text-[13px] font-medium">by {breakdown.column}</h4>
         <span className="font-mono text-[10.5px] text-faint">{breakdown.table}</span>
         <button
@@ -760,8 +769,16 @@ function Panel({
           {showSql ? "hide the query" : "the query"}
         </button>
       </div>
+      <div className="flex flex-col gap-2 px-3 pb-3">
 
-      {kind === "donut" ? (
+      {as === "tabular" ? (
+        <Tabular
+          slices={slices}
+          by={breakdown.column}
+          measure={measure}
+          additive={breakdown.additive}
+        />
+      ) : kind === "donut" ? (
         <Donut slices={slices} by={breakdown.column} measure={measure} />
       ) : kind === "columns" ? (
         <Columns
@@ -801,6 +818,35 @@ function Panel({
       )}
 
       {showSql && <Code label="SQL">{breakdown.sql}</Code>}
+      </div>
+
+      {/* The switch sits at the foot of the panel, where the report this
+          documents puts it. A chart answers "which is bigger"; the table
+          answers "what is it, exactly" -- and in a documentation tool the
+          exact figure is often the whole question. */}
+      <div
+        role="group"
+        aria-label={`How to show ${measure} by ${breakdown.column}`}
+        className="flex items-center justify-center gap-1 border-t border-hairline px-3 py-1.5"
+      >
+        {(["visual", "tabular"] as const).map((option) => (
+          <button
+            key={option}
+            type="button"
+            onClick={() => setAs(option)}
+            aria-pressed={as === option}
+            className={cx(
+              "rounded-full px-3 py-0.5 text-[11px] capitalize",
+              "transition-colors duration-(--duration-feedback)",
+              as === option
+                ? "bg-accent text-ground font-medium"
+                : "text-muted hover:bg-raised",
+            )}
+          >
+            {option}
+          </button>
+        ))}
+      </div>
     </article>
   );
 }

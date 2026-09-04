@@ -12,11 +12,13 @@ import { describe, expect, it } from "vitest";
 import {
   LABEL_MAX,
   RING_MAX,
+  LEADERS,
   arrange,
   brief,
   canOrderByTime,
   chartFor,
   exact,
+  ranks,
 } from "./Charts";
 
 //: `order` is what a slice carries to say where its group sits in time. These
@@ -212,5 +214,36 @@ describe("when date order is offered at all", () => {
 
   it("is not offered for a single dated group, which is not an order", () => {
     expect(canOrderByTime(dated(["Jan", 1, "2019-01-01"]))).toBe(false);
+  });
+});
+
+describe("which groups get picked out", () => {
+  it("ranks by value, not by the order they are drawn in", () => {
+    // Sorted by date, the largest month is not the first drawn. Highlighting
+    // "the first three" would then pick out January, February and March for no
+    // reason at all.
+    const byDate = dated(
+      ["Jan", 10, "2019-01-01"],
+      ["Feb", 90, "2019-02-01"],
+      ["Mar", 20, "2019-03-01"],
+      ["Apr", 80, "2019-04-01"],
+    );
+    // Feb (90) is rank 0, Apr (80) rank 1, Mar (20) rank 2, Jan (10) rank 3.
+    expect(ranks(byDate)).toEqual([3, 0, 2, 1]);
+  });
+
+  it("ranks a variance by size, ignoring its direction", () => {
+    // A large negative is a large number. Ranking by the signed value would
+    // put the worst performer last and quietly grey it out.
+    expect(ranks(slices(["a", -900], ["b", 100], ["c", -50]))).toEqual([0, 1, 2]);
+  });
+
+  it("gives every slice exactly one rank", () => {
+    const got = ranks(slices(["a", 3], ["b", 1], ["c", 2], ["d", 4]));
+    expect([...got].sort((x, y) => x - y)).toEqual([0, 1, 2, 3]);
+  });
+
+  it("picks out three, so a two-group split is not all-accent-and-nothing", () => {
+    expect(LEADERS).toBe(3);
   });
 });
