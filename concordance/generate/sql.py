@@ -1054,6 +1054,23 @@ class Compiler:
 # -- the public entry point ----------------------------------------------------
 
 
+def literal(value: str) -> str:
+    """One value as a SQL string literal.
+
+    Doubling the quote is the whole of SQL's own escaping rule, and it is
+    enough here because nothing else in the rendered text is a string
+    delimiter -- a value of ``O'Brien`` becomes ``\'O\'\'Brien\'`` and a value
+    carrying ``'; DROP TABLE Sales; --`` becomes one long harmless string.
+
+    Rendered as text even for a number. Every value this receives came out of
+    a `GROUP BY` on the column being filtered, so comparing it back against
+    that column is a comparison the engine already knows how to make; and
+    quoting unconditionally means there is no branch where a value reaches the
+    query unquoted.
+    """
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 def _grain_columns(model, grain: tuple[str, ...]) -> list[tuple[str, str]]:
     """Parse ``Table[Column]`` grain strings against the model."""
     by_key = {
@@ -1112,6 +1129,7 @@ def translate(
     quote: str = '"',
     only_year: tuple[str, str, int] | None = None,
     period: tuple[str, str, str] | None = None,
+    only_where: tuple[str, str, str] | None = None,
 ) -> Translation:
     """Render one measure as SQL at ``grain``, or say why it cannot be.
 
@@ -1126,6 +1144,14 @@ def translate(
     denominator drawn from every year, which is exactly the class of quiet
     wrong answer this project exists to avoid. The year is rendered as an
     integer, never interpolated as text, so it cannot carry SQL with it.
+
+    ``only_where`` restricts the query to one value of one column, as
+    ``(table, column, value)``. It is what a reader does by clicking a bar: in
+    Power BI that cross-filters every other visual on the page, and the honest
+    way to reproduce it is to put the restriction in the query and recompute,
+    not to dim the bars that did not match. Dimming is what a chart does when
+    it cannot answer; the numbers on screen would still be the unfiltered ones
+    while the page implies otherwise.
 
     ``period`` groups by a date column truncated to a calendar period, as
     ``(period, table, column)``. It is a *grain*, not a filter: it joins the
@@ -1176,6 +1202,8 @@ def translate(
             needed.add(only_year[0])
         if period is not None:
             needed.add(period[1])
+        if only_where is not None:
+            needed.add(only_where[0])
         if not needed:
             # Blocked, not unsupported. A measure that reads no column is a
             # constant -- a label, a tooltip, a hard-coded target -- and there
@@ -1233,14 +1261,25 @@ def translate(
 
         lines = [f"SELECT {', '.join(select)}", f"FROM {compiler.q(base)}"]
         lines.extend(joins)
+
+        # Both restrictions land in one WHERE, and both land *before*
+        # aggregation. Filtering the result rows instead would divide by a
+        # denominator drawn from everything, which is exactly the class of
+        # quiet wrong answer this project exists to avoid.
+        conditions: list[str] = []
         if only_year is not None:
             table, column, year = only_year
             # `EXTRACT` rather than `YEAR()`: it is standard SQL and runs
             # unchanged on DuckDB, Snowflake, Databricks, Redshift and Athena,
             # where `YEAR()` is not available everywhere.
-            lines.append(
-                f"WHERE EXTRACT(YEAR FROM {compiler.col(table, column)}) = {int(year)}"
+            conditions.append(
+                f"EXTRACT(YEAR FROM {compiler.col(table, column)}) = {int(year)}"
             )
+        if only_where is not None:
+            table, column, value = only_where
+            conditions.append(f"{compiler.col(table, column)} = {literal(value)}")
+        if conditions:
+            lines.append("WHERE " + " AND ".join(conditions))
         if group_by:
             group = ", ".join(group_by)
             lines.append(f"GROUP BY {group}")

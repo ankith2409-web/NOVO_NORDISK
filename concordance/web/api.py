@@ -1065,6 +1065,28 @@ def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
     # dashboard into a cut the data does not support.
     period = _one(params, "period", required=False) or None
 
+    # Three parameters rather than one `Store[Type]=External` string: a value
+    # is real data and may itself carry a bracket or an equals sign, and a
+    # parser that splits on those would filter on the wrong thing rather than
+    # fail. Validated against the model below.
+    cross_table = _one(params, "cross_table", required=False)
+    cross_column = _one(params, "cross_column", required=False)
+    cross_value = _one(params, "cross_value", required=False)
+
+    cross = None
+    if cross_table and cross_column and cross_value:
+        # The column has to exist in the model, or the filter is not applied.
+        # `translate` would refuse an unknown column anyway; refusing here
+        # means the response can say the filter was dropped instead of
+        # returning an unfiltered dashboard that looks filtered.
+        known = {
+            (c.table.casefold(), c.name.casefold()): (c.table, c.name)
+            for c in model.columns
+        }
+        found = known.get((cross_table.casefold(), cross_column.casefold()))
+        if found is not None:
+            cross = (found[0], found[1], cross_value)
+
     connection, _rows, reason = context.data()
     if connection is None:
         return {
@@ -1077,10 +1099,13 @@ def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
             "years": [],
             "year": None,
             "periods": [],
+            "period": None,
             "over_time": None,
+            "cross": None,
+            "crossable": [],
         }
 
-    built = build(model, connection, wanted, year=year, period=period)
+    built = build(model, connection, wanted, year=year, period=period, cross=cross)
 
     def rendered(b) -> dict[str, Any]:
         return {
@@ -1090,6 +1115,7 @@ def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
             "total": b.total,
             "whole": b.whole,
             "additive": b.additive,
+            "is_filter": b.is_filter,
             "folded": b.folded,
             "sql": b.sql,
             "reason": b.reason,
@@ -1108,7 +1134,50 @@ def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
         "years": list(built.years),
         "year": built.year,
         "periods": list(built.periods),
+        "period": built.period,
         "over_time": rendered(built.over_time) if built.over_time else None,
+        "cross": (
+            {
+                "table": built.cross[0],
+                "column": built.cross[1],
+                "value": built.cross[2],
+                "label": f"{built.cross[0]}[{built.cross[1]}] is {built.cross[2]}",
+            }
+            if built.cross
+            else None
+        ),
+        "crossable": list(built.crossable),
+    }
+
+
+def sparklines(context: ApiContext, params: Params) -> dict[str, Any]:
+    """Every computable measure over time, small.
+
+    What turns a row of figures into a row of KPI cards: the same number, with
+    the shape it took to get there under it. Each series is that measure's own
+    SQL grouped by a calendar period, so a card and its sparkline are the same
+    query at two grains rather than a figure with a decoration beside it.
+    """
+    from concordance.generate.breakdown import sparklines as cut
+
+    model = context.graph.model
+    period = _one(params, "period", required=False) or None
+
+    connection, _rows, reason = context.data()
+    if connection is None:
+        return {"model": model.name, "available": False, "reason": reason, "series": {}}
+
+    names = [v.measure for v in context.evaluated().values if v.computed]
+    series = cut(model, connection, names, period=period)
+    return {
+        "model": model.name,
+        "available": bool(series),
+        "reason": (
+            ""
+            if series
+            else "No measure in this model can be cut over time, so no card has a trend."
+        ),
+        "series": {name: list(values) for name, values in series.items()},
     }
 
 
@@ -1159,6 +1228,7 @@ ROUTES: dict[str, Callable[[ApiContext, Params], dict[str, Any]]] = {
     "/api/values": values,
     "/api/dashboard": dashboard,
     "/api/map": atlas,
+    "/api/sparklines": sparklines,
     "/api/graph": graph,
     "/api/tables": tables,
     "/api/table": table,

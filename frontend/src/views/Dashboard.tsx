@@ -29,6 +29,7 @@ import {
   type BreakdownPayload,
   type DashboardPayload,
   type MapPayload,
+  type SparklinePayload,
   type MeasureValue,
   type ReportFilterPayload,
   type ReportPayload,
@@ -39,6 +40,8 @@ import {
 import {
   Atlas,
   Bars,
+  Sparkline,
+  Trend,
   Columns,
   Donut,
   Tabular,
@@ -138,6 +141,10 @@ export function Dashboard({
   // first call for a model reads a million rows into a query engine -- and the
   // page has plenty to show while it is still working.
   const { data: computed } = useLoad<ValuesPayload>(() => api.values(), []);
+  // The shape under each figure. A separate request from the figures
+  // themselves, so a card shows its number the moment it has one rather than
+  // waiting on a series it does not need to display the number.
+  const { data: trends } = useLoad<SparklinePayload>(() => api.sparklines(), []);
   const [picked, setPicked] = useState("");
   const scope = useRef<HTMLDivElement>(null);
   const marked = useFocusTarget(focus, scope);
@@ -305,6 +312,7 @@ export function Dashboard({
                   field={field}
                   places={shownOn.length}
                   figure={figures.get(field.name)}
+                  trend={trends?.series?.[field.name]}
                   loading={!computed}
                   selected={picked === field.name}
                   marked={isMarked(marked, field.name)}
@@ -547,6 +555,7 @@ function KpiCard({
   field,
   places,
   figure,
+  trend,
   loading,
   selected,
   marked,
@@ -556,6 +565,9 @@ function KpiCard({
   /** How many report pages show it. */
   places: number;
   figure: MeasureValue | undefined;
+  /** This measure over time, when it can be cut that way. Absent rather than
+   *  flat when it cannot: a flat line is a claim about the data. */
+  trend?: number[];
   loading: boolean;
   selected: boolean;
   marked: boolean;
@@ -596,6 +608,14 @@ function KpiCard({
       <span className="truncate font-mono text-[10.5px] text-faint">
         {field.table} · on {places} page{places === 1 ? "" : "s"}
       </span>
+      {/* The same measure's own query at a coarser grain, so the card carries
+          the shape as well as the figure. Only where the model can honestly
+          cut it over time. */}
+      {trend && trend.length > 1 && (
+        <span className="mt-1 block">
+          <Sparkline values={trend} />
+        </span>
+      )}
     </button>
   );
 }
@@ -696,26 +716,63 @@ const ORDERS: { value: Order; label: string }[] = [
   { value: "label", label: "A\u2013Z" },
   { value: "time", label: "In date order" },
 ];
-
+/**
+ * The dashboard proper: one measure, cut every way this file can honestly cut
+ * it, laid out the way an executive report is laid out.
+ *
+ * The shape is borrowed on purpose -- a trend across the top, a share ring and
+ * a ranking beside it, a map, a table. That is the arrangement a person who
+ * reads Power BI already knows how to read, and the point of this page is that
+ * they should not have to learn a new one to check a number.
+ *
+ * What is *not* borrowed is where the numbers come from. Every panel below is
+ * that measure's own DAX compiled to SQL and run against the rows in the file,
+ * with the query behind a disclosure on each one. Nothing here is transcribed,
+ * so this page works the same on a file nobody has seen before.
+ */
 function Breakdowns({ measure, picked }: { measure: string; picked: boolean }) {
   // Sorting is the reader's view of the same numbers, so it stays in the
-  // browser and costs no round trip. The year is not: it changes which rows are
-  // aggregated, which has to happen in the query or the answer is wrong.
+  // browser and costs no round trip. The rest change which rows are
+  // aggregated, so they have to happen in the query or the answer is wrong.
   const [order, setOrder] = useState<Order>("largest");
   const [year, setYear] = useState<number | null>(null);
-  // Cutting by a period is a different query, not a different view of one, so
-  // it goes to the server like the year does.
   const [period, setPeriod] = useState<string | null>(null);
+  const [cross, setCross] = useState<{
+    table: string;
+    column: string;
+    value: string;
+  } | null>(null);
 
   const { data, error } = useLoad<DashboardPayload>(
-    () => api.dashboard(measure, year, period),
-    [measure, year, period],
+    () => api.dashboard(measure, year, period, cross),
+    [measure, year, period, cross?.table, cross?.column, cross?.value],
   );
+
+  // The first period the model offers, so the page opens on a trend rather
+  // than on a control the reader has to find before anything is drawn.
+  useEffect(() => {
+    if (period === null && data && data.periods.length > 0) {
+      setPeriod(data.periods.includes("month") ? "month" : data.periods[0]);
+    }
+  }, [data, period]);
+
+  // Clicking a bar filters the page to that group. Clicking the same one again
+  // clears it, which is what Power BI does and what a reader expects.
+  const pick = (table: string, column: string) => (value: string) => {
+    // A folded slice is several groups at once; there is no single value to
+    // hold, so it is not a filter.
+    if (/^\d+ more$/.test(value)) return;
+    setCross((was) =>
+      was && was.table === table && was.column === column && was.value === value
+        ? null
+        : { table, column, value },
+    );
+  };
 
   if (error) return null;
 
   return (
-    <section className="flex flex-col gap-2.5 rounded border border-hairline bg-surface p-3.5">
+    <section className="flex flex-col gap-3 rounded border border-hairline bg-surface p-3.5">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <h3 className="font-serif text-base font-semibold">
           What {measure} is made of
@@ -741,29 +798,6 @@ function Breakdowns({ measure, picked }: { measure: string; picked: boolean }) {
               ))}
             </select>
           </label>
-
-          {/* Same rule as the year: offered only where the calendar really
-              falls into that many buckets, so a model whose timestamps are all
-              midnight is never offered "by hour". */}
-          {data && data.periods.length > 0 && (
-            <label className="flex items-center gap-1.5 text-[11.5px] text-muted">
-              <span className="font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
-                over time
-              </span>
-              <select
-                value={period ?? ""}
-                onChange={(event) => setPeriod(event.target.value || null)}
-                className={controlClasses("quiet")}
-              >
-                <option value="">Not by date</option>
-                {data.periods.map((option) => (
-                  <option key={option} value={option}>
-                    by {option}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
 
           {/* Shown only where a year filter is real. A model whose calendar no
               relationship reaches cannot be filtered by year, and a disabled
@@ -792,50 +826,117 @@ function Breakdowns({ measure, picked }: { measure: string; picked: boolean }) {
         </div>
       </div>
 
+      {/* What is currently held, and the only way to let go of it. A filter
+          the reader cannot see is a filter they will forget is on -- which is
+          precisely how this project's own 387K-versus-1.2M question started. */}
+      {data?.cross && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
+            filtered to
+          </span>
+          <button
+            type="button"
+            onClick={() => setCross(null)}
+            className={cx(
+              "flex items-center gap-1.5 rounded-full border border-accent bg-accent-soft",
+              "px-2.5 py-0.5 text-[11.5px] text-ink",
+              "transition-colors duration-(--duration-feedback)",
+            )}
+          >
+            {data.cross.label}
+            <span aria-hidden className="text-faint">
+              &times;
+            </span>
+            <span className="sr-only">, click to clear</span>
+          </button>
+          <span className="text-[11px] text-muted">
+            every figure below was recomputed under it, in the query
+          </span>
+        </div>
+      )}
+
       {!data ? (
         <Loading what={`the splits of ${measure}`} rows={2} />
       ) : !data.available ? (
         <Empty>{data.reason}</Empty>
       ) : (
         <>
-          {/* `items-start`, so a two-bar panel stays two bars tall instead of
-              being stretched to match a nine-bar one beside it. */}
-          {/* Time first and full width. It is the cut every reader asks for
-              before any other, and a series squeezed into a half column loses
-              the shape that is the whole reason to draw it. */}
+          {/* The trend across the top, full width, the way a report opens. */}
           {data.over_time && (
-            <Panel
-              breakdown={data.over_time}
-              measure={measure}
-              heading={data.over_time.by}
-              // Always chronological. A time series ranked by size is a bar
-              // chart of months in a meaningless sequence.
-              order="time"
-            />
-          )}
-          {period && !data.over_time && (
-            <Empty>
-              {measure} could not be cut by {period} against this file&rsquo;s calendar.
-            </Empty>
+            <article className="flex min-w-0 flex-col gap-2 rounded border border-hairline bg-ground">
+              <div className="h-[3px] rounded-t bg-accent" aria-hidden />
+              <div className="flex flex-wrap items-baseline gap-x-2 px-3 pt-1">
+                <h4 className="text-[13px] font-medium">
+                  {measure} over time
+                </h4>
+                <span className="font-mono text-[10.5px] text-faint">
+                  {data.over_time.table}[{data.over_time.column}]
+                </span>
+                {/* The period as a row of buttons rather than a dropdown: it is
+                    the control most likely to be touched, and the report this
+                    imitates puts its YOY / QOQ / MOM switch in the open. */}
+                <div
+                  role="group"
+                  aria-label="Period"
+                  className="ml-auto flex items-center gap-1 pb-1"
+                >
+                  {data.periods.map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => setPeriod(option)}
+                      aria-pressed={data.period === option}
+                      className={cx(
+                        "rounded-full px-2.5 py-0.5 font-mono text-[10px] uppercase",
+                        "tracking-[0.06em] transition-colors duration-(--duration-feedback)",
+                        data.period === option
+                          ? "bg-accent font-medium text-ground"
+                          : "text-muted hover:bg-raised",
+                      )}
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="px-3 pb-3">
+                <Trend slices={data.over_time.slices} measure={measure} />
+              </div>
+            </article>
           )}
 
-          <div className="grid items-start gap-3.5 lg:grid-cols-2">
+          {/* Then the splits, and the map alongside them. `items-start`, so a
+              two-bar panel stays two bars tall instead of being stretched to
+              match a nine-bar one beside it. */}
+          <div className="grid items-start gap-3 lg:grid-cols-2">
             {data.breakdowns.map((breakdown) => (
               <Panel
                 key={breakdown.by}
                 breakdown={breakdown}
                 measure={measure}
                 order={order}
+                onPick={pick(breakdown.table, breakdown.column)}
+                picked={
+                  data.cross &&
+                  data.cross.table === breakdown.table &&
+                  data.cross.column === breakdown.column
+                    ? data.cross.value
+                    : null
+                }
               />
             ))}
           </div>
+
           <p className="text-[11.5px] text-muted">
             Every chart here was produced by running {measure}&rsquo;s own SQL grouped by
             that column, against the rows this file carries. Where the measure adds up, the
             parts sum to the figure on the card, and a group beyond the tenth is folded
             into one slice carrying its value rather than dropped so the total still
             holds. Where it does not — an average, a ratio — the chart says so rather
-            than printing a total that means nothing.
+            than printing a total that means nothing.{" "}
+            <strong className="font-medium text-ink">Click any bar or slice</strong> to
+            hold the page to that group; the filter goes into the query and every panel
+            is recomputed, rather than the bars that did not match being faded out.
             {data.year != null && (
               <>
                 {" "}
@@ -869,10 +970,7 @@ function Breakdowns({ measure, picked }: { measure: string; picked: boolean }) {
  * something, and a reader shown nothing concludes the feature is broken.
  */
 function Where({ measure }: { measure: string }) {
-  const { data, error } = useLoad<MapPayload>(
-    () => api.atlas(measure),
-    [measure],
-  );
+  const { data, error } = useLoad<MapPayload>(() => api.atlas(measure), [measure]);
   const [showSql, setShowSql] = useState(false);
 
   if (error) return null;
@@ -931,6 +1029,8 @@ function Panel({
   measure,
   order,
   heading,
+  onPick,
+  picked,
 }: {
   breakdown: BreakdownPayload;
   measure: string;
@@ -939,6 +1039,10 @@ function Panel({
    *  date column it was cut from, because "by Date" is what the reader was
    *  trying to get away from. */
   heading?: string;
+  /** Clicking a group holds the whole page to it -- see `Breakdowns`. */
+  onPick?: (value: string) => void;
+  /** The group held, when it is this panel's column that is holding it. */
+  picked?: string | null;
 }) {
   const [showSql, setShowSql] = useState(false);
   // A chart whose groups have no place in time cannot honour "in date order",
@@ -977,15 +1081,25 @@ function Panel({
           slices={slices}
           by={breakdown.column}
           measure={measure}
+          onPick={onPick}
+          picked={picked}
           additive={breakdown.additive}
         />
       ) : kind === "donut" ? (
-        <Donut slices={slices} by={breakdown.column} measure={measure} />
+        <Donut
+          slices={slices}
+          by={breakdown.column}
+          measure={measure}
+          onPick={onPick}
+          picked={picked}
+        />
       ) : kind === "columns" ? (
         <Columns
           slices={slices}
           by={breakdown.column}
           measure={measure}
+          onPick={onPick}
+          picked={picked}
           additive={breakdown.additive}
         />
       ) : (
@@ -993,6 +1107,8 @@ function Panel({
           slices={slices}
           by={breakdown.column}
           measure={measure}
+          onPick={onPick}
+          picked={picked}
           additive={breakdown.additive}
         />
       )}
@@ -1005,6 +1121,16 @@ function Panel({
       {/* Said where the misreading would happen, not once at the bottom of the
           page: the sum of a set of averages is a number this chart can produce
           and nothing in the model means. */}
+      {/* Said on the panel itself, because it is the panel the reader clicked
+          and the difference would otherwise look like a bug: this one still
+          shows every group and the full figure while its neighbours show the
+          filtered ones. */}
+      {breakdown.is_filter && picked && (
+        <p className="text-[11px] text-muted">
+          Showing every group — a chart does not filter itself, so this one still
+          reads the whole model while the panels beside it are held to {picked}.
+        </p>
+      )}
       {order === "time" && !timeable && (
         <p className="text-[11px] text-review">
           Ranked by size — these groups are not points in time, so there is no date

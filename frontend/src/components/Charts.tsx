@@ -17,7 +17,7 @@
  * repeats. Nothing is lost by not seeing it.
  */
 
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { cx } from "@/lib/cx";
 import type { Slice } from "@/lib/api";
 
@@ -205,6 +205,17 @@ interface ChartProps {
   /** Whether the parts sum to a whole. When they do not, a share of the total
    *  is not a real quantity and the readout does not offer one. */
   additive?: boolean;
+  /** Called with a group's label when it is clicked.
+   *
+   *  This is the cross-filter, and it is a query rather than a highlight: the
+   *  caller re-runs every chart on the page with that group held, so the other
+   *  panels show the filtered figures. Fading the bars that did not match --
+   *  the usual shortcut -- leaves the numbers unfiltered while the page
+   *  implies they are not, and across two different dimensions it fades
+   *  everything, because a product name is never a store name. */
+  onPick?: (label: string) => void;
+  /** The group currently held, so it can be marked as the reason. */
+  picked?: string | null;
 }
 
 /**
@@ -213,7 +224,7 @@ interface ChartProps {
  * The hole is not decoration: it is where the total goes, so the part and the
  * whole are readable without moving the eye off the chart.
  */
-export function Donut({ slices, by, measure }: ChartProps) {
+export function Donut({ slices, by, measure, onPick, picked }: ChartProps) {
   const [active, setActive] = useState<number | null>(null);
   const total = slices.reduce((sum, s) => sum + Math.abs(s.value), 0);
   const titleId = useId();
@@ -253,6 +264,7 @@ export function Donut({ slices, by, measure }: ChartProps) {
                   className="cursor-pointer transition-[stroke-width] duration-150"
                   onMouseEnter={() => setActive(at)}
                   onMouseLeave={() => setActive(null)}
+                  onClick={() => onPick?.(slice.label)}
                 />
               );
             })}
@@ -288,6 +300,8 @@ export function Donut({ slices, by, measure }: ChartProps) {
                 onMouseLeave={() => setActive(null)}
                 onFocus={() => setActive(at)}
                 onBlur={() => setActive(null)}
+                onClick={() => onPick?.(slice.label)}
+                aria-pressed={picked === slice.label}
                 className={cx(
                   "flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-[11.5px]",
                   active === at ? "bg-raised" : "",
@@ -322,7 +336,14 @@ export function Donut({ slices, by, measure }: ChartProps) {
  * and letting the browser lay it out is what keeps a nine-word district name
  * from being clipped or from squeezing every bar to nothing.
  */
-export function Bars({ slices, by, measure, additive = true }: ChartProps) {
+export function Bars({
+  slices,
+  by,
+  measure,
+  additive = true,
+  onPick,
+  picked,
+}: ChartProps) {
   const [active, setActive] = useState<number | null>(null);
   const rank = ranks(slices);
   const total = slices.reduce((sum, s) => sum + Math.abs(s.value), 0);
@@ -349,9 +370,12 @@ export function Bars({ slices, by, measure, additive = true }: ChartProps) {
               className={cx(
                 "flex items-center gap-2 rounded px-1 py-[3px] text-[11.5px]",
                 active === at ? "bg-raised" : "",
+                picked === slice.label ? "ring-1 ring-accent" : "",
+                onPick ? "cursor-pointer" : "",
               )}
               onMouseEnter={() => setActive(at)}
               onMouseLeave={() => setActive(null)}
+              onClick={() => onPick?.(slice.label)}
             >
               <span className="w-[7.5rem] shrink-0 truncate" title={slice.label}>
                 {slice.label}
@@ -404,7 +428,14 @@ export function Bars({ slices, by, measure, additive = true }: ChartProps) {
  * `Fashions Direct` does not. Picking between them by measuring the labels is
  * what stops a chart from being unreadable in one model and fine in the next.
  */
-export function Columns({ slices, by, measure, additive = true }: ChartProps) {
+export function Columns({
+  slices,
+  by,
+  measure,
+  additive = true,
+  onPick,
+  picked,
+}: ChartProps) {
   const [active, setActive] = useState<number | null>(null);
   const rank = ranks(slices);
   const total = slices.reduce((sum, s) => sum + Math.abs(s.value), 0);
@@ -424,6 +455,8 @@ export function Columns({ slices, by, measure, additive = true }: ChartProps) {
             onMouseLeave={() => setActive(null)}
             onFocus={() => setActive(at)}
             onBlur={() => setActive(null)}
+            onClick={() => onPick?.(slice.label)}
+            aria-pressed={picked === slice.label}
             className="flex h-full min-w-0 flex-1 flex-col justify-end gap-1"
             title={`${slice.label}: ${exact(slice.value)}`}
           >
@@ -481,6 +514,8 @@ export function Tabular({
   by,
   measure,
   additive = true,
+  onPick,
+  picked,
 }: ChartProps) {
   const rank = ranks(slices);
   const widest = Math.max(...slices.map((s) => Math.abs(s.value)), 1);
@@ -512,7 +547,15 @@ export function Tabular({
         </thead>
         <tbody>
           {slices.map((slice, at) => (
-            <tr key={slice.label} className="border-b border-hairline">
+            <tr
+              key={slice.label}
+              className={cx(
+                "border-b border-hairline",
+                onPick ? "cursor-pointer hover:bg-raised" : "",
+                picked === slice.label ? "bg-raised font-medium" : "",
+              )}
+              onClick={() => onPick?.(slice.label)}
+            >
               <td className="max-w-[10rem] truncate py-1 pr-2" title={slice.label}>
                 {slice.label}
               </td>
@@ -592,6 +635,208 @@ export const TILE = 256;
 //: The deepest zoom the basemap has tiles for. Past this the server returns
 //: nothing and the map goes blank at the moment it is most detailed.
 export const MAX_ZOOM = 18;
+
+/**
+ * A measure over time, as a line.
+ *
+ * The shape a time series wants. Columns say "these are separate quantities,
+ * compare them"; a line says "this is one quantity, and here is what it did",
+ * which is the actual question asked of a trend. The by-month cut was drawn as
+ * columns until this existed, which read as twelve unrelated bars.
+ *
+ * The crosshair reads every series at the hovered point rather than the one
+ * nearest the cursor -- with two lines on the chart, "what were both of these
+ * in March" is the question, and hunting for the second one is not an answer.
+ */
+export function Trend({
+  slices,
+  measure,
+  height = 190,
+  onPick,
+}: {
+  slices: Slice[];
+  measure: string;
+  height?: number;
+  /** Called with a point's label when it is clicked, for cross-filtering. */
+  onPick?: (label: string) => void;
+}) {
+  const [at, setAt] = useState<number | null>(null);
+  const frame = useRef<SVGSVGElement>(null);
+  const titleId = useId();
+
+  // Wide, because this is drawn across a whole page. A narrow viewBox
+  // stretched to full width is scaled up in *both* directions, and the chart
+  // came out half a screen tall.
+  const W = 680;
+  const H = height;
+  const PAD = { top: 14, right: 14, bottom: 26, left: 52 };
+  const plot = { width: W - PAD.left - PAD.right, height: H - PAD.top - PAD.bottom };
+
+  const values = slices.map((s) => s.value);
+  // Zero-based unless the data goes below it. A trend line drawn from its own
+  // minimum exaggerates every wobble into a cliff, which is the most common
+  // way a truthful series tells a lie.
+  const low = Math.min(0, ...values);
+  const high = Math.max(...values, low + 1);
+  const x = (i: number) =>
+    PAD.left + (slices.length > 1 ? (plot.width / (slices.length - 1)) * i : plot.width / 2);
+  const y = (v: number) => PAD.top + plot.height - ((v - low) / (high - low)) * plot.height;
+
+  const path = slices.map((s, i) => `${i ? "L" : "M"}${x(i)},${y(s.value)}`).join("");
+  const under = `${path}L${x(slices.length - 1)},${y(low)}L${x(0)},${y(low)}Z`;
+
+  const move = (event: React.MouseEvent<SVGSVGElement>) => {
+    const box = frame.current?.getBoundingClientRect();
+    if (!box) return;
+    const across = ((event.clientX - box.left) / box.width) * W;
+    const step = slices.length > 1 ? plot.width / (slices.length - 1) : plot.width;
+    const found = Math.round((across - PAD.left) / step);
+    setAt(Math.max(0, Math.min(slices.length - 1, found)));
+  };
+
+  // Three gridlines, on the same round-number rule the axes elsewhere use.
+  const marks = [low, (low + high) / 2, high];
+  // Every label if they fit, else the ends and the middle -- a crowded axis is
+  // less readable than a sparse one.
+  const room = Math.max(1, Math.ceil((slices.length * 44) / plot.width));
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <svg
+        ref={frame}
+        viewBox={`0 0 ${W} ${H}`}
+        className="w-full"
+        role="img"
+        aria-labelledby={titleId}
+        onMouseMove={move}
+        onMouseLeave={() => setAt(null)}
+      >
+        <title id={titleId}>
+          {measure} over {slices.length} periods
+        </title>
+        {marks.map((mark) => (
+          <g key={mark}>
+            <line
+              x1={PAD.left}
+              x2={W - PAD.right}
+              y1={y(mark)}
+              y2={y(mark)}
+              className="stroke-hairline"
+              strokeWidth="0.6"
+            />
+            <text
+              x={PAD.left - 6}
+              y={y(mark) + 3}
+              textAnchor="end"
+              fontSize="9"
+              className="fill-faint tabular"
+            >
+              {brief(mark)}
+            </text>
+          </g>
+        ))}
+
+        <path d={under} className="fill-accent" fillOpacity="0.1" />
+        <path
+          d={path}
+          fill="none"
+          className="stroke-accent"
+          strokeWidth="1.8"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+
+        {at !== null && (
+          <line
+            x1={x(at)}
+            x2={x(at)}
+            y1={PAD.top}
+            y2={PAD.top + plot.height}
+            className="stroke-edge"
+            strokeWidth="0.8"
+          />
+        )}
+
+        {slices.map((slice, i) => (
+          <circle
+            key={slice.label}
+            cx={x(i)}
+            cy={y(slice.value)}
+            r={at === i ? 4 : 2.4}
+            className={cx("fill-accent", onPick && "cursor-pointer")}
+            onClick={() => onPick?.(slice.label)}
+          />
+        ))}
+
+        {slices.map((slice, i) =>
+          i % room === 0 || i === slices.length - 1 ? (
+            <text
+              key={`${slice.label}-tick`}
+              x={x(i)}
+              y={H - 8}
+              // The end labels are anchored inward. Centred, the last one
+              // overhangs the viewBox and is clipped -- "Jun 2019" rendered
+              // as "Jun 201".
+              textAnchor={
+                i === 0 ? "start" : i === slices.length - 1 ? "end" : "middle"
+              }
+              fontSize="9"
+              className="fill-faint"
+            >
+              {slice.label}
+            </text>
+          ) : null,
+        )}
+      </svg>
+      <Readout
+        slice={at === null ? null : slices[at]}
+        total={0}
+        fallback={`${slices.length} periods, earliest first. Point at one for its figure.`}
+      />
+    </div>
+  );
+}
+
+/**
+ * The same series again, small enough to sit under a figure.
+ *
+ * No axes, no labels, no readout -- a card is a number with a shape under it,
+ * and anything more competes with the number. It is still the measure's own
+ * query, so the shape is load-bearing rather than decorative.
+ */
+export function Sparkline({
+  values,
+  height = 26,
+}: {
+  values: number[];
+  height?: number;
+}) {
+  if (values.length < 2) return null;
+
+  const W = 120;
+  const H = height;
+  const low = Math.min(0, ...values);
+  const high = Math.max(...values, low + 1);
+  const x = (i: number) => (W / (values.length - 1)) * i;
+  const y = (v: number) => H - 2 - ((v - low) / (high - low)) * (H - 4);
+  const path = values.map((v, i) => `${i ? "L" : "M"}${x(i)},${y(v)}`).join("");
+
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      className="w-full"
+      preserveAspectRatio="none"
+      // Decorative: the figure above it is the content, and a screen reader
+      // reading out forty numbers instead is worse than silence.
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d={`${path}L${x(values.length - 1)},${H}L0,${H}Z`} className="fill-accent" fillOpacity="0.12" />
+      <path d={path} fill="none" className="stroke-accent" strokeWidth="1.3" strokeLinejoin="round" />
+      <circle cx={x(values.length - 1)} cy={y(values[values.length - 1])} r="1.9" className="fill-accent" />
+    </svg>
+  );
+}
 
 /** Longitude as a fraction across the world, 0 at the antimeridian to 1. */
 export function mercatorX(lon: number): number {

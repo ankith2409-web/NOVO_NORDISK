@@ -29,7 +29,7 @@ instead of four views of the same district list.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 #: A dimension needs at least this many distinct values to be worth drawing.
@@ -101,6 +101,9 @@ class Breakdown:
     #: Whether the parts actually sum to the whole. Measured, never assumed --
     #: see `_adds_up`.
     additive: bool = False
+    #: True when this panel is the one holding the page's cross-filter, and so
+    #: was computed without it. See `build`.
+    is_filter: bool = False
 
     @property
     def total(self) -> float:
@@ -127,6 +130,14 @@ class Dashboard:
     year: int | None = None
     #: The date periods this measure can be grouped into -- see `usable_periods`.
     periods: tuple[str, ...] = ()
+    #: The period actually cut over, or None.
+    period: str | None = None
+    #: The cross-filter in force, as `(table, column, value)`. Set by clicking
+    #: a bar: every figure on the page is recomputed under it, rather than the
+    #: non-matching bars being dimmed while the numbers stay unfiltered.
+    cross: tuple[str, str, str] | None = None
+    #: Columns a reader can cross-filter on, as `Table[Column]`.
+    crossable: tuple[str, ...] = ()
     #: The measure over time, when a period was asked for and one could be cut.
     over_time: "Breakdown | None" = None
 
@@ -300,6 +311,7 @@ def over_time(
     period: str,
     year: int | None = None,
     whole: float | None = None,
+    cross: tuple[str, str, str] | None = None,
 ) -> Breakdown:
     """One measure grouped by a calendar period rather than by a dimension.
 
@@ -323,7 +335,11 @@ def over_time(
     table, column = calendar
     only_year = (table, column, year) if year is not None else None
     translated = translate(
-        model, found, only_year=only_year, period=(period, table, column)
+        model,
+        found,
+        only_year=only_year,
+        period=(period, table, column),
+        only_where=cross,
     )
     if translated.status is not Status.EXACT:
         return Breakdown(
@@ -577,8 +593,14 @@ def one(
     column: str,
     whole: float | None = None,
     year: int | None = None,
+    cross: tuple[str, str, str] | None = None,
 ) -> Breakdown:
-    """Run one measure grouped by one column, optionally within one year."""
+    """Run one measure grouped by one column, optionally filtered.
+
+    ``cross`` is the click: one column held to one value, applied in the query
+    so the bars are the filtered figures rather than the unfiltered ones with
+    some of them faded out.
+    """
     from concordance.generate.sql import Status, translate
 
     by = f"{table}[{column}]"
@@ -590,7 +612,7 @@ def one(
 
     found = next((m for m in model.measures if m.name == measure), None)
     translated = (
-        translate(model, found, grain=(by,), only_year=only_year)
+        translate(model, found, grain=(by,), only_year=only_year, only_where=cross)
         if found is not None
         else None
     )
@@ -667,7 +689,13 @@ def one(
     )
 
 
-def _whole(model, connection, measure: str, year: int | None) -> float | None:
+def _whole(
+    model,
+    connection,
+    measure: str,
+    year: int | None,
+    cross: tuple[str, str, str] | None = None,
+) -> float | None:
     """The measure's single figure over exactly the rows the charts cover.
 
     The year has to be carried into this too. Comparing one year's parts
@@ -680,17 +708,20 @@ def _whole(model, connection, measure: str, year: int | None) -> float | None:
     from concordance.generate.evaluate import evaluate
     from concordance.generate.sql import Status, translate
 
-    if year is None:
+    if year is None and cross is None:
         found = evaluate(model, connection=connection).by_name().get(measure)
         return found.value if found is not None else None
 
     calendar = calendar_column(model)
     found = next((m for m in model.measures if m.name == measure), None)
-    if calendar is None or found is None:
+    if found is None:
         return None
-    rendered = translate(
-        model, found, only_year=(calendar[0], calendar[1], year)
-    )
+    only_year = None
+    if year is not None:
+        if calendar is None:
+            return None
+        only_year = (calendar[0], calendar[1], year)
+    rendered = translate(model, found, only_year=only_year, only_where=cross)
     if rendered.status is not Status.EXACT:
         return None
     try:
@@ -706,6 +737,58 @@ def _whole(model, connection, measure: str, year: int | None) -> float | None:
     return float(value)
 
 
+#: Points in a KPI card's sparkline. A card is a figure with a shape under it,
+#: not a chart -- past this the strokes are narrower than the line joining them.
+MAX_SPARK = 40
+
+
+def sparklines(
+    model,
+    connection,
+    measures: list[str],
+    period: str | None = None,
+    year: int | None = None,
+    cross: tuple[str, str, str] | None = None,
+) -> dict[str, list[float]]:
+    """Each measure over time, small enough to sit under its own figure.
+
+    The same query the big time chart runs, once per measure. A measure that
+    cannot be cut over time is simply absent from the result rather than
+    present as a flat line -- a flat sparkline says "this did not change",
+    which is a claim about the data and not about the tool.
+    """
+    if connection is None or not measures:
+        return {}
+
+    found: dict[str, list[float]] = {}
+    for measure in measures:
+        offered = usable_periods(model, connection, measure)
+        if not offered:
+            continue
+        # The finest period the model actually supports, so a card gets the
+        # most shape it honestly can, and never more points than it can draw.
+        chosen = period if period in offered else offered[-1]
+        cut = over_time(model, connection, measure, chosen, year=year, cross=cross)
+        if not cut.drawable:
+            continue
+        found[measure] = [s.value for s in cut.slices][-MAX_SPARK:]
+    return found
+
+
+def crossable(model, connection) -> list[str]:  # noqa: D401
+    """Columns a reader may click to cross-filter the page.
+
+    Exactly the columns that are already chartable, and for one reason: a
+    cross-filter is only offered where the reader can *see* the value to click.
+    Offering a column with fifteen hundred values would need a control nobody
+    asked for, and offering one with a single value would filter to everything.
+    """
+    try:
+        return [f"{t}[{c}]" for t, c, _ in chartable(model, connection)]
+    except Unqueryable:
+        return []
+
+
 def build(
     model,
     connection,
@@ -713,6 +796,7 @@ def build(
     most: int = 4,
     year: int | None = None,
     period: str | None = None,
+    cross: tuple[str, str, str] | None = None,
 ) -> Dashboard:
     """Every chart worth drawing for one measure, optionally within one year.
 
@@ -734,7 +818,7 @@ def build(
 
     # The whole-model figure is only a fair check on the parts when both cover
     # the same rows, so a filtered chart is compared against a filtered whole.
-    whole = _whole(model, connection, measure, year)
+    whole = _whole(model, connection, measure, year, cross)
 
     try:
         candidates = chartable(model, connection)
@@ -743,7 +827,31 @@ def build(
 
     drawn: list[Breakdown] = []
     for table, column, _count in _spread(candidates, most):
-        result = one(model, connection, measure, table, column, whole=whole, year=year)
+        # A visual does not filter itself. This is Power BI's own rule and it
+        # is not cosmetic: filtering `Store[Type]` to "External" leaves that
+        # column with one value, so the panel the reader just clicked would
+        # collapse to a single bar -- or vanish entirely, being no longer a
+        # comparison -- taking with it the only control that could undo the
+        # click. So the panel holding the filter is computed without it, shows
+        # every group as before, and marks the one being held.
+        holding = (
+            cross is not None and cross[0] == table and cross[1] == column
+        )
+        result = one(
+            model,
+            connection,
+            measure,
+            table,
+            column,
+            # And checked against the unfiltered whole, or every one of its
+            # parts would be compared against a total drawn from a subset and
+            # the panel would announce a plain SUM as non-additive.
+            whole=_whole(model, connection, measure, year) if holding else whole,
+            year=year,
+            cross=None if holding else cross,
+        )
+        if holding:
+            result = replace(result, is_filter=True)
         if result.drawable:
             drawn.append(result)
 
@@ -752,7 +860,9 @@ def build(
     periods = usable_periods(model, connection, measure)
     series = None
     if period is not None and period in periods:
-        cut = over_time(model, connection, measure, period, year=year, whole=whole)
+        cut = over_time(
+            model, connection, measure, period, year=year, whole=whole, cross=cross
+        )
         series = cut if cut.drawable else None
 
     return Dashboard(
@@ -777,5 +887,12 @@ def build(
         years=tuple(offered),
         year=year,
         periods=tuple(periods),
+        period=period if series is not None else None,
         over_time=series,
+        cross=cross,
+        # The columns actually drawn, not every column that could be. A reader
+        # cross-filters by clicking a bar, so offering `Store[Latitude]` --
+        # chartable because it has few distinct values, meaningless as a filter
+        # -- would name a filter there is no way to apply.
+        crossable=tuple(b.by for b in drawn),
     )

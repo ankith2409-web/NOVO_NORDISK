@@ -382,6 +382,9 @@ export interface BreakdownPayload {
    *  or a ratio splits into a valid comparison whose parts mean nothing added
    *  together, and only this flag separates the two cases. */
   additive: boolean;
+  /** True when this panel is the one holding the page's cross-filter, and so
+   *  was computed without it -- a visual does not filter itself. */
+  is_filter?: boolean;
   /** How many groups were folded into the last slice, if any. */
   folded: number;
   /** The query that produced these numbers. */
@@ -410,9 +413,24 @@ export interface DashboardPayload {
    *  so on. Offered only where the data really falls into that many buckets,
    *  so a model whose dates are all midnight is never offered "by hour". */
   periods: string[];
+  /** The period actually cut over, or null. */
+  period: string | null;
   /** The measure over time, when a period was asked for. Kept apart from
    *  `breakdowns` because a time series must not be reordered by size. */
   over_time: BreakdownPayload | null;
+  /** The cross-filter in force. Every figure in this payload was computed
+   *  under it -- the filter is applied in the query, not by fading bars. */
+  cross: { table: string; column: string; value: string; label: string } | null;
+  /** Columns a reader can cross-filter on, as `Table[Column]`. */
+  crossable: string[];
+}
+
+/** Each measure over time, small enough to sit under its own figure. */
+export interface SparklinePayload {
+  model: string;
+  available: boolean;
+  reason: string;
+  series: Record<string, number[]>;
 }
 
 /** One location, and the measure's value there. */
@@ -933,11 +951,24 @@ export const api = {
   atlas: (measure?: string) =>
     get<MapPayload>("/map", measure ? { measure } : undefined),
 
-  dashboard: (measure?: string, year?: number | null, period?: string | null) => {
+  sparklines: (period?: string | null) =>
+    get<SparklinePayload>("/sparklines", period ? { period } : undefined),
+
+  dashboard: (
+    measure?: string,
+    year?: number | null,
+    period?: string | null,
+    cross?: { table: string; column: string; value: string } | null,
+  ) => {
     const params: Record<string, string> = {};
     if (measure) params.measure = measure;
     if (year != null) params.year = String(year);
     if (period) params.period = period;
+    if (cross) {
+      params.cross_table = cross.table;
+      params.cross_column = cross.column;
+      params.cross_value = cross.value;
+    }
     return get<DashboardPayload>(
       "/dashboard",
       Object.keys(params).length ? params : undefined,
