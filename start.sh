@@ -63,11 +63,29 @@ do
     fi
 done
 
+# Real sign-in, wired from the platform's own environment variables rather
+# than a file this script would have to carry. None of the three is a
+# secret: a tenant domain and an API identifier are meant to be public, and
+# an Auth0 client id is handed to every browser by design -- a single-page
+# app cannot hold a secret, so Auth0 does not issue one to it. Set all three
+# on the deployment (AUTH0_DOMAIN, AUTH0_AUDIENCE, AUTH0_CLIENT_ID) to turn
+# on Google/email sign-in and verified reviewer names; leave any unset and
+# the server runs exactly as it does today, unauthenticated.
+AUTH0_ARGS=""
+if [ -n "${AUTH0_DOMAIN:-}" ] || [ -n "${AUTH0_AUDIENCE:-}" ] || [ -n "${AUTH0_CLIENT_ID:-}" ]; then
+    if [ -z "${AUTH0_DOMAIN:-}" ] || [ -z "${AUTH0_AUDIENCE:-}" ] || [ -z "${AUTH0_CLIENT_ID:-}" ]; then
+        echo "start.sh: AUTH0_DOMAIN, AUTH0_AUDIENCE and AUTH0_CLIENT_ID must all be set together; ignoring the partial config and starting without sign-in" >&2
+    else
+        AUTH0_ARGS="--auth0-domain ${AUTH0_DOMAIN} --auth0-audience ${AUTH0_AUDIENCE} --auth0-client-id ${AUTH0_CLIENT_ID}"
+    fi
+fi
+
 # shellcheck disable=SC2086  # word splitting is the point: one argument each.
 exec concordance serve $MODELS \
     --compare-to ClinicalTrialSafety=data/models/ClinicalTrialSafety_v2.SemanticModel \
     --warehouse QualityControl=data/warehouse/quality_control.duckdb \
     --decisions /app/state/decisions.jsonl \
     --decisions-reset-on-restart \
+    $AUTH0_ARGS \
     --host 0.0.0.0 \
     --port "${PORT:-8000}"
