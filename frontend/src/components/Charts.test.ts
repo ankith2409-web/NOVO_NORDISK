@@ -17,12 +17,21 @@ import {
   brief,
   canOrderByTime,
   chartFor,
+  MAX_ZOOM,
+  TILE,
   degrees,
   exact,
+  fitZoom,
   gridStep,
+  mercatorX,
+  mercatorY,
   placeLabels,
   scaleBar,
   ranks,
+  tileAt,
+  tileScale,
+  tileUrl,
+  tileZoom,
 } from "./Charts";
 
 //: `order` is what a slice carries to say where its group sits in time. These
@@ -407,5 +416,135 @@ describe("point labels", () => {
       BOX,
     );
     expect(spots).toHaveLength(3);
+  });
+});
+
+/**
+ * The projection, which is the one part of the map that can be silently wrong.
+ *
+ * Everything else fails loudly: a missing tile leaves a gap, a bad URL leaves
+ * a blank. Bad projection arithmetic draws a complete, convincing map with the
+ * stores in the wrong place, and there is nothing on screen to say so.
+ *
+ * So these check against numbers worked out independently, with the standard
+ * slippy-map formula, rather than against what the code happens to return.
+ * Chicago at zoom 11 is tile 525/761; if that ever comes out as something else
+ * the points have moved off the streets.
+ */
+
+describe("web mercator", () => {
+  it("puts the origin at the middle of the world", () => {
+    expect(mercatorX(0)).toBeCloseTo(0.5, 10);
+    expect(mercatorY(0)).toBeCloseTo(0.5, 10);
+  });
+
+  it("puts the antimeridian at the edges", () => {
+    expect(mercatorX(-180)).toBeCloseTo(0, 10);
+    expect(mercatorX(180)).toBeCloseTo(1, 10);
+  });
+
+  it("grows northward up the screen, not down", () => {
+    // The flip every map projection has to get right and half get wrong.
+    expect(mercatorY(50)).toBeLessThan(mercatorY(40));
+  });
+
+  it("holds the poles inside the world instead of sending them to infinity", () => {
+    // Unclamped this is Infinity, and a point near a pole is drawn nowhere.
+    expect(Number.isFinite(mercatorY(90))).toBe(true);
+    expect(Number.isFinite(mercatorY(-90))).toBe(true);
+    expect(mercatorY(90)).toBeGreaterThanOrEqual(0);
+    expect(mercatorY(-90)).toBeLessThanOrEqual(1);
+  });
+
+  it("is not the flat projection it replaced", () => {
+    // At Chicago's latitude Mercator has stretched the north-south axis well
+    // clear of a linear scale. If these ever agree, the projection has
+    // silently reverted and the points no longer sit on the tiles.
+    const flat = (90 - 41.88) / 180;
+    expect(Math.abs(mercatorY(41.88) - flat)).toBeGreaterThan(0.02);
+  });
+});
+
+describe("tile addressing", () => {
+  it("matches the standard slippy-map numbers", () => {
+    // Worked out separately with the reference formula.
+    expect(tileAt(41.8837, -87.6298, 11)).toEqual({ x: 525, y: 761 });
+    expect(tileAt(41.8837, -87.6298, 14)).toEqual({ x: 4203, y: 6089 });
+    expect(tileAt(0, 0, 0)).toEqual({ x: 0, y: 0 });
+    expect(tileAt(51.5074, -0.1278, 12)).toEqual({ x: 2046, y: 1362 });
+    expect(tileAt(-33.8688, 151.2093, 10)).toEqual({ x: 942, y: 614 });
+  });
+
+  it("builds a url the tile service understands", () => {
+    expect(tileUrl(11, 525, 761)).toBe(
+      "https://basemaps.cartocdn.com/light_all/11/525/761.png",
+    );
+  });
+
+  it("never addresses a tile outside the world at that zoom", () => {
+    for (const zoom of [0, 1, 5, 11, 18]) {
+      const { x, y } = tileAt(41.88, -87.63, zoom);
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(y).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThan(2 ** zoom);
+      expect(y).toBeLessThan(2 ** zoom);
+    }
+  });
+});
+
+describe("choosing the zoom", () => {
+  const BOX = { width: 460, height: 296 };
+  const CHICAGO = {
+    minLat: 41.69,
+    maxLat: 42.02,
+    minLon: -87.91,
+    maxLon: -87.59,
+  };
+
+  it("fits the points inside the drawing", () => {
+    const zoom = fitZoom(CHICAGO, BOX);
+    const world = TILE * 2 ** zoom;
+    const wide = (mercatorX(CHICAGO.maxLon) - mercatorX(CHICAGO.minLon)) * world;
+    const tall = (mercatorY(CHICAGO.minLat) - mercatorY(CHICAGO.maxLat)) * world;
+    expect(wide).toBeLessThanOrEqual(BOX.width);
+    expect(tall).toBeLessThanOrEqual(BOX.height);
+  });
+
+  it("fills one axis exactly, wasting no room", () => {
+    // The bug this replaced: flooring the zoom drew Chicago's 44km of stores
+    // on a 105km map, everything huddled in the middle of an empty frame.
+    const zoom = fitZoom(CHICAGO, BOX);
+    const world = TILE * 2 ** zoom;
+    const wide = (mercatorX(CHICAGO.maxLon) - mercatorX(CHICAGO.minLon)) * world;
+    const tall = (mercatorY(CHICAGO.minLat) - mercatorY(CHICAGO.maxLat)) * world;
+    const filled = Math.max(wide / BOX.width, tall / BOX.height);
+    expect(filled).toBeCloseTo(1, 6);
+  });
+
+  it("splits into a whole tile zoom and an enlargement of it", () => {
+    for (const bounds of [CHICAGO, { minLat: 10, maxLat: 40, minLon: 0, maxLon: 60 }]) {
+      const zoom = fitZoom(bounds, BOX);
+      expect(Number.isInteger(tileZoom(zoom))).toBe(true);
+      // Never shrunk, never doubled -- past 2 there is a deeper tile to use.
+      expect(tileScale(zoom)).toBeGreaterThanOrEqual(1);
+      expect(tileScale(zoom)).toBeLessThan(2);
+      // And the two together are the zoom they came from.
+      expect(2 ** tileZoom(zoom) * tileScale(zoom)).toBeCloseTo(2 ** zoom, 6);
+    }
+  });
+
+  it("stays inside the zooms the tile service has", () => {
+    // Two stores on one street corner would otherwise ask for zoom 40, and
+    // the map goes blank exactly when it is most detailed.
+    const tiny = {
+      minLat: 41.8837,
+      maxLat: 41.8838,
+      minLon: -87.6298,
+      maxLon: -87.6297,
+    };
+    expect(fitZoom(tiny, BOX)).toBeLessThanOrEqual(MAX_ZOOM);
+    // And the whole world does not go below zoom 0.
+    const all = { minLat: -85, maxLat: 85, minLon: -180, maxLon: 180 };
+    expect(fitZoom(all, BOX)).toBeGreaterThanOrEqual(0);
   });
 });

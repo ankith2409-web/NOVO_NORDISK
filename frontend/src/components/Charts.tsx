@@ -586,9 +586,107 @@ export function degrees(value: number, axis: "lat" | "lon", step = 0.01): string
   return `${trimmed}\u00b0${hemisphere}`;
 }
 
-//: Kilometres per degree of latitude. A degree of longitude is this times
-//: cos(latitude), which is the same squeeze the projection applies.
-const KM_PER_DEGREE = 111.32;
+//: The tile size every web basemap uses, in pixels.
+export const TILE = 256;
+
+//: The deepest zoom the basemap has tiles for. Past this the server returns
+//: nothing and the map goes blank at the moment it is most detailed.
+export const MAX_ZOOM = 18;
+
+/** Longitude as a fraction across the world, 0 at the antimeridian to 1. */
+export function mercatorX(lon: number): number {
+  return (lon + 180) / 360;
+}
+
+/**
+ * Latitude as a fraction down the world, 0 at the north edge to 1.
+ *
+ * Web Mercator, which is the projection every tile server draws in -- so this
+ * is not a stylistic choice. Placed with the flat latitude-as-y projection
+ * this component used before, the points would sit beside the basemap rather
+ * than on it, and the error grows with distance from the equator.
+ */
+export function mercatorY(lat: number): number {
+  // Clamped to the square the projection covers. Mercator sends the poles to
+  // infinity, so an unclamped point near one is drawn outside the world.
+  const held = Math.max(-85.05112878, Math.min(85.05112878, lat));
+  const sin = Math.sin((held * Math.PI) / 180);
+  const fraction = 0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI);
+  // And clamped again on the way out. The clamp above is in degrees, and the
+  // arithmetic after it lands a few parts in a trillion outside the world at
+  // the poles -- which is invisible as a position and fatal as a tile address:
+  // `Math.floor(-6e-12)` is -1, and tile row -1 does not exist.
+  return Math.min(1, Math.max(0, fraction));
+}
+
+/**
+ * The zoom at which a bounding box exactly fills the drawing. Fractional.
+ *
+ * Fractional on purpose. Tiles are only cut at whole zooms, so the obvious
+ * thing is to floor this -- and flooring throws away up to a whole doubling.
+ * Measured on the sample: Chicago's thirteen stores fit at zoom 9.87, floored
+ * to 9, and the map came out 105 kilometres wide to hold 44 kilometres of
+ * data, with every store huddled in the middle of a mostly empty frame.
+ *
+ * So the fraction is kept and paid out as a scale on the tiles, which is what
+ * every slippy map does between zoom steps. `tileZoom` below is the whole part
+ * that addresses the tiles; the remainder is how much they are enlarged.
+ */
+export function fitZoom(
+  bounds: { minLat: number; maxLat: number; minLon: number; maxLon: number },
+  box: { width: number; height: number },
+): number {
+  const spanX = Math.max(mercatorX(bounds.maxLon) - mercatorX(bounds.minLon), 1e-12);
+  const spanY = Math.max(mercatorY(bounds.minLat) - mercatorY(bounds.maxLat), 1e-12);
+  const zoom = Math.log2(
+    Math.min(box.width / (spanX * TILE), box.height / (spanY * TILE)),
+  );
+  return Math.max(0, Math.min(MAX_ZOOM, zoom));
+}
+
+/**
+ * The whole zoom whose tiles are fetched for a fractional one.
+ *
+ * The level below, never the one above: enlarging a tile blurs it, and
+ * shrinking one would drop detail the reader can see is missing.
+ */
+export function tileZoom(zoom: number): number {
+  return Math.max(0, Math.min(MAX_ZOOM, Math.floor(zoom)));
+}
+
+/**
+ * How much those tiles are enlarged to make up the remainder. Always in
+ * `[1, 2)`, so a tile is never shrunk and never doubled twice.
+ */
+export function tileScale(zoom: number): number {
+  return 2 ** (zoom - tileZoom(zoom));
+}
+
+/** The tile a point falls in, which is how a basemap URL is addressed. */
+export function tileAt(
+  lat: number,
+  lon: number,
+  zoom: number,
+): { x: number; y: number } {
+  const n = 2 ** zoom;
+  // `n - 1` because a point exactly on the world's south or east edge lands on
+  // fraction 1, and floor(1 * n) is one past the last tile.
+  return {
+    x: Math.min(n - 1, Math.max(0, Math.floor(mercatorX(lon) * n))),
+    y: Math.min(n - 1, Math.max(0, Math.floor(mercatorY(lat) * n))),
+  };
+}
+
+//: Where the basemap comes from. CARTO's positron, because a documentation
+//: tool wants a basemap that recedes -- a full-colour street map competes with
+//: the circles, which are the data. Attribution is required by both
+//: OpenStreetMap (the data) and CARTO (the rendering) and is printed under it.
+export const BASEMAP = "https://basemaps.cartocdn.com/light_all";
+
+/** One tile's URL. */
+export function tileUrl(zoom: number, x: number, y: number): string {
+  return BASEMAP + "/" + zoom + "/" + x + "/" + y + ".png";
+}
 
 //: Bar lengths worth printing. A scale bar reading "7.4 km" is arithmetic; one
 //: reading "5 km" is a measurement a reader can lay against the map.
@@ -695,93 +793,129 @@ export function Atlas({
   label: string;
 }) {
   const [active, setActive] = useState<number | null>(null);
+  // Optimistic. The basemap is the normal case, and starting without it would
+  // flash a bare grid on every load before the first tile arrived.
+  const [basemap, setBasemap] = useState(true);
   const titleId = useId();
+  const clipId = useId();
 
   const W = 520;
   const H = 340;
-  // Asymmetric: the left and bottom margins carry the grid labels, and the top
-  // carries the highest point's name.
   const PAD = { top: 18, right: 16, bottom: 26, left: 44 };
-  const box = {
-    width: W - PAD.left - PAD.right,
-    height: H - PAD.top - PAD.bottom,
-  };
+  const box = { width: W - PAD.left - PAD.right, height: H - PAD.top - PAD.bottom };
 
   const lats = places.map((p) => p.lat);
   const lons = places.map((p) => p.lon);
-  // A margin in *data* units, so a point never sits on the frame. A single
-  // point has no span at all, hence the floor.
+  // A margin in data units, so a point never sits on the frame. A single point
+  // has no span at all, hence the floor.
   const rawLat = Math.max(...lats) - Math.min(...lats);
   const rawLon = Math.max(...lons) - Math.min(...lons);
-  const marginLat = Math.max(rawLat * 0.12, 0.004);
-  const marginLon = Math.max(rawLon * 0.12, 0.004);
-  const minLat = Math.min(...lats) - marginLat;
-  const maxLat = Math.max(...lats) + marginLat;
-  const minLon = Math.min(...lons) - marginLon;
-  const maxLon = Math.max(...lons) + marginLon;
-  const midLat = (minLat + maxLat) / 2;
+  const bounds = {
+    minLat: Math.min(...lats) - Math.max(rawLat * 0.14, 0.004),
+    maxLat: Math.max(...lats) + Math.max(rawLat * 0.14, 0.004),
+    minLon: Math.min(...lons) - Math.max(rawLon * 0.14, 0.004),
+    maxLon: Math.max(...lons) + Math.max(rawLon * 0.14, 0.004),
+  };
 
-  // A degree of longitude is shorter than a degree of latitude everywhere but
-  // the equator. Without this a city block of stores comes out stretched
-  // sideways, which reads as a distribution the data does not have.
-  const squeeze = Math.cos((midLat * Math.PI) / 180) || 1;
-  const spanLat = maxLat - minLat;
-  const spanLon = (maxLon - minLon) * squeeze;
-  // One scale for both axes, so the shape is not distorted to fill the box.
-  const scale = Math.min(box.width / spanLon, box.height / spanLat);
-  const offsetX = PAD.left + (box.width - spanLon * scale) / 2;
-  const offsetY = PAD.top + (box.height - spanLat * scale) / 2;
+  // -- the projection ---------------------------------------------------------
+  //
+  // Web Mercator at a whole zoom level, which is what tiles are cut at. Points
+  // and tiles are placed by the same two functions, so they cannot drift
+  // apart: if the arithmetic is wrong the stores move with the streets.
 
-  const x = (lon: number) => offsetX + (lon - minLon) * squeeze * scale;
-  // Screen y grows downward and latitude grows northward, so it is flipped.
-  const y = (lat: number) => offsetY + (maxLat - lat) * scale;
+  const zoom = fitZoom(bounds, box);
+  // The whole zoom the tiles come from, and how far they are enlarged to cover
+  // the fraction. Both the tiles and the points are placed through `world`, so
+  // they scale together and cannot come apart.
+  const whole = tileZoom(zoom);
+  const stretch = tileScale(zoom);
+  const size = TILE * stretch;
+  const world = TILE * 2 ** whole * stretch;
+  const centreX = ((mercatorX(bounds.minLon) + mercatorX(bounds.maxLon)) / 2) * world;
+  const centreY = ((mercatorY(bounds.minLat) + mercatorY(bounds.maxLat)) / 2) * world;
+  // The world pixel at the drawing's top-left corner.
+  const left = centreX - box.width / 2;
+  const top = centreY - box.height / 2;
+
+  const x = (lon: number) => PAD.left + mercatorX(lon) * world - left;
+  const y = (lat: number) => PAD.top + mercatorY(lat) * world - top;
+
+  // Every tile the frame touches. At this size that is a handful; the loop is
+  // bounded by the frame, not by the zoom.
+  const tiles: { x: number; y: number; left: number; top: number }[] = [];
+  const span = 2 ** whole;
+  for (let tx = Math.floor(left / size); tx <= Math.floor((left + box.width) / size); tx++) {
+    for (let ty = Math.floor(top / size); ty <= Math.floor((top + box.height) / size); ty++) {
+      // The world wraps east to west, so a frame crossing the antimeridian
+      // asks for a tile off the end of the row; it is the one on the other
+      // side. Rows do not wrap, so an out-of-range y is simply not a tile.
+      if (ty < 0 || ty >= span) continue;
+      tiles.push({
+        x: ((tx % span) + span) % span,
+        y: ty,
+        left: PAD.left + tx * size - left,
+        top: PAD.top + ty * size - top,
+      });
+    }
+  }
 
   const biggest = Math.max(...places.map((p) => Math.abs(p.value)), 1);
   // Area, not radius, carries the value: a circle of twice the radius reads as
   // four times the quantity, which would overstate every large point.
   const radius = (v: number) => 4 + Math.sqrt(Math.abs(v) / biggest) * 13;
-  // `ranks` speaks in slices, so the places are lent that shape for one call.
-  // Only label and value matter to it; a place has no time anchor.
   const rank = ranks(
     places.map((p) => ({ label: p.label, value: p.value, order: "" })),
   );
 
-  // -- the grid ---------------------------------------------------------------
+  // -- the grid, for when there is no basemap ---------------------------------
+  //
+  // Kept, and only drawn when the tiles do not arrive. On an air-gapped
+  // machine, or behind a proxy that blocks the tile host, the map still says
+  // where on the earth it is and how far across it is -- which is the whole
+  // reason this was built before the basemap was.
 
+  const midLat = (bounds.minLat + bounds.maxLat) / 2;
+  const spanLat = bounds.maxLat - bounds.minLat;
   const latStep = gridStep(spanLat);
-  const lonStep = gridStep(maxLon - minLon);
+  const lonStep = gridStep(bounds.maxLon - bounds.minLon);
   const latLines: number[] = [];
-  for (
-    let at = Math.ceil(minLat / latStep) * latStep;
-    at <= maxLat;
-    at += latStep
-  ) {
+  for (let at = Math.ceil(bounds.minLat / latStep) * latStep; at <= bounds.maxLat; at += latStep) {
     latLines.push(Number(at.toFixed(6)));
   }
   const lonLines: number[] = [];
-  for (
-    let at = Math.ceil(minLon / lonStep) * lonStep;
-    at <= maxLon;
-    at += lonStep
-  ) {
+  for (let at = Math.ceil(bounds.minLon / lonStep) * lonStep; at <= bounds.maxLon; at += lonStep) {
     lonLines.push(Number(at.toFixed(6)));
   }
 
   // -- the scale bar ----------------------------------------------------------
-
-  const kmPerPixel = 1 / (scale / KM_PER_DEGREE);
+  //
+  // Read off the projection rather than assumed, so it stays right at any
+  // zoom. A Mercator pixel is a different distance at every latitude, so it is
+  // measured at the middle of this map and nowhere else.
+  const kmPerPixel =
+    (Math.cos((midLat * Math.PI) / 180) * 40075.016686) / world;
   const km = scaleBar((box.width / 3) * kmPerPixel);
   const barPixels = km / kmPerPixel;
-  // Below the longitude labels, not level with them. At `H - PAD.bottom + 14`
-  // the bar and the westmost label sat three pixels apart and overprinted.
   const barY = H + 4;
   const barX = PAD.left;
+  // The stores' own extent, not the frame's. The frame is whatever the fit
+  // left over on the slack axis, and reporting it says "70 km" for thirteen
+  // shops that span forty -- true of the picture, and not what was asked.
+  const across =
+    Math.round(
+      Math.max(
+        (Math.max(...lats) - Math.min(...lats)) * 111.32,
+        (Math.max(...lons) - Math.min(...lons)) *
+          111.32 *
+          Math.cos((midLat * Math.PI) / 180),
+      ) * 10,
+    ) / 10;
 
   // -- the labels -------------------------------------------------------------
 
   // Largest first, so the biggest figure wins any contested position. Roughly
-  // 5.6px a character at 10px in the page's face -- close enough to reserve
-  // the right amount of room without measuring text in the DOM.
+  // 5.6px a character at 10px, which reserves about the right room without
+  // measuring text in the DOM.
   const order = places
     .map((_place, at) => at)
     .sort((a, b) => Math.abs(places[b].value) - Math.abs(places[a].value));
@@ -797,7 +931,7 @@ export function Atlas({
   const labelAt = new Map(order.map((at, position) => [at, placed[position]]));
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-1.5">
       <svg
         viewBox={`0 0 ${W} ${H + 18}`}
         className="w-full rounded border border-hairline bg-surface"
@@ -805,44 +939,125 @@ export function Atlas({
         aria-labelledby={titleId}
       >
         <title id={titleId}>
-          {measure} by {label}, plotted at each location&rsquo;s own coordinates,
-          across {Math.round(spanLat * KM_PER_DEGREE)} kilometres
+          {measure} by {label}, plotted at each location&rsquo;s own coordinates
+          across about {Math.round(across)} kilometres
         </title>
 
-        {/* The graticule. Real degrees on round numbers, which is what makes
-            this a map rather than a scatter plot: the reader can say where on
-            the earth they are looking without a basemap under it. */}
-        <g className="stroke-hairline" strokeWidth="0.5">
-          {latLines.map((at) => (
-            <line key={`lat${at}`} x1={PAD.left} x2={W - PAD.right} y1={y(at)} y2={y(at)} />
-          ))}
-          {lonLines.map((at) => (
-            <line
-              key={`lon${at}`}
-              y1={PAD.top}
-              y2={H - PAD.bottom}
-              x1={x(at)}
-              x2={x(at)}
+        <defs>
+          {/* Tiles are square and the frame is not a whole number of them, so
+              without this the basemap spills over the axis labels. */}
+          <clipPath id={clipId}>
+            <rect x={PAD.left} y={PAD.top} width={box.width} height={box.height} />
+          </clipPath>
+        </defs>
+
+        <g clipPath={`url(#${clipId})`}>
+          {basemap &&
+            tiles.map((tile) => (
+              <image
+                key={`${tile.x}/${tile.y}`}
+                href={tileUrl(whole, tile.x, tile.y)}
+                x={tile.left}
+                y={tile.top}
+                width={size}
+                height={size}
+                // One failure takes the whole basemap down rather than leaving
+                // a half-drawn world: a map with three of its nine tiles
+                // missing reads as geography that is not there.
+                onError={() => setBasemap(false)}
+              />
+            ))}
+
+          {/* The graticule, only when the basemap did not arrive. Drawing both
+              would put a coordinate grid over street names, which is what a
+              map looks like when nobody decided which one it was.
+
+              Lines only. The labels sit in the margin and belong outside this
+              clip -- inside it they are cut off by the very rectangle they are
+              labelling, which is how the fallback shipped a grid with no
+              numbers on it. */}
+          {!basemap && (
+            <g className="stroke-hairline" strokeWidth="0.5">
+              {latLines.map((at) => (
+                <line key={`lat${at}`} x1={PAD.left} x2={W - PAD.right} y1={y(at)} y2={y(at)} />
+              ))}
+              {lonLines.map((at) => (
+                <line key={`lon${at}`} y1={PAD.top} y2={H - PAD.bottom} x1={x(at)} x2={x(at)} />
+              ))}
+            </g>
+          )}
+
+          {places.map((place, at) => (
+            <circle
+              key={place.label}
+              cx={x(place.lon)}
+              cy={y(place.lat)}
+              r={radius(place.value)}
+              className={cx(
+                "cursor-pointer transition-opacity",
+                rank[at] < LEADERS ? "fill-accent" : "fill-edge",
+              )}
+              fillOpacity={active === null || active === at ? 0.78 : 0.35}
+              stroke="var(--color-surface)"
+              strokeWidth={active === at ? 2 : 1.2}
+              onMouseEnter={() => setActive(at)}
+              onMouseLeave={() => setActive(null)}
             />
           ))}
+
+          {/* Names last, so a point never covers one. Every point that can hold
+              a name gets one -- a store list is a dozen places, and "which one
+              is that" is the question a map is asked. */}
+          {places.map((place, at) => {
+            const spot = labelAt.get(at);
+            if (!spot && active !== at) return null;
+            const where =
+              spot ?? {
+                x: x(place.lon),
+                y: y(place.lat) - radius(place.value) - 4,
+                anchor: "middle" as const,
+              };
+            return (
+              <text
+                key={`${place.label}-name`}
+                x={where.x}
+                y={where.y}
+                textAnchor={where.anchor}
+                fontSize="10"
+                className={cx(
+                  "pointer-events-none",
+                  active === at || rank[at] < LEADERS
+                    ? "fill-ink font-semibold"
+                    : "fill-ink",
+                )}
+                // A halo, so a name crossing a street or a circle stays
+                // readable without a solid box behind it hiding the map.
+                stroke="var(--color-surface)"
+                strokeWidth="2.6"
+                paintOrder="stroke"
+              >
+                {place.label}
+              </text>
+            );
+          })}
         </g>
-        <g className="fill-faint" fontSize="9">
-          {latLines.map((at) => (
-            <text key={`latt${at}`} x={PAD.left - 5} y={y(at) + 3} textAnchor="end">
-              {degrees(at, "lat", latStep)}
-            </text>
-          ))}
-          {lonLines.map((at) => (
-            <text
-              key={`lont${at}`}
-              x={x(at)}
-              y={H - PAD.bottom + 11}
-              textAnchor="middle"
-            >
-              {degrees(at, "lon", lonStep)}
-            </text>
-          ))}
-        </g>
+
+        {/* Outside the clip, in the margin, where they can be read. */}
+        {!basemap && (
+          <g className="fill-faint" fontSize="9">
+            {latLines.map((at) => (
+              <text key={`latt${at}`} x={PAD.left - 5} y={y(at) + 3} textAnchor="end">
+                {degrees(at, "lat", latStep)}
+              </text>
+            ))}
+            {lonLines.map((at) => (
+              <text key={`lont${at}`} x={x(at)} y={H - PAD.bottom + 11} textAnchor="middle">
+                {degrees(at, "lon", lonStep)}
+              </text>
+            ))}
+          </g>
+        )}
+
         <rect
           x={PAD.left}
           y={PAD.top}
@@ -854,82 +1069,22 @@ export function Atlas({
         />
 
         {/* North, so the drawing declares its orientation rather than assuming
-            it. Cheap, and it is the first thing a reader looks for. */}
+            it -- and on a Mercator map north really is straight up. */}
         <g
-          transform={`translate(${W - PAD.right - 12} ${PAD.top + 12})`}
-          className="fill-faint stroke-faint"
+          transform={`translate(${W - PAD.right - 14} ${PAD.top + 14})`}
+          className="fill-ink stroke-ink"
         >
-          <line x1="0" y1="8" x2="0" y2="-6" strokeWidth="0.8" />
+          <line x1="0" y1="8" x2="0" y2="-6" strokeWidth="0.9" />
           <polygon points="0,-9 3,-3 -3,-3" stroke="none" />
           <text x="0" y="18" textAnchor="middle" fontSize="8" stroke="none">
             N
           </text>
         </g>
 
-        {places.map((place, at) => (
-          <circle
-            key={place.label}
-            cx={x(place.lon)}
-            cy={y(place.lat)}
-            r={radius(place.value)}
-            className={cx(
-              "cursor-pointer transition-opacity",
-              rank[at] < LEADERS ? "fill-accent" : "fill-edge",
-            )}
-            fillOpacity={active === null || active === at ? 0.72 : 0.28}
-            stroke="var(--color-accent)"
-            strokeWidth={active === at ? 1.8 : 0.7}
-            onMouseEnter={() => setActive(at)}
-            onMouseLeave={() => setActive(null)}
-          />
-        ))}
-
-        {/* Names last, so a point never covers one. Every point that can hold a
-            name gets one -- a store list is a dozen places, not a thousand,
-            and "which one is that" is the question a map is asked. */}
-        {places.map((place, at) => {
-          const spot = labelAt.get(at);
-          if (!spot && active !== at) return null;
-          const where = spot ?? {
-            x: x(place.lon),
-            y: y(place.lat) - radius(place.value) - 4,
-            anchor: "middle" as const,
-          };
-          return (
-            <text
-              key={`${place.label}-name`}
-              x={where.x}
-              y={where.y}
-              textAnchor={where.anchor}
-              fontSize="10"
-              className={cx(
-                "pointer-events-none",
-                active === at || rank[at] < LEADERS
-                  ? "fill-ink font-medium"
-                  : "fill-muted",
-              )}
-              // A halo, so a name crossing a circle stays readable without a
-              // solid box behind it hiding the data.
-              stroke="var(--color-surface)"
-              strokeWidth="2.4"
-              paintOrder="stroke"
-            >
-              {place.label}
-            </text>
-          );
-        })}
-
-        {/* Scale, so "how far apart" has an answer. Computed from the
-            projection, so it is exact rather than indicative. */}
+        {/* Scale, computed from the projection at this map's own latitude, so
+            it is exact rather than indicative. */}
         <g className="fill-muted">
-          <line
-            x1={barX}
-            x2={barX + barPixels}
-            y1={barY}
-            y2={barY}
-            className="stroke-muted"
-            strokeWidth="1.2"
-          />
+          <line x1={barX} x2={barX + barPixels} y1={barY} y2={barY} className="stroke-muted" strokeWidth="1.2" />
           <line x1={barX} x2={barX} y1={barY - 3} y2={barY + 3} className="stroke-muted" strokeWidth="1.2" />
           <line
             x1={barX + barPixels}
@@ -945,15 +1100,16 @@ export function Atlas({
         </g>
 
         {/* And what the circles mean. Area is proportional to the value, which
-            nobody can read off a picture without being told the biggest. */}
-        <g transform={`translate(${W - PAD.right - 120} ${barY})`} className="fill-muted">
-          <circle cx="6" cy="0" r="4" className="fill-edge" fillOpacity="0.72" />
-          <circle cx="26" cy="0" r="10" className="fill-accent" fillOpacity="0.72" />
+            nobody can read off a picture without being told. */}
+        <g transform={`translate(${W - PAD.right - 122} ${barY})`} className="fill-muted">
+          <circle cx="6" cy="0" r="4" className="fill-edge" fillOpacity="0.78" />
+          <circle cx="26" cy="0" r="10" className="fill-accent" fillOpacity="0.78" />
           <text x="42" y="3" fontSize="9">
             area = {measure}
           </text>
         </g>
       </svg>
+
       <Readout
         slice={
           active === null
@@ -961,10 +1117,25 @@ export function Atlas({
             : { label: places[active].label, value: places[active].value, order: "" }
         }
         total={0}
-        fallback={`${places.length} ${label.toLowerCase()}s across ${
-          Math.round(spanLat * KM_PER_DEGREE * 10) / 10
-        } km, at the coordinates this file records. Point at one for its figure.`}
+        fallback={`${places.length} ${label.toLowerCase()}s across ${across} km, at the coordinates this file records. Point at one for its figure.`}
       />
+
+      {/* Required by both, and it is also the honest note about what part of
+          this drawing did not come out of the model. */}
+      <p className="text-[10.5px] text-faint">
+        {basemap ? (
+          <>
+            Basemap &copy; OpenStreetMap contributors, &copy; CARTO. The points
+            are the model&rsquo;s; the streets are not.
+          </>
+        ) : (
+          <>
+            No basemap — the tile service could not be reached, so the map is
+            drawn as a coordinate grid. Every point is still at the latitude and
+            longitude this file records.
+          </>
+        )}
+      </p>
     </div>
   );
 }

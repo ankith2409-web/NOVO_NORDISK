@@ -913,9 +913,10 @@ function Where({ measure }: { measure: string }) {
           <p className="text-[11.5px] text-muted">
             Every point sits at the latitude and longitude this file records for it, and
             its area is {measure} there — run as {measure}&rsquo;s own SQL grouped by{" "}
-            {data.table}[{data.label_column}]. There is no basemap under it because the
-            page loads nothing from the network; what you are looking at came entirely
-            out of the model.
+            {data.table}[{data.label_column}]. The streets underneath are a basemap and
+            are the only thing here that did not come out of your file; where it cannot
+            be reached the map falls back to a coordinate grid and says so, and the
+            points are unchanged either way.
           </p>
           {showSql && data.sql && <Code label="SQL">{`${data.sql}`}</Code>}
         </>
