@@ -33,7 +33,7 @@ from concordance.generate import document
 from concordance.graph.csg import SemanticGraph
 from concordance.llm.base import LlmError, LlmProvider
 from concordance.review.auth0 import Auth0Error
-from concordance.web import api, upload
+from concordance.web import api, fetch, upload
 from concordance.web.signin import _wants_html, sign_in_page
 
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -643,6 +643,8 @@ def make_handler(
                 self._handle_decide(parse_qs(parsed.query))
             elif parsed.path == "/api/upload":
                 self._handle_upload(parse_qs(parsed.query))
+            elif parsed.path == "/api/open-link":
+                self._handle_open_link()
             elif parsed.path == "/api/forget":
                 self._handle_forget()
             else:
@@ -1041,6 +1043,116 @@ def make_handler(
                 )
                 return
 
+            self._adopt(uploaded, filename, session_id)
+
+        def _handle_open_link(self) -> None:
+            """Open a model from a link instead of from a file.
+
+            Two kinds of link, answered differently on purpose. A direct
+            download is fetched and read exactly as an upload is -- same size
+            limit, same rate limit, same session binding, same parser. A Power
+            BI Service link is *recognised* and refused with the reason and the
+            two ways forward, rather than attempted and failed: the bytes are
+            behind Azure AD, and a network error would tell the reader nothing
+            about why.
+            """
+            if uploads is None:
+                self._refuse_upload(
+                    HTTPStatus.NOT_IMPLEMENTED,
+                    "This server was started with --no-upload, so it reads "
+                    "only the models it was given.",
+                )
+                return
+
+            # The same limiter as an upload. Fetching a link costs this server
+            # more than receiving a file, not less.
+            allowed, retry_after = upload_limiter.check(self._client_key())
+            if not allowed:
+                self._refuse_upload(
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    f"Too many uploads in a short period. Try again in {retry_after}s.",
+                    retry_after=retry_after,
+                )
+                return
+
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            if length <= 0 or length > 8 * 1024:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "that link was empty"})
+                return
+            try:
+                asked = json.loads(self.rfile.read(length) or b"{}")
+                url = str(asked.get("url", "")).strip()
+            except (ValueError, UnicodeDecodeError):
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "that was not a link"})
+                return
+            if not url:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "paste a link first"})
+                return
+
+            where = fetch.classify(url)
+            if where.kind == "service":
+                # 501, not 400: nothing is wrong with the link. This server has
+                # not been given what it would take to follow it, which is a
+                # fact about the server.
+                self._json(
+                    HTTPStatus.NOT_IMPLEMENTED,
+                    {
+                        "error": fetch.SERVICE_HINT,
+                        "refused": True,
+                        "service": True,
+                        # Echoed back so the interface can show it recognised
+                        # the link rather than merely rejected it.
+                        "workspace": where.workspace,
+                        "report": where.report,
+                    },
+                )
+                return
+
+            session_id, _ = sessions.get(self._session_cookie(), registry.default)
+            try:
+                body, filename, size = fetch.download(url, upload.MAX_UPLOAD_BYTES)
+            except fetch.LinkRefused as refused:
+                self._json(
+                    HTTPStatus.BAD_REQUEST, {"error": str(refused), "refused": True}
+                )
+                return
+
+            try:
+                uploaded = upload.read_model(body, filename, size)
+            except upload.UploadRefused as refused:
+                self._json(
+                    HTTPStatus.BAD_REQUEST, {"error": str(refused), "refused": True}
+                )
+                return
+            except SourceError as error:
+                self._json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": error.problem, "hint": error.hint, "file": error.source},
+                )
+                return
+            except Exception as error:  # noqa: BLE001 -- last line before a 500
+                self._json(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "error": f"That file could not be read: {type(error).__name__}",
+                        "hint": "Check the link points at a .pbix and try again.",
+                    },
+                )
+                return
+            finally:
+                body.close()
+
+            self._adopt(uploaded, filename, session_id)
+
+        def _adopt(self, uploaded, filename: str, session_id: str) -> None:
+            """Hold a freshly-read model against a session and answer with it.
+
+            Extracted so a model that arrived over a link is adopted by exactly
+            the same code as one that arrived as a file. Two copies of this
+            would be two places for the eviction rules, the capability decisions
+            and the session binding to drift apart, and the one that drifts is
+            always the one nobody is looking at.
+            """
             name, evicted = uploads.add(
                 session_id,
                 api.ApiContext(
@@ -1086,6 +1198,7 @@ def make_handler(
                 },
                 session_id=session_id,
             )
+
 
         def _refuse_upload(
             self, status: HTTPStatus, message: str, retry_after: int = 0

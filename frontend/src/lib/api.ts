@@ -970,6 +970,29 @@ export const api = {
     });
   },
 
+  /**
+   * Open a model from a link rather than from a file on this machine.
+   *
+   * Two kinds of link and one endpoint, because a reader pasting a URL does
+   * not know or care which kind theirs is. A direct download is fetched and
+   * read exactly as an upload is; a Power BI Service link comes back 501 with
+   * the reason and the two ways forward, which the dialog shows as guidance
+   * rather than as a failure -- nothing is wrong with the link, this server
+   * simply has not been given what it takes to follow it.
+   */
+  openLink: (url: string): Promise<Result<Uploaded>> => {
+    if (SNAPSHOT_MODE) {
+      return Promise.resolve({
+        ok: false,
+        status: 501,
+        message:
+          "A snapshot has no server to fetch a link with. Run `concordance serve <model>` " +
+          "and open it there.",
+      });
+    }
+    return post<Uploaded>("/open-link", { url });
+  },
+
   /** Drop one uploaded model. Only ever this browser's own. */
   forget: (model: string) => post<{ forgotten: string }>("/forget", { model }),
 

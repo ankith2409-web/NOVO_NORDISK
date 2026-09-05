@@ -40,7 +40,14 @@ export function UploadDialog({
   const [progress, setProgress] = useState<number | null>(null);
   const [problem, setProblem] = useState<{ status: number; message: string } | null>(null);
   const picker = useRef<HTMLInputElement>(null);
-  const busy = progress !== null;
+  const [link, setLink] = useState("");
+  const [fetching, setFetching] = useState(false);
+  // Guidance rather than a failure. A Power BI Service link is a perfectly
+  // good link that this server has not been given the credentials to follow,
+  // and showing it in the red box beside "that file could not be read" would
+  // say the reader did something wrong.
+  const [needsAccount, setNeedsAccount] = useState<string | null>(null);
+  const busy = progress !== null || fetching;
 
   const mine = loaded.filter((entry) => entry.uploaded);
 
@@ -69,6 +76,24 @@ export function UploadDialog({
     },
     [onLoaded],
   );
+
+  const open = useCallback(async () => {
+    const url = link.trim();
+    if (!url) return;
+    setProblem(null);
+    setNeedsAccount(null);
+    setFetching(true);
+    const result = await api.openLink(url);
+    setFetching(false);
+    if (!result.ok) {
+      // 501 is the Service case: nothing is wrong, this server simply cannot
+      // follow that link yet.
+      if (result.status === 501) setNeedsAccount(result.message);
+      else setProblem({ status: result.status, message: result.message });
+      return;
+    }
+    onLoaded(result.data);
+  }, [link, onLoaded]);
 
   function choose(files: FileList | null) {
     const file = files?.[0];
@@ -148,6 +173,55 @@ export function UploadDialog({
               }}
             />
           </div>
+
+          {/* Under the drop zone, not beside it: the file is the ordinary way
+              in and the link is the alternative, and a two-column layout would
+              present them as equals and make the box twice as tall. */}
+          <div className="mt-3 flex flex-col gap-1.5">
+            <label
+              htmlFor="model-link"
+              className="font-mono text-[10px] tracking-[0.08em] text-faint uppercase"
+            >
+              or paste a link
+            </label>
+            <div className="flex gap-1.5">
+              <input
+                id="model-link"
+                type="url"
+                inputMode="url"
+                value={link}
+                disabled={busy}
+                onChange={(event) => setLink(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void open();
+                }}
+                placeholder="https://…/model.pbix"
+                className={cx(
+                  "min-w-0 flex-1 rounded-md border border-hairline bg-surface px-2.5 py-1.5",
+                  "text-[12.5px] text-ink placeholder:text-faint",
+                  "focus-visible:border-accent focus-visible:outline-none",
+                  "disabled:opacity-60",
+                )}
+              />
+              <Button
+                tone="quiet"
+                disabled={busy || !link.trim()}
+                onClick={() => void open()}
+              >
+                {fetching ? "Fetching…" : "Open"}
+              </Button>
+            </div>
+            <p className="text-[11px] text-faint">
+              A direct download link works now — GitHub, S3, SharePoint. A
+              Power BI Service link needs credentials this server has not been given.
+            </p>
+          </div>
+
+          {needsAccount && (
+            <div className="mt-3 rounded-md border border-review/40 bg-review-soft p-3">
+              <p className="text-[12px] leading-relaxed text-ink">{needsAccount}</p>
+            </div>
+          )}
 
           {busy && (
             <div className="mt-3">
