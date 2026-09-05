@@ -197,7 +197,9 @@ def build(model, connection, measure: str) -> Atlas:
             reason=f"{table} has coordinates but no column to name each point by",
         )
 
-    found = next((m for m in model.measures if m.name == measure), None)
+    from concordance.generate.implicit import find
+
+    found = find(model, measure)
     if found is None:
         return Atlas(
             measure=measure, available=False, reason=f"{measure} is not a measure in this model"

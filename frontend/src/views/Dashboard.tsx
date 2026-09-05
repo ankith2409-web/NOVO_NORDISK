@@ -237,6 +237,12 @@ export function Dashboard({
   const charting =
     opened?.field.name ??
     kpis.find((entry) => figures.get(entry.field.name)?.value != null)?.field.name ??
+    // And when no tile states a figure at all, the first measure that computes
+    // -- which for a report doing its arithmetic in the visuals is the only
+    // thing there is. AdventureWorks is the case: one measure, uncompilable,
+    // and three pages of implicit sums. Without this the page had nothing on
+    // it for a file with a hundred million dollars of sales in it.
+    computed?.values.find((value) => value.value != null)?.measure ??
     "";
   const c = data.counts;
   const blank = data.pages.filter((page) => page.tiles.length === 0).length;
@@ -294,10 +300,20 @@ export function Dashboard({
 
         {kpis.length === 0 ? (
           <Empty>
-            No tile on this report states a figure as a number. Every measure here is
-            drawn as a chart instead, so there is nothing this report itself calls out
-            as a headline figure — the formulas are all below, under the visuals that
-            plot them.
+            No tile on this report states a figure as a number — every measure here is
+            drawn as a chart instead, so there is nothing the report itself calls out as
+            a headline.
+            {computed && computed.values.some((v) => v.value != null) && (
+              <>
+                {" "}
+                What it does have is below:{" "}
+                {computed.values.filter((v) => v.value != null).length} figure
+                {computed.values.filter((v) => v.value != null).length === 1
+                  ? ""
+                  : "s"}{" "}
+                this tool could compute from the file, charted the same way.
+              </>
+            )}
           </Empty>
         ) : (
           <>
@@ -372,10 +388,15 @@ export function Dashboard({
               </article>
             )}
 
-            {charting && <Breakdowns measure={charting} picked={Boolean(opened)} />}
-            {charting && <Where measure={charting} />}
           </>
         )}
+
+        {/* Outside the branch above, because the charts do not depend on the
+            report having KPI cards. They did, and a report that states no
+            headline figure got an explanation where a dashboard should have
+            been. */}
+        {charting && <Breakdowns measure={charting} picked={Boolean(opened)} />}
+        {charting && <Where measure={charting} />}
       </section>
 
       {/* And everything else, by page, in the report's own order -- because
@@ -777,9 +798,17 @@ function Breakdowns({ measure, picked }: { measure: string; picked: boolean }) {
         <h3 className="font-serif text-base font-semibold">
           What {measure} is made of
         </h3>
-        <span className="text-[11.5px] text-faint">
-          {picked ? "the card you opened" : "pick a card above to change this"}
-        </span>
+        {/* Said where the figure is, not in a footnote. A reader has to be able
+            to tell what the author wrote from what a tile was asked to do, and
+            on a model like AdventureWorks every figure on this page is the
+            latter. */}
+        {data?.implicit ? (
+          <Chip tone="review">from a visual, not a measure</Chip>
+        ) : (
+          <span className="text-[11.5px] text-faint">
+            {picked ? "the card you opened" : "pick a card above to change this"}
+          </span>
+        )}
 
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           <label className="flex items-center gap-1.5 text-[11.5px] text-muted">
@@ -928,6 +957,15 @@ function Breakdowns({ measure, picked }: { measure: string; picked: boolean }) {
           </div>
 
           <p className="text-[11.5px] text-muted">
+            {data.implicit && (
+              <>
+                <strong className="font-medium text-ink">{measure}</strong> is not a
+                measure in this model — it is an aggregation the report applies on a
+                visual, which this tool has rewritten as DAX so the figure can be
+                computed and checked. The table, the column and the aggregation are all
+                the tile&rsquo;s own; nothing about it was guessed.{" "}
+              </>
+            )}
             Every chart here was produced by running {measure}&rsquo;s own SQL grouped by
             that column, against the rows this file carries. Where the measure adds up, the
             parts sum to the figure on the card, and a group beyond the tenth is folded

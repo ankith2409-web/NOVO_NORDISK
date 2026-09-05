@@ -142,6 +142,17 @@ class Dashboard:
     over_time: "Breakdown | None" = None
 
 
+def _find(model, measure: str):
+    """One measure by name -- the model's own, then the report's implicit ones.
+
+    Imported inside the function because `implicit` reads `_named_like_an_id`
+    from this module, and the two would otherwise import each other at load.
+    """
+    from concordance.generate.implicit import find
+
+    return find(model, measure)
+
+
 def _named_like_an_id(column: str) -> bool:
     lowered = column.casefold().strip()
     if lowered in _NOT_A_DIMENSION:
@@ -186,7 +197,7 @@ def _date_columns(model, table: str) -> list[str]:
     ]
 
 
-def calendar_column(model) -> tuple[str, str] | None:
+def calendar_column(model, connection=None) -> tuple[str, str] | None:
     """The one date column a year filter can safely stand on, if there is one.
 
     Deliberately conservative, and it declines more often than it accepts.
@@ -197,9 +208,19 @@ def calendar_column(model) -> tuple[str, str] | None:
     while it is plainly the fact table, and it carries a `Date` column of its
     own. The leaf test keeps `Calendar` and drops `Sales`.
 
-    And if two leaves still qualify there is no principled way to choose
+    And if two *tables* still qualify there is no principled way to choose
     between them, so the filter is not offered at all rather than applied to
     whichever happened to sort first.
+
+    Several date columns on *one* table is a different situation and used to be
+    refused the same way, which was wrong: that is what a calendar table looks
+    like. AdventureWorks' `Date` carries `Date`, `Month` and `Full Date`, and
+    the strict rule declined all three, so a model with a textbook date
+    dimension was reported as having no calendar at all. Given a connection the
+    ambiguity is settled by measuring -- the finest grain wins, being the
+    column with the most distinct values, which is the day-level key rather
+    than the month it rolls up to. Without a connection there is nothing to
+    measure, so the old refusal stands.
 
     Whether the column can actually be *reached* from a given measure is a
     separate question this cannot answer, because it depends on the measure.
@@ -207,17 +228,41 @@ def calendar_column(model) -> tuple[str, str] | None:
     """
     referenced = {r.to_table for r in model.relationships}
     references = {r.from_table for r in model.relationships}
-    found = [
-        (table, column)
+    tables = [
+        table
         for table in sorted(referenced - references)
-        for column in _date_columns(model, table)
+        if _date_columns(model, table)
     ]
-    return found[0] if len(found) == 1 else None
+    if len(tables) != 1:
+        return None
+
+    table = tables[0]
+    columns = _date_columns(model, table)
+    if len(columns) == 1:
+        return (table, columns[0])
+    if connection is None:
+        return None
+
+    quoted = table.replace('"', '""')
+    best: tuple[int, str] | None = None
+    for column in columns:
+        try:
+            row = connection.execute(
+                f'SELECT COUNT(DISTINCT "{column.replace(chr(34), chr(34) * 2)}") '
+                f'FROM "{quoted}"'
+            ).fetchone()
+        except Exception:  # noqa: BLE001 - a column that will not count is not a calendar
+            continue
+        if row and row[0]:
+            found = (int(row[0]), column)
+            if best is None or found > best:
+                best = found
+    return (table, best[1]) if best else None
 
 
 def available_years(model, connection) -> list[int]:
     """Every year the model's calendar actually contains."""
-    calendar = calendar_column(model)
+    calendar = calendar_column(model, connection)
     if calendar is None:
         return []
     table, column = calendar
@@ -245,10 +290,10 @@ def usable_years(model, connection, measure: str) -> list[int]:
     """
     from concordance.generate.sql import Status, translate
 
-    calendar = calendar_column(model)
+    calendar = calendar_column(model, connection)
     if calendar is None:
         return []
-    found = next((m for m in model.measures if m.name == measure), None)
+    found = _find(model, measure)
     if found is None:
         return []
 
@@ -279,8 +324,8 @@ def usable_periods(model, connection, measure: str) -> list[str]:
     """
     from concordance.generate.sql import PERIODS, Status, translate
 
-    calendar = calendar_column(model)
-    found = next((m for m in model.measures if m.name == measure), None)
+    calendar = calendar_column(model, connection)
+    found = _find(model, measure)
     if calendar is None or found is None or connection is None:
         return []
 
@@ -323,8 +368,8 @@ def over_time(
     """
     from concordance.generate.sql import Status, translate
 
-    found = next((m for m in model.measures if m.name == measure), None)
-    calendar = calendar_column(model)
+    found = _find(model, measure)
+    calendar = calendar_column(model, connection)
     by = f"by {period}"
     if found is None or calendar is None:
         return Breakdown(
@@ -606,11 +651,11 @@ def one(
     by = f"{table}[{column}]"
     only_year = None
     if year is not None:
-        calendar = calendar_column(model)
+        calendar = calendar_column(model, connection)
         if calendar is not None:
             only_year = (calendar[0], calendar[1], year)
 
-    found = next((m for m in model.measures if m.name == measure), None)
+    found = _find(model, measure)
     translated = (
         translate(model, found, grain=(by,), only_year=only_year, only_where=cross)
         if found is not None
@@ -709,11 +754,18 @@ def _whole(
     from concordance.generate.sql import Status, translate
 
     if year is None and cross is None:
-        found = evaluate(model, connection=connection).by_name().get(measure)
-        return found.value if found is not None else None
+        already = evaluate(model, connection=connection).by_name().get(measure)
+        if already is not None:
+            return already.value
+        # Not `return None`: the evaluation only knows the model's own
+        # measures, so an implicit one -- an aggregation the report declares on
+        # a visual -- falls through to being run directly below. Returning None
+        # here left every split of it with no whole to check against, and
+        # `_adds_up(parts, None)` is False, so a plain SUM was announced on
+        # screen as "an average or a ratio".
 
-    calendar = calendar_column(model)
-    found = next((m for m in model.measures if m.name == measure), None)
+    calendar = calendar_column(model, connection)
+    found = _find(model, measure)
     if found is None:
         return None
     only_year = None
@@ -807,6 +859,34 @@ def build(
     """
     if connection is None:
         return Dashboard(measure=measure, available=False, reason="no data is loaded")
+
+    # Can this measure be computed at all? Asked before anything is split,
+    # because if the answer is no then no split of it can be computed either,
+    # and the message further down -- "nothing in this model splits this
+    # measure into readable groups" -- would blame every dimension in the file
+    # for a blocker belonging to the measure. AdventureWorks is the case: its
+    # one measure uses USERELATIONSHIP, so the page reported that none of its
+    # eleven tables could group anything, which is both wrong and the opposite
+    # of useful to whoever has to fix it.
+    from concordance.generate.sql import Status as _Status, translate as _translate
+
+    subject = _find(model, measure)
+    if subject is None:
+        return Dashboard(
+            measure=measure,
+            available=False,
+            reason=f"{measure} is not a measure in this model.",
+        )
+    probe = _translate(model, subject)
+    if probe.status is not _Status.EXACT:
+        return Dashboard(
+            measure=measure,
+            available=False,
+            reason=(
+                f"{measure} cannot be run as SQL, so it cannot be split by anything "
+                f"either: {probe.reason}"
+            ),
+        )
 
     # The whole-model figure first, so each split can be checked against it
     # rather than asserted to match. One extra query, run once.

@@ -21,6 +21,7 @@ import pytest
 from concordance.adapters.pbix import PbixAdapter
 from concordance.generate import breakdown as B
 from concordance.generate.evaluate import evaluate, open_data
+from concordance.generate.sql import Status, translate
 
 STORE = Path("data/models/StoreSales.pbix")
 
@@ -217,13 +218,34 @@ def test_no_data_is_reported_rather_than_guessed(store) -> None:
     assert built.reason
 
 
-def test_a_measure_with_nothing_to_split_by_says_why(store) -> None:
-    """An untranslatable measure yields no charts and an explanation, never an
-    empty grid the reader has to interpret."""
+def test_a_measure_that_is_not_in_the_model_is_named_in_the_refusal(store) -> None:
+    """Never an empty grid the reader has to interpret."""
     model, connection = store
     built = B.build(model, connection, "Nonexistent Measure")
     assert not built.available
-    assert str(B.MIN_CLASSES) in built.reason
+    assert "Nonexistent Measure" in built.reason
+
+
+def test_an_untranslatable_measure_is_not_blamed_on_the_dimensions(store) -> None:
+    """The reason has to point at the thing that is actually broken.
+
+    A measure that cannot be compiled cannot be split by anything either, so
+    reporting "nothing in this model splits this measure into readable groups"
+    blames every dimension in the file for the measure's own blocker -- wrong,
+    and the opposite of useful to whoever has to fix it.
+    """
+    model, connection = store
+    blocked = next(
+        (m.name for m in model.measures if translate(model, m).status is not Status.EXACT),
+        None,
+    )
+    if blocked is None:
+        pytest.skip("every measure in this fixture translates")
+    built = B.build(model, connection, blocked)
+    assert not built.available
+    assert blocked in built.reason
+    # The measure's own blocker, not a count of groups.
+    assert str(B.MIN_CLASSES) not in built.reason
 
 
 def test_a_long_tail_is_folded_rather_than_dropped(store) -> None:

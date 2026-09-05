@@ -336,6 +336,11 @@ export interface ReportFilterPayload {
 
 /** One measure, run against the model's own rows. */
 export interface MeasureValue {
+  /** True when this is an aggregation the report declares on a visual rather
+   *  than a measure the model carries -- `Sum of Sales Amount`. Flagged
+   *  wherever it is shown, so a reader can tell what the author wrote from
+   *  what a tile was asked to do. */
+  implicit?: boolean;
   measure: string;
   table: string;
   /** The figure the query returned, or null when it could not be computed.
@@ -423,6 +428,9 @@ export interface DashboardPayload {
   cross: { table: string; column: string; value: string; label: string } | null;
   /** Columns a reader can cross-filter on, as `Table[Column]`. */
   crossable: string[];
+  /** True when the measure being charted is an aggregation the report declares
+   *  on a visual rather than one the model carries. */
+  implicit: boolean;
 }
 
 /** Each measure over time, small enough to sit under its own figure. */

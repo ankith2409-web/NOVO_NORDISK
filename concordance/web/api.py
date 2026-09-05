@@ -157,7 +157,19 @@ class ApiContext:
             if connection is None:
                 self._evaluated = Evaluation(available=False, reason=reason)
             else:
-                run = evaluate(self.graph.model, connection=connection)
+                from concordance.generate.implicit import from_report
+
+                # The report's own aggregations run alongside the model's
+                # measures. Flagged, never merged: a model like AdventureWorks
+                # carries one measure that cannot be compiled while every
+                # figure a reader sees on its pages is an implicit Sum on a
+                # visual, so without these the dashboard has nothing to show
+                # for a file that is full of arithmetic.
+                run = evaluate(
+                    self.graph.model,
+                    connection=connection,
+                    extra=from_report(self.graph.model),
+                )
                 self._evaluated = replace(run, rows_loaded=rows)
         return self._evaluated
 
@@ -1025,6 +1037,7 @@ def values(context: ApiContext, params: Params) -> dict[str, Any]:
                 "value": value.value,
                 "sql": value.sql,
                 "reason": value.reason,
+                "implicit": value.implicit,
             }
             for value in run.values
         ],
@@ -1049,10 +1062,16 @@ def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
         # measure an author wrote is a defensible default, and the first one
         # that happens to translate is alphabetical accident.
         computed = {v.measure for v in context.evaluated().values if v.computed}
-        wanted = next(
-            (m.name for m in model.measures if m.name in computed),
-            model.measures[0].name if model.measures else "",
-        )
+        wanted = next((m.name for m in model.measures if m.name in computed), "")
+        if not wanted:
+            # Nothing the author wrote can be computed. Rather than defaulting
+            # to a measure that will produce an empty page, fall through to the
+            # report's own aggregations, which for some files are the only
+            # arithmetic there is.
+            wanted = next(
+                (v.measure for v in context.evaluated().values if v.computed),
+                model.measures[0].name if model.measures else "",
+            )
 
     # A year the caller cannot have meant is refused here rather than coerced:
     # `build` drops any year it did not itself offer, so a bad one charts every
@@ -1103,6 +1122,7 @@ def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
             "over_time": None,
             "cross": None,
             "crossable": [],
+            "implicit": False,
         }
 
     built = build(model, connection, wanted, year=year, period=period, cross=cross)
@@ -1147,6 +1167,12 @@ def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
             else None
         ),
         "crossable": list(built.crossable),
+        # Whether the charted measure is the report's own aggregation rather
+        # than one the author wrote. Shown on the panel, not buried.
+        "implicit": any(
+            v.measure == built.measure and v.implicit
+            for v in context.evaluated().values
+        ),
     }
 
 

@@ -696,9 +696,17 @@ export function Trend({
 
   // Three gridlines, on the same round-number rule the axes elsewhere use.
   const marks = [low, (low + high) / 2, high];
-  // Every label if they fit, else the ends and the middle -- a crowded axis is
-  // less readable than a sparse one.
+  // Every label if they fit, else every nth -- a crowded axis is less
+  // readable than a sparse one.
   const room = Math.max(1, Math.ceil((slices.length * 44) / plot.width));
+  // Which ones actually get drawn. The last is worth having, being the most
+  // recent period, but only when there is room for it: taking it
+  // unconditionally printed it on top of its neighbour, and thirty-six months
+  // came out ending "Apr2020Jul2020".
+  const ticks = new Set<number>();
+  for (let i = 0; i < slices.length; i += room) ticks.add(i);
+  const last = slices.length - 1;
+  if (last - Math.max(...ticks) >= room) ticks.add(last);
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -769,7 +777,7 @@ export function Trend({
         ))}
 
         {slices.map((slice, i) =>
-          i % room === 0 || i === slices.length - 1 ? (
+          ticks.has(i) ? (
             <text
               key={`${slice.label}-tick`}
               x={x(i)}

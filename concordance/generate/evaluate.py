@@ -29,7 +29,7 @@ is shown, and the page says so.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 #: Tables above this many rows are still loaded in full. The constant exists to
@@ -53,6 +53,11 @@ class Value:
     sql: str = ""
     #: Why there is no figure. Empty when there is one.
     reason: str = ""
+    #: True when this came from an aggregation the report declares on a visual
+    #: rather than from a measure the model carries. Flagged everywhere it is
+    #: shown, because a reader must be able to tell what the author wrote from
+    #: what the report asked a tile to do.
+    implicit: bool = False
 
     @property
     def computed(self) -> bool:
@@ -216,7 +221,12 @@ def _single(
     return Value(measure=measure, table=table, value=float(figure), sql=sql)
 
 
-def evaluate(model, grain: tuple[str, ...] = (), connection: Any = None) -> Evaluation:
+def evaluate(
+    model,
+    grain: tuple[str, ...] = (),
+    connection: Any = None,
+    extra: Any = (),
+) -> Evaluation:
     """Run every measure that translates, against the model's own rows.
 
     ``grain`` is passed through to the same translator the rest of the project
@@ -224,12 +234,19 @@ def evaluate(model, grain: tuple[str, ...] = (), connection: Any = None) -> Eval
     measure. Two different SQL strings for one measure would make the figure
     unverifiable, which would defeat the point of showing it.
 
+    ``extra`` runs measures that are not in ``model.measures`` -- in practice
+    the aggregations a report declares on its visuals rather than writing as
+    measures, which `generate/implicit.py` rewrites into DAX. They are passed
+    in rather than merged into the model on purpose: they are not model
+    objects, and putting them there would inflate every count and change the
+    fingerprint of a file nobody edited.
+
     A ``connection`` may be passed in by a caller that already loaded the rows
     -- the web layer does, because every chart it draws is another query
     against the same million -- in which case that caller keeps ownership of
     it. Opened here only when it was not, and then closed here.
     """
-    from concordance.generate.sql import Status, translate_all
+    from concordance.generate.sql import Status, translate, translate_all
 
     borrowed = connection is not None
     rows = 0
@@ -240,11 +257,14 @@ def evaluate(model, grain: tuple[str, ...] = (), connection: Any = None) -> Eval
 
     try:
         values: list[Value] = []
-        for result in translate_all(model, grain):
-            measure = next(
-                (m for m in model.measures if m.name == result.measure), None
-            )
+        by_name = {m.name: m for m in list(model.measures) + list(extra)}
+        translations = translate_all(model, grain) + [
+            translate(model, m, grain) for m in extra
+        ]
+        for result in translations:
+            measure = by_name.get(result.measure)
             table = measure.table if measure else ""
+            derived = measure is not None and measure.fingerprint.startswith("implicit-")
 
             if result.status is not Status.EXACT:
                 values.append(
@@ -253,6 +273,7 @@ def evaluate(model, grain: tuple[str, ...] = (), connection: Any = None) -> Eval
                         table=table,
                         value=None,
                         reason=result.reason,
+                        implicit=derived,
                     )
                 )
                 continue
@@ -275,12 +296,16 @@ def evaluate(model, grain: tuple[str, ...] = (), connection: Any = None) -> Eval
                         value=None,
                         sql=result.sql,
                         reason=f"the generated query did not run: {exc}",
+                        implicit=derived,
                     )
                 )
                 continue
 
             values.append(
-                _single(result.measure, table, result.sql, columns, returned)
+                replace(
+                    _single(result.measure, table, result.sql, columns, returned),
+                    implicit=derived,
+                )
             )
 
         return Evaluation(
