@@ -136,6 +136,11 @@ class PbixAdapter:
 
         power_query = self._power_query_by_table(raw)
         calc_columns = self._calculated_column_expressions(raw)
+        # A calculated table defines its columns inside its own expression --
+        # `ADDCOLUMNS(CALENDAR(...), "Year", YEAR([Date]), ...)` -- so those
+        # formulas are read from there and merged in alongside the ones
+        # `dax_columns` reports for ordinary tables.
+        calc_columns.update(self._columns_defined_by_calculated_tables(raw))
 
         model.columns = self._build_columns(raw, calc_columns)
         measure_rows = _rows(raw.dax_measures)
@@ -164,8 +169,13 @@ class PbixAdapter:
         calculated = self._calculated_tables(raw)
         # Only for tables with no stored columns to enumerate. A calculated
         # table that also stores columns -- Power BI keeps the materialised
-        # result for some -- already has them read, and a second pass over the
-        # expression would list every column twice.
+        # result for some, and newer readers surface more of them -- already has
+        # them read, and a second pass over the expression would list every
+        # column twice. Their *formulas* are not skipped with them: those are
+        # merged into `calc_columns` above, which is the half of this that went
+        # missing when a reader upgrade started returning stored columns for
+        # `Date`, silently stripping `YEAR([Date])` and every other formula on
+        # it out of the model, the lineage and both documents.
         stored = {c.table.casefold() for c in model.columns}
         model.columns.extend(
             self._calculated_columns(
@@ -285,6 +295,23 @@ class PbixAdapter:
                 return read_filters(_decode(archive.read("Report/Layout")))
         except (KeyError, OSError, zipfile.BadZipFile):
             return []
+
+    def _columns_defined_by_calculated_tables(
+        self, raw: PBIXRay
+    ) -> dict[tuple[str, str], str]:
+        """Formulas a calculated table states inside its own definition.
+
+        `column_names` already knows how to read them -- this only asks it for
+        every calculated table rather than only for the ones that turned out to
+        have no stored columns, and keys the answer the way `_build_columns`
+        expects so a stored column can be given the formula that produced it.
+        """
+        found: dict[tuple[str, str], str] = {}
+        for table, expression in self._calculated_tables(raw).items():
+            for name, body in column_names(expression):
+                if body:
+                    found[(table, name)] = body
+        return found
 
     def _calculated_tables(self, raw: PBIXRay) -> dict[str, str]:
         """Tables whose rows a DAX expression produces, from their partitions.

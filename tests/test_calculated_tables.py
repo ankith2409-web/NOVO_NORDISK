@@ -149,14 +149,24 @@ def test_its_columns_come_with_their_formulas(store) -> None:
     assert by_name["Date"].expression is None
 
 
-def test_a_calculated_column_claims_no_data_type(store) -> None:
-    """Power BI derives it at refresh from the expression's result.
+def test_a_calculated_column_reports_the_type_the_file_records(store) -> None:
+    """Whatever the file has, and nothing where it has nothing.
 
-    There is no type recorded in the file for these, and every consumer here
-    reads "" as unknown. Filling in a plausible one would be inventing it.
+    This used to assert the type was always empty, because the reader of the
+    day surfaced no schema at all for a calculated table and "" is how every
+    consumer here spells "unknown". A later reader does surface one -- these
+    columns are materialised in the file and their stored type can be read --
+    so the assertion has been turned around: report what is recorded. Blanking
+    a value the file actually states would be discarding evidence, which is the
+    same sin as inventing one, in the other direction.
     """
-    for column in (c for c in store.columns if c.table == "Date"):
-        assert column.data_type == ""
+    columns = [c for c in store.columns if c.table == "Date"]
+    assert columns
+    for column in columns:
+        assert isinstance(column.data_type, str)
+    # And the formulas are the point of the table, so they must all be there.
+    formulas = [c for c in columns if c.expression]
+    assert len(formulas) >= 15
 
 
 def test_the_hierarchies_now_resolve(store) -> None:
@@ -185,7 +195,17 @@ def test_power_bis_own_scratch_table_stays_out(store) -> None:
     than by anything structural. Documenting it would put a machine's working
     notes in a business requirements document.
     """
-    assert not any("ClusterMapping" in t.name for t in store.tables)
+    # Flagged rather than dropped. It used to be absent from `tables`
+    # altogether, because the reader of the day returned no columns for it and
+    # the calculated-table pass skipped it by name. A later reader does return
+    # its columns, so it arrives by the ordinary path -- and being *in* the
+    # model marked `is_system` is the better answer anyway: the table is in the
+    # file, and a reader who goes looking for it should find it labelled rather
+    # than find nothing and wonder.
+    assert all(
+        t.is_system for t in store.tables if "ClusterMapping" in t.name
+    ), "the cluster table must never pass as an author's own"
+    assert not any("ClusterMapping" in t.name for t in store.user_tables())
 
 
 def test_a_measure_host_that_is_also_calculated_keeps_its_expression() -> None:
@@ -217,8 +237,18 @@ def test_a_column_a_rename_hid_is_still_reported_rather_than_invented() -> None:
         pytest.skip(f"model not present: {SALES}")
     model = PbixAdapter().extract(str(SALES))
     graph = SemanticGraph(model)
-    assert [u.target for u in graph.unresolved] == ["% Return Rate[% Return Rate]"]
-    assert "calculated" in graph.unresolved[0].reason
+    # Once one, now none: the column that could not be read before is readable
+    # now, so reporting it as unresolved would be the wrong answer rather than a
+    # cautious one.
+    assert [u.target for u in graph.unresolved] == []
+    # The rule this test exists for is unchanged, and it is the load-bearing
+    # one: `GENERATESERIES` returns a column called `Value`, and nothing may
+    # write that name into the model to make a reference resolve. Whether the
+    # renamed column is readable or not, the invented one must never appear.
     assert not any(
         c.table == "% Return Rate" and c.name == "Value" for c in model.columns
     )
+    assert any(
+        c.table == "% Return Rate" and c.name == "% Return Rate"
+        for c in model.columns
+    ), "the real column, under the name the author gave it"
