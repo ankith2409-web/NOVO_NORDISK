@@ -174,6 +174,86 @@ function share(value: number, total: number): string {
  * that follows the pointer is unreachable by keyboard and invisible in a
  * screenshot, and this page is one people screenshot into a review pack.
  */
+/**
+ * The value of the thing under the pointer, beside the thing itself.
+ *
+ * Every chart here already had a readout line under it, which is right for a
+ * screen reader and wrong for a mouse: the figure appears somewhere the eye is
+ * not, and on a tall chart that is a hand's width from the point being asked
+ * about. So the number now follows the mark as well.
+ *
+ * It replaces something worse than nothing. Each SVG carried a `<title>` child
+ * for its accessible name, and browsers render that as a native tooltip -- so
+ * hovering a data point produced a grey box reading "Net Sales over 6 periods"
+ * a second and a half later, which is the chart's caption rather than the
+ * point's value, arriving too late to connect to the thing hovered. The
+ * accessible name moved to `aria-label`, which screen readers read and
+ * browsers do not draw.
+ *
+ * Positioned in percentages of the chart box so it works for an SVG that
+ * scales with its container, and `pointer-events-none` so it can never sit
+ * between the pointer and the mark it describes -- which would make the mark
+ * un-hoverable the moment the card appeared over it.
+ */
+/**
+ * Where the element under the pointer is, in the chart's own coordinates.
+ *
+ * Read off the laid-out element rather than computed from flex geometry: the
+ * gaps, the padding and the label above a column are all things a computation
+ * would have to assume and the DOM already knows. `offsetLeft` and `offsetTop`
+ * are relative to the nearest positioned ancestor, which is the chart box, so
+ * the numbers drop straight into a card positioned inside it.
+ */
+function useSpot() {
+  const [spot, setSpot] = useState<{ left: number; top: number } | null>(null);
+  const mark = (event: { currentTarget: HTMLElement }) => {
+    const found = event.currentTarget;
+    setSpot({ left: found.offsetLeft + found.offsetWidth / 2, top: found.offsetTop });
+  };
+  return { spot, mark };
+}
+
+export function Hovercard({
+  left,
+  top,
+  unit = "%",
+  label,
+  value,
+  note,
+}: {
+  left: number;
+  top: number;
+  /** Percentages for an SVG, which scales with its box; pixels for an HTML
+   *  chart, where the laid-out element already knows exactly where it is and
+   *  deriving a percentage from flex geometry would only be a guess. */
+  unit?: "%" | "px";
+  label: string;
+  value: number;
+  /** A second line, e.g. a share of the total. */
+  note?: string;
+}) {
+  const held = unit === "px" ? (n: number) => n : (n: number) => Math.min(Math.max(n, 0), 100);
+  return (
+    <span
+      role="presentation"
+      style={{ left: `${held(left)}${unit}`, top: `${held(top)}${unit}` }}
+      className={cx(
+        "pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-[calc(100%+10px)]",
+        "rounded-md border border-edge bg-surface px-2 py-1 whitespace-nowrap",
+        "shadow-[0_4px_14px_rgb(0_0_0/0.16)]",
+      )}
+    >
+      <span className="block text-[11px] leading-tight text-muted">{label}</span>
+      <span className="block font-mono text-[12.5px] leading-tight font-semibold text-ink tabular">
+        {exact(value)}
+      </span>
+      {note && (
+        <span className="block text-[10.5px] leading-tight text-faint">{note}</span>
+      )}
+    </span>
+  );
+}
+
 function Readout({
   slice,
   total,
@@ -227,25 +307,57 @@ interface ChartProps {
 export function Donut({ slices, by, measure, onPick, picked }: ChartProps) {
   const [active, setActive] = useState<number | null>(null);
   const total = slices.reduce((sum, s) => sum + Math.abs(s.value), 0);
-  const titleId = useId();
 
   const R = 62;
   const STROKE = 26;
   const circumference = 2 * Math.PI * R;
   let travelled = 0;
 
+  // Where on the ring each slice sits, so the card can point at the arc rather
+  // than at the middle of the chart. Walked in the same order the arcs are
+  // drawn, and read at the *midpoint* of the slice, which is where a reader's
+  // eye is when they hover it.
+  let walked = 0;
+  const middles = slices.map((slice) => {
+    const share = total ? Math.abs(slice.value) / total : 0;
+    const midpoint = walked + share / 2;
+    walked += share;
+    // Rotated to start at twelve o'clock, as the ring itself is.
+    const angle = midpoint * 2 * Math.PI - Math.PI / 2;
+    return {
+      x: 80 + Math.cos(angle) * R,
+      y: 80 + Math.sin(angle) * R,
+    };
+  });
+
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+        {/* The card is positioned against the ring, not against the row: the
+            ring is a fixed 150px square and the row is as wide as its legend,
+            so percentages of the row would put the card somewhere near the
+            words instead of on the arc. */}
+        <div className="relative shrink-0">
+          {active !== null && (
+            <Hovercard
+              left={(middles[active].x / 160) * 100}
+              top={(middles[active].y / 160) * 100}
+              label={slices[active].label}
+              value={slices[active].value}
+              note={
+                total ? `${share(slices[active].value, total)} of the total` : undefined
+              }
+            />
+          )}
         <svg
           viewBox="0 0 160 160"
           className="h-[150px] w-[150px] shrink-0"
           role="img"
-          aria-labelledby={titleId}
+          // `aria-label`, not a `<title>` child: both name the chart for a
+          // screen reader and only one of them is also drawn by the browser as
+          // a tooltip over the data.
+          aria-label={`${measure} by ${by}, as a ring`}
         >
-          <title id={titleId}>
-            {measure} by {by}, as a ring
-          </title>
           <g transform="translate(80 80) rotate(-90)">
             {slices.map((slice, at) => {
               const length = total ? (Math.abs(slice.value) / total) * circumference : 0;
@@ -288,6 +400,7 @@ export function Donut({ slices, by, measure, onPick, picked }: ChartProps) {
             {active === null ? "total" : share(slices[active].value, total)}
           </text>
         </svg>
+        </div>
 
         {/* The legend is not a key to the colours -- it is the chart's data in
             words, which is what makes the colours optional. */}
@@ -356,8 +469,22 @@ export function Bars({
   // the reader has to notice.
   const signed = slices.some((s) => s.value < 0);
 
+  const { spot, mark } = useSpot();
+
   return (
-    <div className="flex flex-col gap-2">
+    <div className="relative flex flex-col gap-2">
+      {active !== null && spot && (
+        <Hovercard
+          left={spot.left}
+          top={spot.top}
+          unit="px"
+          label={slices[active].label}
+          value={slices[active].value}
+          note={
+            additive && total ? `${share(slices[active].value, total)} of the total` : undefined
+          }
+        />
+      )}
       <ul
         className="flex flex-col gap-1"
         aria-label={`${measure} by ${by}, as bars`}
@@ -373,9 +500,17 @@ export function Bars({
                 picked === slice.label ? "ring-1 ring-accent" : "",
                 onPick ? "cursor-pointer" : "",
               )}
-              onMouseEnter={() => setActive(at)}
+              onMouseEnter={(event) => {
+                setActive(at);
+                mark(event);
+              }}
               onMouseLeave={() => setActive(null)}
-              onClick={() => onPick?.(slice.label)}
+              onClick={(event) => {
+                // A tap has no hover, so it has to do both.
+                setActive(at);
+                mark(event);
+                onPick?.(slice.label);
+              }}
             >
               <span className="w-[7.5rem] shrink-0 truncate" title={slice.label}>
                 {slice.label}
@@ -437,6 +572,7 @@ export function Columns({
   picked,
 }: ChartProps) {
   const [active, setActive] = useState<number | null>(null);
+  const { spot, mark } = useSpot();
   const rank = ranks(slices);
   const total = slices.reduce((sum, s) => sum + Math.abs(s.value), 0);
   const tallest = Math.max(...slices.map((s) => Math.abs(s.value)), 1);
@@ -444,21 +580,48 @@ export function Columns({
   return (
     <div className="flex flex-col gap-2">
       <div
-        className="flex h-[150px] items-end gap-1.5"
+        className="relative flex h-[150px] items-end gap-1.5"
         aria-label={`${measure} by ${by}, as columns`}
       >
+        {active !== null && spot && (
+          <Hovercard
+            left={spot.left}
+            // The button is the full height of the row, so its own top is the
+            // top of the column rather than of the bar in it. The bar's top is
+            // the one thing here that has to be computed: it is where the
+            // reader is looking.
+            top={150 * (1 - Math.abs(slices[active].value) / tallest)}
+            unit="px"
+            label={slices[active].label}
+            value={slices[active].value}
+            note={
+              additive && total
+                ? `${share(slices[active].value, total)} of the total`
+                : undefined
+            }
+          />
+        )}
         {slices.map((slice, at) => (
           <button
             key={slice.label}
             type="button"
-            onMouseEnter={() => setActive(at)}
+            onMouseEnter={(event) => {
+              setActive(at);
+              mark(event);
+            }}
             onMouseLeave={() => setActive(null)}
-            onFocus={() => setActive(at)}
+            onFocus={(event) => {
+              setActive(at);
+              mark(event);
+            }}
             onBlur={() => setActive(null)}
-            onClick={() => onPick?.(slice.label)}
+            onClick={(event) => {
+              setActive(at);
+              mark(event);
+              onPick?.(slice.label);
+            }}
             aria-pressed={picked === slice.label}
             className="flex h-full min-w-0 flex-1 flex-col justify-end gap-1"
-            title={`${slice.label}: ${exact(slice.value)}`}
           >
             <span
               className={cx(
@@ -662,7 +825,6 @@ export function Trend({
 }) {
   const [at, setAt] = useState<number | null>(null);
   const frame = useRef<SVGSVGElement>(null);
-  const titleId = useId();
 
   // Wide, because this is drawn across a whole page. A narrow viewBox
   // stretched to full width is scaled up in *both* directions, and the chart
@@ -709,19 +871,28 @@ export function Trend({
   if (last - Math.max(...ticks) >= room) ticks.add(last);
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="relative flex flex-col gap-1.5">
+      {at !== null && (
+        <Hovercard
+          left={(x(at) / W) * 100}
+          top={(y(slices[at].value) / H) * 100}
+          label={slices[at].label}
+          value={slices[at].value}
+        />
+      )}
       <svg
         ref={frame}
         viewBox={`0 0 ${W} ${H}`}
-        className="w-full"
+        className="w-full touch-none"
         role="img"
-        aria-labelledby={titleId}
+        aria-label={`${measure} over ${slices.length} periods`}
         onMouseMove={move}
         onMouseLeave={() => setAt(null)}
+        // A finger has no hover, so a tap reads the nearest point. Same
+        // handler: `move` already works from a clientX.
+        onPointerDown={move}
+        onClick={move}
       >
-        <title id={titleId}>
-          {measure} over {slices.length} periods
-        </title>
         {marks.map((mark) => (
           <g key={mark}>
             <line
@@ -766,14 +937,25 @@ export function Trend({
         )}
 
         {slices.map((slice, i) => (
-          <circle
-            key={slice.label}
-            cx={x(i)}
-            cy={y(slice.value)}
-            r={at === i ? 4 : 2.4}
-            className={cx("fill-accent", onPick && "cursor-pointer")}
-            onClick={() => onPick?.(slice.label)}
-          />
+          <g key={slice.label}>
+            {/* A 2.4px dot is a 2.4px target. This one is invisible, eleven
+                pixels across, and is what the pointer actually hits. */}
+            <circle
+              cx={x(i)}
+              cy={y(slice.value)}
+              r="11"
+              fill="transparent"
+              className="cursor-pointer"
+              onMouseEnter={() => setAt(i)}
+              onClick={() => onPick?.(slice.label)}
+            />
+            <circle
+              cx={x(i)}
+              cy={y(slice.value)}
+              r={at === i ? 4.5 : 2.4}
+              className="pointer-events-none fill-accent"
+            />
+          </g>
         ))}
 
         {slices.map((slice, i) =>
@@ -1049,7 +1231,6 @@ export function Atlas({
   // Optimistic. The basemap is the normal case, and starting without it would
   // flash a bare grid on every load before the first tile arrived.
   const [basemap, setBasemap] = useState(true);
-  const titleId = useId();
   const clipId = useId();
 
   const W = 520;
@@ -1184,17 +1365,24 @@ export function Atlas({
   const labelAt = new Map(order.map((at, position) => [at, placed[position]]));
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="relative flex flex-col gap-1.5">
+      {active !== null && (
+        <Hovercard
+          left={(x(places[active].lon) / W) * 100}
+          top={(y(places[active].lat) / (H + 18)) * 100}
+          label={places[active].label}
+          value={places[active].value}
+        />
+      )}
       <svg
         viewBox={`0 0 ${W} ${H + 18}`}
         className="w-full rounded border border-hairline bg-surface"
         role="img"
-        aria-labelledby={titleId}
+        aria-label={
+          `${measure} by ${label}, plotted at each location's own coordinates ` +
+          `across about ${Math.round(across)} kilometres`
+        }
       >
-        <title id={titleId}>
-          {measure} by {label}, plotted at each location&rsquo;s own coordinates
-          across about {Math.round(across)} kilometres
-        </title>
 
         <defs>
           {/* Tiles are square and the frame is not a whole number of them, so
@@ -1255,6 +1443,9 @@ export function Atlas({
               strokeWidth={active === at ? 2 : 1.2}
               onMouseEnter={() => setActive(at)}
               onMouseLeave={() => setActive(null)}
+              // A tap has no hover, and a map is the chart most likely to be
+              // read on a tablet in a meeting.
+              onClick={() => setActive(at)}
             />
           ))}
 
