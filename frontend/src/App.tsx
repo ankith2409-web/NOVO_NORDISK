@@ -19,14 +19,22 @@ import {
   type Uploaded,
   type WhoAmI,
 } from "@/lib/api";
-import { Button } from "@/components/primitives";
+import { Button, IconButton } from "@/components/primitives";
 import { ModelPicker } from "@/components/ModelPicker";
 import { UploadDialog } from "@/components/UploadDialog";
 import { FindAnything, useFindShortcut } from "@/components/FindAnything";
-import { SearchIcon, UploadIcon } from "@/components/icons";
+import {
+  AskIcon,
+  MoonIcon,
+  SearchIcon,
+  SunIcon,
+  UploadIcon,
+} from "@/components/icons";
 import { Copilot } from "@/components/Copilot";
 import { Intro } from "@/components/Intro";
 import { FAVICON_SVG, Wordmark } from "@/components/Logo";
+import { Divider } from "@/components/Divider";
+import { useResizable } from "@/lib/useResizable";
 import { Overview } from "@/views/Overview";
 import { Model } from "@/views/Model";
 import { Dashboard } from "@/views/Dashboard";
@@ -145,6 +153,25 @@ export default function App() {
     remember("intro-seen", "yes");
   }
   const [theme, toggleTheme] = useTheme();
+
+  // Both panes are the reader's to size. Clamped rather than free: a pane that
+  // can be dragged to nothing can be lost by accident, with nothing left on
+  // screen to drag back.
+  const nav = useResizable({
+    key: "concordance-nav-width",
+    initial: 176,
+    min: 132,
+    max: 320,
+    label: "Resize the navigation",
+  });
+  const panel = useResizable({
+    key: "concordance-copilot-width",
+    initial: 320,
+    min: 260,
+    max: 620,
+    edge: "end",
+    label: "Resize the copilot",
+  });
 
   // Set here rather than in index.html so the mark has exactly one definition.
   // A second copy pasted into the template is a second thing to update, and the
@@ -444,9 +471,13 @@ export default function App() {
             onClick={() => setShowCopilot((open) => !open)}
             aria-expanded={showCopilot}
             aria-controls="copilot"
-            tone={showCopilot ? "selected" : "quiet"}
+            tone={showCopilot ? "selected" : "ghost"}
           >
-            copilot
+            {/* A speech bubble, not the four-point spark that was here: at
+                13px the spark reads as a plus sign, and a plus on a toolbar
+                means "add something". */}
+            <AskIcon size={13} />
+            Copilot
           </Button>
           {/* Shown before a decision is recorded rather than after. Finding
               out you signed something off as the wrong identity is a thing to
@@ -461,21 +492,28 @@ export default function App() {
           )}
           {who?.identified && who.auth0 && (
             <Button
+              tone="ghost"
               onClick={() => {
                 window.location.href = "/signed-out";
               }}
               aria-label={`Sign out ${who.person}`}
             >
-              sign out
+              Sign out
             </Button>
           )}
-          <Button onClick={() => setIntro(true)}>guide</Button>
-          <Button
-            onClick={toggleTheme}
-            aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
-          >
-            {theme === "dark" ? "light" : "dark"}
+          <Button tone="ghost" onClick={() => setIntro(true)}>
+            Guide
           </Button>
+          {/* Shows the theme you are *in*, and says in its tooltip where a
+              click goes. The word button it replaces read "dark" while the
+              page was light, which is ambiguous in the one way a theme switch
+              cannot afford: state, or verb? */}
+          <IconButton
+            label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+            onClick={toggleTheme}
+          >
+            {theme === "dark" ? <MoonIcon size={15} /> : <SunIcon size={15} />}
+          </IconButton>
         </div>
       </header>
 
@@ -501,7 +539,10 @@ export default function App() {
             them truncated at w-36. Measured rather than eyeballed, and set
             wide enough to leave headroom instead of landing on the next
             one-pixel margin. */}
-        <nav className="flex w-44 flex-none flex-col gap-0.5 border-r border-hairline bg-ground p-2">
+        <nav
+          style={{ width: nav.width }}
+          className="flex flex-none flex-col gap-0.5 bg-ground p-2"
+        >
           {VIEWS.map((entry, index) => (
             <Fragment key={entry.id}>
               {/* One line, once, before the first secondary item. Labelled, so
@@ -541,6 +582,7 @@ export default function App() {
             </Fragment>
           ))}
         </nav>
+        <Divider pane={nav} />
 
         {/* Keyed on the model: every view loads on mount, so without this a
             switch would leave the previous model's tables and requirements on
@@ -566,12 +608,18 @@ export default function App() {
         {/* Stays mounted whether or not it is on screen: closing the panel must
             not throw away the conversation. Docked beside the work when there is
             room, over it when there is not. */}
+        {/* Docked, the copilot gets a divider of its own; floating, it does
+            not -- there is nothing beside it to trade width with. */}
+        {showCopilot && wide && <Divider pane={panel} />}
         <aside
           id="copilot"
+          style={showCopilot && wide ? { width: panel.width } : undefined}
           className={cx(
-            "flex-none flex-col border-l border-hairline bg-ground",
+            "flex-none flex-col bg-ground",
             showCopilot ? "flex" : "hidden",
-            wide ? "w-80" : "absolute inset-y-0 right-0 z-10 w-80 max-w-[85%] shadow-xl",
+            wide
+              ? ""
+              : "absolute inset-y-0 right-0 z-10 w-80 max-w-[85%] border-l border-hairline shadow-xl",
           )}
         >
           <Copilot

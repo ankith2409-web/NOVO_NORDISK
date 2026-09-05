@@ -20,8 +20,15 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
-import { Button, Chip } from "@/components/primitives";
-import { AlertIcon, CloseIcon, RetryIcon, SendIcon } from "@/components/icons";
+import { Button, Chip, Info } from "@/components/primitives";
+import {
+  AlertIcon,
+  AskIcon,
+  ChevronIcon,
+  CloseIcon,
+  RetryIcon,
+  SendIcon,
+} from "@/components/icons";
 import { RichText } from "@/components/RichText";
 import { cx } from "@/lib/cx";
 
@@ -163,29 +170,65 @@ export function Copilot({
         className="min-h-0 flex-1 overflow-y-auto px-3.5 py-3"
       >
         {turns.length === 0 && !busy && (
-          <div className="space-y-3">
-            <p className="text-sm text-muted">
-              Ask about this model. Answers are read from the extracted graph by
-              calling tools against it, never recalled from memory.
+          <div className="flex flex-col gap-3">
+            {/* One line, and the rest behind the (i). The claim it makes --
+                that answers come from the graph rather than from the model's
+                memory -- is the whole reason to trust this panel, and it was
+                being read once and then skipped forever. */}
+            <p className="flex items-center gap-1.5 text-sm text-muted">
+              Ask about this model.
+              <Info label="where these answers come from">
+                Every answer is assembled from tools run against the extracted
+                graph — never recalled from the language model&rsquo;s memory. Each
+                reply lists the tools it called, so you can check what it read
+                before you believe what it wrote.
+              </Info>
             </p>
-            <ul className="space-y-1.5">
+
+            <p className="font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
+              Try one of these
+            </p>
+            <ul className="flex flex-col gap-1">
               {OPENERS.map((opener) => (
                 <li key={opener}>
                   {/* Clickable, because a suggestion you have to retype is a
-                      decoration rather than a shortcut. */}
+                      decoration rather than a shortcut.
+
+                      Drawn as a row rather than a bordered box: four boxes
+                      stacked read as four empty form fields waiting to be
+                      filled in, which is the opposite of what they are. A rail
+                      that lights on hover and an arrow that arrives with it say
+                      "this goes somewhere" without spending a border. */}
                   <button
                     onClick={() => {
                       setQuestion(opener);
                       composer.current?.focus();
                     }}
                     className={cx(
-                      "w-full rounded border border-hairline px-2.5 py-2 text-left",
-                      "text-xs text-muted transition-colors",
+                      "group flex w-full cursor-pointer items-start gap-2 rounded-md",
+                      "border border-transparent py-1.5 pr-2 pl-2 text-left",
+                      "text-[12.5px] leading-snug text-muted",
+                      "transition-[color,background-color,border-color]",
                       "duration-(--duration-feedback) ease-(--ease-standard)",
-                      "hover:border-accent/40 hover:bg-accent-soft hover:text-accent",
+                      "hover:border-hairline hover:bg-raised hover:text-ink",
+                      "focus-visible:outline-none focus-visible:border-accent/50",
+                      "focus-visible:bg-accent-soft focus-visible:text-accent",
                     )}
                   >
-                    {opener}
+                    <AskIcon
+                      size={13}
+                      className="mt-[3px] flex-none text-faint transition-colors group-hover:text-accent"
+                    />
+                    <span className="min-w-0 flex-1">{opener}</span>
+                    <ChevronIcon
+                      size={13}
+                      className={cx(
+                        "mt-[3px] flex-none -translate-x-1 text-faint opacity-0",
+                        "transition-[opacity,transform] duration-(--duration-feedback)",
+                        "ease-(--ease-standard) group-hover:translate-x-0",
+                        "group-hover:opacity-100 group-focus-visible:opacity-100",
+                      )}
+                    />
                   </button>
                 </li>
               ))}
@@ -254,9 +297,19 @@ export function Copilot({
             <SendIcon />
           </Button>
         </div>
-        <p className="mt-1.5 px-1 font-mono text-[10.5px] leading-relaxed text-faint">
-          Enter to send · Shift+Enter for a new line. Answers are written by a
-          language model from tool results, and every tool it used is listed.
+        {/* The keystrokes stay; the paragraph about provenance moves behind
+            the (i). Four lines of grey monospace under a text box is a wall a
+            reader learns to look past, which is a poor place for the sentence
+            that says how much to trust the answer. */}
+        <p className="mt-1.5 flex items-center gap-1.5 px-1 font-mono text-[10.5px] text-faint">
+          <kbd className="font-mono">Enter</kbd> to send ·{" "}
+          <kbd className="font-mono">Shift+Enter</kbd> for a new line
+          <Info label="how answers are written" align="right">
+            Answers are written by a language model from the results of tools it
+            ran against this model&rsquo;s extracted graph. Every tool it called is
+            listed under the reply, so the working is checkable rather than
+            taken on trust.
+          </Info>
         </p>
       </form>
     </div>

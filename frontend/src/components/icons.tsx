@@ -197,3 +197,67 @@ export function PageIcon(props: IconProps) {
     </Glyph>
   );
 }
+
+/**
+ * The current theme, not the one a click would switch to.
+ *
+ * A control that names its destination -- a button reading "dark" while the
+ * page is light -- is ambiguous in exactly the way a theme switch cannot
+ * afford: the reader has to work out whether the word is a state or a verb.
+ * An icon showing where you *are*, with the destination in the tooltip,
+ * removes the question.
+ */
+export function SunIcon(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+    </Glyph>
+  );
+}
+
+export function MoonIcon(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" />
+    </Glyph>
+  );
+}
+
+/**
+ * The affordance that lets a paragraph become a sentence.
+ *
+ * Several places in this interface carry three or four lines explaining how a
+ * figure was produced. The explanation is load-bearing -- it is most of what
+ * makes a number checkable -- but printed in full it competes with the number
+ * it is about. Behind an (i) it stays one keystroke away and stops shouting.
+ */
+export function InfoIcon(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5" />
+      <path d="M12 7.6h.01" />
+    </Glyph>
+  );
+}
+
+/** A question waiting to be asked. Leads each suggested opener. */
+export function AskIcon(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9 9 0 0 1-3.4-.6L3 21l1.8-5A8.3 8.3 0 0 1 4 11.5 8.4 8.4 0 0 1 12.5 3 8.4 8.4 0 0 1 21 11.5Z" />
+    </Glyph>
+  );
+}
+
+/** The grip on a draggable divider. Three dots read as "hold me" at any size. */
+export function GripIcon(props: IconProps) {
+  return (
+    <Glyph {...props}>
+      <circle cx="12" cy="6" r="1" />
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="12" cy="18" r="1" />
+    </Glyph>
+  );
+}

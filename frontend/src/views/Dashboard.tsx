@@ -55,8 +55,10 @@ import {
   Chip,
   Empty,
   Failure,
+  Info,
   Loading,
   Stat,
+  Segmented,
   controlClasses,
 } from "@/components/primitives";
 import { ChevronIcon } from "@/components/icons";
@@ -292,10 +294,13 @@ export function Dashboard({
             {c.kpis === 1 ? "" : "s"}
           </span>
         </h2>
-        <p className="max-w-prose text-[13px] text-muted">
-          The figures this report states as a number rather than drawing as a chart —
-          the headline cards somebody points at. Each one is named by its measure, with
-          the DAX behind it and the same calculation written as SQL.
+        <p className="flex max-w-prose items-center gap-1.5 text-[13px] text-muted">
+          The figures this report states as a number rather than drawing as a chart.
+          <Info label="what a KPI card carries">
+            Each card is named by its measure and carries the DAX behind it and the
+            same calculation written as SQL. Open one to see both, and the query that
+            produced the figure on its face.
+          </Info>
         </p>
 
         {kpis.length === 0 ? (
@@ -904,29 +909,18 @@ function Breakdowns({ measure, picked }: { measure: string; picked: boolean }) {
                 {/* The period as a row of buttons rather than a dropdown: it is
                     the control most likely to be touched, and the report this
                     imitates puts its YOY / QOQ / MOM switch in the open. */}
-                <div
-                  role="group"
-                  aria-label="Period"
-                  className="ml-auto flex items-center gap-1 pb-1"
-                >
-                  {data.periods.map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      onClick={() => setPeriod(option)}
-                      aria-pressed={data.period === option}
-                      className={cx(
-                        "rounded-full px-2.5 py-0.5 font-mono text-[10px] uppercase",
-                        "tracking-[0.06em] transition-colors duration-(--duration-feedback)",
-                        data.period === option
-                          ? "bg-accent font-medium text-ground"
-                          : "text-muted hover:bg-raised",
-                      )}
-                    >
-                      {option}
-                    </button>
-                  ))}
-                </div>
+                <Segmented
+                  label="Period"
+                  className="ml-auto mb-1"
+                  size="xs"
+                  value={data.period ?? data.periods[0]}
+                  onChange={setPeriod}
+                  options={data.periods.map((option) => ({
+                    value: option,
+                    label: option[0].toUpperCase() + option.slice(1),
+                    title: `${measure} by ${option}`,
+                  }))}
+                />
               </div>
               <div className="px-3 pb-3">
                 <Trend slices={data.over_time.slices} measure={measure} />
@@ -956,40 +950,43 @@ function Breakdowns({ measure, picked }: { measure: string; picked: boolean }) {
             ))}
           </div>
 
-          <p className="text-[11.5px] text-muted">
-            {data.implicit && (
-              <>
-                <strong className="font-medium text-ink">{measure}</strong> is not a
-                measure in this model — it is an aggregation the report applies on a
-                visual, which this tool has rewritten as DAX so the figure can be
-                computed and checked. The table, the column and the aggregation are all
-                the tile&rsquo;s own; nothing about it was guessed.{" "}
-              </>
-            )}
-            Every chart here was produced by running {measure}&rsquo;s own SQL grouped by
-            that column, against the rows this file carries. Where the measure adds up, the
-            parts sum to the figure on the card, and a group beyond the tenth is folded
-            into one slice carrying its value rather than dropped so the total still
-            holds. Where it does not — an average, a ratio — the chart says so rather
-            than printing a total that means nothing.{" "}
+          <p className="flex flex-wrap items-center gap-x-1.5 text-[11.5px] text-muted">
             <strong className="font-medium text-ink">Click any bar or slice</strong> to
-            hold the page to that group; the filter goes into the query and every panel
-            is recomputed, rather than the bars that did not match being faded out.
-            {data.year != null && (
-              <>
-                {" "}
-                Restricted to {data.year}: the year is applied in the query, before
-                anything is added up, so every figure here is that year&rsquo;s.
-              </>
-            )}
-            {data.dimensions.length > data.breakdowns.length && (
-              <>
-                {" "}
-                {data.dimensions.length} columns in this model could be charted this way;
-                the {data.breakdowns.length} above are one per table, so they show
-                different angles rather than the same list drawn four times.
-              </>
-            )}
+            hold the page to that group.
+            <Info label="how these charts were produced">
+              {data.implicit && (
+                <>
+                  <strong className="font-medium text-ink">{measure}</strong> is not a
+                  measure in this model — it is an aggregation the report applies on a
+                  visual, which this tool has rewritten as DAX so the figure can be
+                  computed and checked. The table, the column and the aggregation are
+                  all the tile&rsquo;s own; nothing about it was guessed.{" "}
+                </>
+              )}
+              Every chart here was produced by running {measure}&rsquo;s own SQL grouped
+              by that column, against the rows this file carries. Where the measure adds
+              up, the parts sum to the figure on the card, and a group beyond the tenth
+              is folded into one slice carrying its value rather than dropped, so the
+              total still holds. Where it does not — an average, a ratio — the chart
+              says so rather than printing a total that means nothing. A cross-filter
+              goes into the query and every panel is recomputed, rather than the bars
+              that did not match being faded out.
+              {data.year != null && (
+                <>
+                  {" "}
+                  Restricted to {data.year}: the year is applied in the query, before
+                  anything is added up, so every figure here is that year&rsquo;s.
+                </>
+              )}
+              {data.dimensions.length > data.breakdowns.length && (
+                <>
+                  {" "}
+                  {data.dimensions.length} columns in this model could be charted this
+                  way; the {data.breakdowns.length} above are one per table, so they
+                  show different angles rather than the same list drawn four times.
+                </>
+              )}
+            </Info>
           </p>
         </>
       )}
@@ -1046,13 +1043,15 @@ function Where({ measure }: { measure: string }) {
               label={data.label_column || "location"}
             />
           </div>
-          <p className="text-[11.5px] text-muted">
-            Every point sits at the latitude and longitude this file records for it, and
-            its area is {measure} there — run as {measure}&rsquo;s own SQL grouped by{" "}
-            {data.table}[{data.label_column}]. The streets underneath are a basemap and
-            are the only thing here that did not come out of your file; where it cannot
-            be reached the map falls back to a coordinate grid and says so, and the
-            points are unchanged either way.
+          <p className="flex items-center gap-1.5 text-[11.5px] text-muted">
+            Every point sits at the coordinates this file records for it.
+            <Info label="what is drawn on this map">
+              Each point&rsquo;s area is {measure} there, run as {measure}&rsquo;s own SQL
+              grouped by {data.table}[{data.label_column}]. The streets underneath are a
+              basemap and are the only thing here that did not come out of your file;
+              where it cannot be reached the map falls back to a coordinate grid and
+              says so, and the points are unchanged either way.
+            </Info>
           </p>
           {showSql && data.sql && <Code label="SQL">{`${data.sql}`}</Code>}
         </>
@@ -1189,28 +1188,17 @@ function Panel({
           documents puts it. A chart answers "which is bigger"; the table
           answers "what is it, exactly" -- and in a documentation tool the
           exact figure is often the whole question. */}
-      <div
-        role="group"
-        aria-label={`How to show ${measure} by ${breakdown.column}`}
-        className="flex items-center justify-center gap-1 border-t border-hairline px-3 py-1.5"
-      >
-        {(["visual", "tabular"] as const).map((option) => (
-          <button
-            key={option}
-            type="button"
-            onClick={() => setAs(option)}
-            aria-pressed={as === option}
-            className={cx(
-              "rounded-full px-3 py-0.5 text-[11px] capitalize",
-              "transition-colors duration-(--duration-feedback)",
-              as === option
-                ? "bg-accent text-ground font-medium"
-                : "text-muted hover:bg-raised",
-            )}
-          >
-            {option}
-          </button>
-        ))}
+      <div className="flex items-center justify-center border-t border-hairline px-3 py-1.5">
+        <Segmented
+          label={`How to show ${measure} by ${breakdown.column}`}
+          value={as}
+          onChange={setAs}
+          size="xs"
+          options={[
+            { value: "visual", label: "Visual", title: "The shape of the split" },
+            { value: "tabular", label: "Tabular", title: "The exact figures" },
+          ]}
+        />
       </div>
     </article>
   );

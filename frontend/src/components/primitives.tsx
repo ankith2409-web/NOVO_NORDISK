@@ -7,9 +7,10 @@
  * a projector in a bright room flattens the muted palette this tool uses on
  * purpose. A word costs a few pixels and survives all three.
  */
+import { useEffect, useRef, useState } from "react";
 import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
 import type { Confidence, Verdict } from "@/lib/api";
-import { AlertIcon, RetryIcon } from "@/components/icons";
+import { AlertIcon, InfoIcon, RetryIcon } from "@/components/icons";
 import { present } from "@/lib/failures";
 import { cx } from "@/lib/cx";
 
@@ -21,16 +22,31 @@ import { cx } from "@/lib/cx";
  * pointer cursor. That is the kind of inconsistency nobody reports and
  * everybody feels.
  *
+ * The typeface is the thing that changed most recently, and it changed for a
+ * reason worth writing down. Every control here used to be set in lowercase
+ * 11px mono, which made the header read as a row of terminal switches rather
+ * than as a product's chrome. Mono is doing real work in this interface --
+ * it marks the things that are *literal*: a measure's name, a column, a
+ * fingerprint, a figure whose digits line up. Spending it on "guide" and
+ * "dark" as well blunted that distinction and dated the whole surface. So
+ * controls are set in the UI sans, sentence case; mono stays for data.
+ *
  * `min-h-8` on a pointer device, `min-h-11` once the primary input is coarse:
  * 44px is the touch target a finger needs, and 44px everywhere would make a
  * dense tool look like a phone app. The media query is the honest way to have
  * both.
  */
 const BUTTON_TONE = {
-  quiet: "border-hairline text-muted hover:bg-raised hover:text-ink",
-  selected: "border-accent/40 bg-accent-soft text-accent",
+  quiet:
+    "border-hairline bg-surface text-muted hover:border-edge hover:bg-raised hover:text-ink active:bg-edge/40",
+  //: For chrome that sits *on* a surface rather than in a form -- the header,
+  //: a panel corner. No border until it is wanted, so a row of them reads as
+  //: one group instead of five boxes.
+  ghost:
+    "border-transparent bg-transparent text-muted hover:bg-raised hover:text-ink active:bg-edge/40",
+  selected: "border-accent/45 bg-accent-soft text-accent hover:border-accent/70",
   primary:
-    "border-accent bg-accent text-ground hover:brightness-110 disabled:hover:brightness-100",
+    "border-accent bg-accent text-ground shadow-[0_1px_2px_rgb(0_0_0/0.10)] hover:brightness-110 active:brightness-95 disabled:hover:brightness-100",
   ok: "border-ok/40 text-ok hover:bg-ok-soft",
   review: "border-review/40 text-review hover:bg-review-soft",
   bad: "border-bad/40 text-bad hover:bg-bad-soft",
@@ -50,16 +66,21 @@ export function controlClasses(
   className?: string,
 ): string {
   return cx(
-    "inline-flex items-center justify-center gap-1.5 rounded border",
-    "font-mono text-[11px] leading-none whitespace-nowrap",
-    // Colour and background only. Never size, never position: a control
-    // that moves under the cursor is a control that gets mis-clicked.
-    "transition-[color,background-color,border-color,filter]",
+    "inline-flex items-center justify-center gap-1.5 rounded-md border",
+    "text-[12px] font-medium leading-none tracking-[-0.005em] whitespace-nowrap",
+    "cursor-pointer select-none",
+    // Colour and background only. Never size, never position: a control that
+    // moves under the cursor is a control that gets mis-clicked.
+    "transition-[color,background-color,border-color,filter,box-shadow]",
     "duration-(--duration-feedback) ease-(--ease-standard)",
+    // Stated here rather than left to the global outline rule, so a control
+    // keeps its ring when it sits on a coloured ground.
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
+    "focus-visible:ring-offset-1 focus-visible:ring-offset-ground",
     "disabled:cursor-not-allowed disabled:opacity-50",
     size === "icon"
       ? "size-8 p-0 pointer-coarse:size-11"
-      : "min-h-8 px-2 py-1 pointer-coarse:min-h-11 pointer-coarse:px-3",
+      : "min-h-8 px-2.5 py-1 pointer-coarse:min-h-11 pointer-coarse:px-3",
     BUTTON_TONE[tone],
     className,
   );
@@ -84,6 +105,185 @@ export function Button({
     <button className={controlClasses(tone, size, className)} {...rest}>
       {children}
     </button>
+  );
+}
+
+/**
+ * A button that is only an icon, and therefore must say what it is.
+ *
+ * `label` is not optional. An icon-only control with no accessible name is
+ * unusable with a screen reader and unguessable with a mouse, and making the
+ * name a required argument is the only way to be sure one exists.
+ */
+export function IconButton({
+  label,
+  tone = "ghost",
+  className,
+  children,
+  ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  label: string;
+  tone?: keyof typeof BUTTON_TONE;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className={controlClasses(tone, "icon", className)}
+      {...rest}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * One choice from a few, shown as a row rather than as a dropdown.
+ *
+ * Every place this replaces had hand-rolled the same thing slightly
+ * differently -- Visual/Tabular at the foot of a chart panel, the period
+ * switch on the trend, the theme. A segmented control is right where the
+ * options are few, mutually exclusive and worth seeing without a click, which
+ * is exactly when a `<select>` is wrong: a dropdown hides the alternatives
+ * behind an interaction and costs a second one to change your mind.
+ *
+ * `role="radiogroup"` rather than `tablist`, because these select a value;
+ * they do not switch between panels of content.
+ */
+export function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+  label,
+  size = "sm",
+  className,
+}: {
+  options: readonly { value: T; label: string; title?: string }[];
+  value: T;
+  onChange: (value: T) => void;
+  /** What is being chosen. Required for the same reason `IconButton` requires one. */
+  label: string;
+  size?: "sm" | "xs";
+  className?: string;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      className={cx(
+        "inline-flex items-center gap-0.5 rounded-md border border-hairline bg-surface p-0.5",
+        className,
+      )}
+    >
+      {options.map((option) => {
+        const on = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            title={option.title}
+            onClick={() => onChange(option.value)}
+            className={cx(
+              "cursor-pointer rounded-[5px] font-medium whitespace-nowrap",
+              "transition-[color,background-color] duration-(--duration-feedback)",
+              "ease-(--ease-standard) focus-visible:outline-none",
+              "focus-visible:ring-2 focus-visible:ring-accent/60",
+              size === "xs"
+                ? "px-2 py-[3px] text-[10.5px]"
+                : "px-2.5 py-1 text-[11.5px] pointer-coarse:min-h-9",
+              on
+                ? "bg-accent text-ground shadow-[0_1px_2px_rgb(0_0_0/0.10)]"
+                : "text-muted hover:bg-raised hover:text-ink",
+            )}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * The affordance that lets a paragraph become a sentence.
+ *
+ * Several places here carry three or four lines explaining how a figure was
+ * produced. That explanation is load-bearing -- it is most of what makes a
+ * number checkable, and deleting it would be deleting the product's argument.
+ * But printed in full beside the figure it competes with the figure, and a
+ * reader who has read it once reads past it forever after.
+ *
+ * So it moves behind an (i) and stays one keystroke away. Deliberately *not*
+ * a tooltip: this is prose a reader may want to sit with, and a bubble that
+ * vanishes when the pointer drifts is not somewhere you can read a paragraph.
+ * It opens on click, closes on Escape, on a click outside, and on a second
+ * click of the button.
+ */
+export function Info({
+  label,
+  children,
+  align = "left",
+}: {
+  /** What the note is about, e.g. "how these figures were produced". */
+  label: string;
+  children: ReactNode;
+  align?: "left" | "right";
+}) {
+  const [open, setOpen] = useState(false);
+  const host = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    const onDown = (event: MouseEvent) => {
+      if (!host.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDown);
+    };
+  }, [open]);
+
+  return (
+    <span ref={host} className="relative inline-flex align-middle">
+      <button
+        type="button"
+        onClick={() => setOpen((was) => !was)}
+        aria-expanded={open}
+        aria-label={open ? `Hide ${label}` : `About ${label}`}
+        title={`About ${label}`}
+        className={cx(
+          "inline-flex size-[18px] cursor-pointer items-center justify-center rounded-full",
+          "transition-colors duration-(--duration-feedback) ease-(--ease-standard)",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
+          open ? "bg-accent-soft text-accent" : "text-faint hover:bg-raised hover:text-muted",
+        )}
+      >
+        <InfoIcon size={13} />
+      </button>
+      {open && (
+        <span
+          role="note"
+          className={cx(
+            "absolute top-[22px] z-30 w-80 max-w-[min(20rem,calc(100vw-2rem))]",
+            "max-h-[60vh] overflow-y-auto rounded-md border border-edge bg-surface",
+            "p-3 text-[12px] leading-relaxed font-normal text-muted normal-case",
+            "shadow-[0_8px_24px_rgb(0_0_0/0.14)]",
+            align === "right" ? "right-0" : "left-0",
+          )}
+        >
+          {children}
+        </span>
+      )}
+    </span>
   );
 }
 
