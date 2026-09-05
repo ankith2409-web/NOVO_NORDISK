@@ -523,6 +523,10 @@ class TmdlAdapter:
                         ),
                         description=column.description or "",
                         sort_by=_unquote(column.properties.get("sortByColumn", "")),
+                        summarize_by=_unquote(
+                            column.properties.get("summarizeBy", "")
+                        ).casefold(),
+                        is_key=column.properties.get("isKey") == "true",
                         fingerprint=(
                             fingerprint_dax(expression)
                             if expression

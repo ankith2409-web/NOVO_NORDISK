@@ -70,6 +70,27 @@ class Column:
     format_string: str = ""
     #: The author's own description, where they wrote one.
     description: str = ""
+    #: What the author said should happen when this column lands on a visual:
+    #: `"none"` when they said "do not summarize", otherwise the aggregation
+    #: (`"sum"`, `"count"`, ...) or `"default"` when they left it alone.
+    #:
+    #: `"none"` is the useful one. It is how an author marks a numeric column
+    #: that is an identifier rather than a quantity -- a store number, a
+    #: postcode -- and this project was working that out by looking for `ID` at
+    #: the end of the name. 65 columns in Sales & Returns say it outright.
+    summarize_by: str = ""
+    #: True when the model marks this column as its table's key.
+    is_key: bool = False
+    #: True when this column is a what-if parameter -- a control the reader
+    #: moves with a slider, not data the business owns. `% Return Rate` in
+    #: Sales & Returns is one, and a document listing it among the "subject
+    #: areas the solution reports on" has told its reader something false
+    #: about what the solution is.
+    is_parameter: bool = False
+    #: The column this one groups, when the author made it by grouping another
+    #: -- `Item[Category (clusters) 2]` groups `Item[Category]`. It is derived
+    #: from what is already in the model rather than being data of its own.
+    grouped_from: str = ""
     #: The column on the same table that puts this one in order -- `Month` is
     #: sorted by `MonthSort`, `FiscalMonth` by `Period`. Empty for the great
     #: majority, which sort by themselves.
@@ -163,6 +184,10 @@ class Table:
     description: str = ""
     #: True when the author hid the whole table from report authors.
     is_hidden: bool = False
+    #: True when the whole table is a what-if parameter: one column the reader
+    #: moves and a measure reading it. Kept off the list of subject areas,
+    #: which is meant to say what the business reports *on*.
+    is_parameter: bool = False
     #: What the model says the table *is*. In practice one value matters:
     #: `Time`, which is Power BI's "mark as date table" -- the author naming
     #: their calendar outright, where this project otherwise has to work it out
@@ -434,6 +459,16 @@ class SemanticModel:
     #: row of the file is 1.2M. Both are right; only one of them says which
     #: question it answered.
     report_filters: list[ReportFilter] = field(default_factory=list)
+    #: What the file says about itself: which Power BI Desktop wrote it, and
+    #: whether auto date tables were switched on. Provenance rather than
+    #: content, and it belongs in a document a reader is asked to sign: "read
+    #: from a file built with Power BI Desktop 2.109.6661.0001" is checkable in
+    #: a way that "read from a .pbix" is not.
+    #:
+    #: `__PBI_TimeIntelligenceEnabled` earns its place for a second reason: it
+    #: is the answer to "why does this model have eleven hidden date tables in
+    #: it", which is otherwise the most confusing thing about reading one.
+    provenance: dict[str, str] = field(default_factory=dict)
 
     def visuals(self) -> list[Visual]:
         """Every tile in the report, across all pages."""

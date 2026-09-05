@@ -1150,7 +1150,17 @@ class RequirementDeriver:
     def _from_model_shape(self) -> list[Requirement]:
         """Requirements about the solution as a whole, not any single object."""
         out: list[Requirement] = []
-        user_tables = [t for t in self.model.user_tables() if not t.is_measure_only]
+        # A what-if parameter is a control the reader moves, not something the
+        # business reports on, and `% Return Rate` was appearing in this list
+        # as a subject area. The model says which tables those are.
+        user_tables = [
+            t
+            for t in self.model.user_tables()
+            if not t.is_measure_only and not t.is_parameter
+        ]
+        parameters = sorted(
+            t.name for t in self.model.user_tables() if t.is_parameter
+        )
 
         if user_tables:
             names = sorted(t.name for t in user_tables)
@@ -1175,6 +1185,17 @@ class RequirementDeriver:
                     rationale=(
                         "These are the data-bearing tables in the model, so they define "
                         "the boundary of what the solution reports on."
+                        + (
+                            " Not counted here: "
+                            + _join(f"**{n}**" for n in parameters)
+                            + f", which {'is a' if len(parameters) == 1 else 'are'} "
+                            "what-if parameter"
+                            + ("" if len(parameters) == 1 else "s")
+                            + " — a control the reader moves rather than data the "
+                            "business owns."
+                            if parameters
+                            else ""
+                        )
                     ),
                     confidence=Confidence.HIGH,
                     evidence=tuple(

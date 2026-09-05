@@ -50,13 +50,25 @@ MAX_SLICES = 10
 #: column called `Category` has to survive a rule aimed at `CategoryID`.
 _NOT_A_DIMENSION = ("id", "key", "guid", "code", "url", "image", "pic", "photo")
 
-#: Data categories that describe a *link or a picture* rather than a value
-#: anybody would group by. Stated by the model, so no sniffing required.
+#: Data categories that describe a *link, a picture or a position* rather than
+#: a value anybody would group by. Stated by the model, so no sniffing needed.
 #:
-#: This module already rejected these by inspecting a value -- a string
-#: starting `http://` or with a JPEG's header -- which catches them and is a
-#: guess. Where the author has said what the column is, that is the answer.
-_NOT_A_LABEL = {"imageurl", "weburl", "barcode"}
+#: This module already rejected the first kind by inspecting a value -- a
+#: string starting `http://` or with a JPEG's header -- which catches them and
+#: is a guess. Where the author has said what the column is, that is the answer.
+#:
+#: The coordinates were the ones this missed: `Store[Latitude]` has fourteen
+#: distinct values, none of them a URL, so nothing here stopped it and "Net
+#: Sales by Latitude" was offered as a chart. A latitude is where something is,
+#: not a category it belongs to; the model says so, and the map is where it
+#: belongs -- `generate/geo.py` reads the same declaration to plot it.
+_NOT_A_LABEL = {
+    "imageurl",
+    "weburl",
+    "barcode",
+    "latitude",
+    "longitude",
+}
 
 
 #: Points on a time series. Higher than `MAX_SLICES` on purpose: a monthly
@@ -625,6 +637,11 @@ def chartable(model, connection) -> list[tuple[str, str, int]]:
     """
     dimensions = _dimension_tables(model)
     keys = {(r.to_table, r.to_column) for r in model.relationships}
+    # Columns some other column names as its sort order. Read from the model,
+    # so this needs no rule about names ending in "Sort".
+    orderers = {
+        (c.table, c.sort_by) for c in model.columns if c.sort_by
+    }
 
     found: list[tuple[str, str, int]] = []
     tried = 0
@@ -644,6 +661,11 @@ def chartable(model, connection) -> list[tuple[str, str, int]]:
         # And a column the author hid is one they took out of the report on
         # purpose. Charting it puts back exactly what they removed.
         if getattr(column, "is_hidden", False):
+            continue
+        # A column that exists to order another one is a mechanism, not a
+        # dimension. `Calendar[MonthSort]` was offered beside `Calendar[Month]`
+        # -- the same six groups, labelled 1 to 6 instead of by name.
+        if (column.table, column.name) in orderers:
             continue
 
         tried += 1

@@ -394,3 +394,252 @@ def test_a_table_the_author_marked_as_the_date_table_is_believed(clinical) -> No
         clinical, tables=[replace(t, data_category="") for t in clinical.tables]
     )
     assert calendar_column(unmarked) is None
+
+
+# -- declarations that change what gets drawn ------------------------------------
+
+
+def test_a_coordinate_is_not_offered_as_a_chart_dimension(sales) -> None:
+    """"Net Sales by Latitude" was on the list of charts this tool offered.
+
+    `Store[Latitude]` has fourteen distinct values and none of them is a URL or
+    a picture, so every rule that had been keeping junk off the axis let it
+    through. A latitude is where something is, not a category it belongs to,
+    and the model says so in the same declaration the map reads to plot it.
+    """
+    from concordance.generate.breakdown import chartable
+    from concordance.generate.evaluate import open_data
+
+    connection, _rows, reason = open_data(sales)
+    if connection is None:
+        pytest.skip(reason)
+
+    offered = {(t, c) for t, c, _ in chartable(sales, connection)}
+    assert ("Store", "Latitude") not in offered
+    assert ("Store", "Longitude") not in offered
+    # And the column they belong to is still charted -- this removes the
+    # coordinates, not the table.
+    assert ("Store", "Store") in offered
+
+
+def test_a_sort_helper_is_not_offered_beside_the_column_it_orders(sales) -> None:
+    """`Calendar[MonthSort]` was offered as a chart of its own.
+
+    The same six groups as `Calendar[Month]`, labelled 1 to 6 instead of by
+    name. It exists to put that column in order; reading the sort-by
+    declaration is what makes it recognisable as a mechanism rather than a
+    dimension, without a rule about names ending in "Sort".
+    """
+    from concordance.generate.breakdown import chartable
+    from concordance.generate.evaluate import open_data
+
+    connection, _rows, reason = open_data(sales)
+    if connection is None:
+        pytest.skip(reason)
+
+    offered = {(t, c) for t, c, _ in chartable(sales, connection)}
+    assert ("Calendar", "MonthSort") not in offered
+    assert ("Calendar", "Month") in offered
+
+
+def test_columns_carry_whether_the_author_said_to_summarise_them(sales, store) -> None:
+    """`SummarizeBy` is how an author marks a numeric column that is an
+    identifier rather than a quantity -- which this project had been working
+    out by looking for "ID" at the end of a name."""
+    marked = [c for c in sales.columns if c.summarize_by == "none"]
+    assert len(marked) == 65
+    assert {c.summarize_by for c in sales.columns} <= {
+        "", "default", "none", "sum", "min", "max", "count", "average", "distinctcount"
+    }
+    assert [c.qualified_name for c in store.columns if c.is_key] == [
+        "District[DM]",
+        "Fiscal calendar[Month]",
+        "Store[LocationID]",
+    ]
+
+
+def test_a_document_says_which_tool_wrote_the_file_it_read(sales) -> None:
+    """"Read from a .pbix" is not checkable; a version number is.
+
+    A document somebody is asked to sign should identify its source precisely
+    enough to fetch again, and the file records the Desktop build that wrote it.
+    """
+    from concordance.generate import document as doc
+    from concordance.generate.document import Kind
+    from concordance.graph.csg import SemanticGraph
+
+    assert sales.provenance["PBIDesktopVersion"].startswith("2.109.")
+    built = doc.build(SemanticGraph(sales), Kind.BUSINESS)
+    assert built.built_with == sales.provenance["PBIDesktopVersion"]
+    assert "**Built with:** Power BI Desktop 2.109." in doc.to_markdown(built)
+
+
+def test_a_source_with_no_provenance_says_nothing_rather_than_guessing(clinical) -> None:
+    """A TMDL folder records no Desktop version, so the line is absent."""
+    from concordance.generate import document as doc
+    from concordance.generate.document import Kind
+    from concordance.graph.csg import SemanticGraph
+
+    built = doc.build(SemanticGraph(clinical), Kind.BUSINESS)
+    assert built.built_with == ""
+    assert "Built with" not in doc.to_markdown(built)
+
+
+def test_time_intelligence_explains_the_hidden_date_tables(sales, store) -> None:
+    """The most confusing thing about reading a .pbix is the pile of
+    `LocalDateTable_*` in it. This is the switch that put them there."""
+    assert sales.provenance["__PBI_TimeIntelligenceEnabled"] == "1"
+    assert any(t.is_system for t in sales.tables)
+
+    assert store.provenance["__PBI_TimeIntelligenceEnabled"] == "0"
+    assert not any(t.name.startswith("LocalDateTable_") for t in store.tables)
+
+
+# -- a control is not a subject area ---------------------------------------------
+
+
+def test_a_what_if_parameter_is_recognised_as_one(sales) -> None:
+    """`% Return Rate` is a slider, and the BRD called it a subject area.
+
+    The property that says so is keyed by an untyped object id -- the same
+    shape that makes translations unreadable here. The difference is that for a
+    column the mapping is not a guess: the id is `Column.ID`, which this
+    already reads to get format strings, so the join is real.
+    """
+    parameters = [c.qualified_name for c in sales.columns if c.is_parameter]
+    assert parameters == ["% Return Rate[% Return Rate]"]
+    assert [t.name for t in sales.tables if t.is_parameter] == ["% Return Rate"]
+
+
+def test_the_scope_requirement_leaves_the_control_out_and_says_so(sales) -> None:
+    """Dropping it silently would trade one wrong statement for another: a
+    reader who knows the parameter exists needs to see it was considered."""
+    from concordance.generate.document import Kind
+    from concordance.generate.requirements import RequirementDeriver
+    from concordance.graph.csg import SemanticGraph
+
+    scope = next(
+        r
+        for r in RequirementDeriver(SemanticGraph(sales)).derive()
+        if r.kind is Kind.BUSINESS and r.category == "Scope"
+    )
+    assert "13 subject areas" in scope.statement
+    assert "% Return Rate" not in scope.statement
+    assert "what-if parameter" in scope.rationale
+    assert "% Return Rate" in scope.rationale
+
+
+def test_a_grouped_column_names_the_column_it_groups(store) -> None:
+    """`Item[Category (clusters) 2]` is groups of `Item[Category]`, not data of
+    its own -- which this had been working out from "(clusters)" in the name."""
+    grouped = {c.qualified_name: c.grouped_from for c in store.columns if c.grouped_from}
+    assert grouped == {"Item[Category (clusters) 2]": "Category"}
+
+
+def test_a_table_holding_a_parameter_beside_data_is_not_a_control(sales) -> None:
+    """Only a table whose every column is a parameter is one.
+
+    Otherwise a real table that happened to carry a parameter column would drop
+    out of the subject areas entirely, which is a worse error than the one this
+    fixes.
+    """
+    from dataclasses import replace
+
+    from concordance.adapters.pbix import _parameter_tables
+
+    assert _parameter_tables(sales.columns) == {"% Return Rate"}
+
+    control = next(c for c in sales.columns if c.is_parameter)
+    data = next(c for c in sales.columns if not c.is_parameter)
+    beside = replace(data, table=control.table)
+    assert _parameter_tables([*sales.columns, beside]) == set()
+
+    # And a table with no columns at all is not a parameter by vacuous truth.
+    assert _parameter_tables([]) == set()
+
+
+# -- the audit, pinned -----------------------------------------------------------
+
+#: Everything PBIXRay exposes that carries rows in the three sample files and
+#: is still not named anywhere in the adapter, with why. Pinned as a test
+#: because this list is how the gaps in this module were found in the first
+#: place -- by enumerating the source against the reader rather than by any
+#: failing test -- and a list that lives only in somebody's head grows back.
+UNREAD: dict[str, str] = {
+    # Calculated-table DAX, which the adapter reads from partitions instead
+    # (partition type 2). The only tables this frame adds are ones Power BI
+    # writes for itself, asserted below.
+    "dax_tables": "read through partitions instead",
+    # Power BI's own per-column cardinality and byte sizes. `chartable` counts
+    # distinct values in the data itself, which is the same number from the
+    # source that will still be right after a refresh.
+    "statistics": "storage statistics, and the data answers the same question",
+    # SummarizationSetBy, PBI_FormatHint, TemplateId, PBI_ResultType,
+    # PBI_NavigationStepName. The two that carry meaning are read from better
+    # places: the summarization from `Column.SummarizeBy`, and the format hint
+    # is superseded by the format string itself.
+    "tmschema_annotations": "internal, and the meaningful parts are read elsewhere",
+    # One storage structure per column, with no author intent in it.
+    "tmschema_attribute_hierarchies": "storage internals",
+    # Culture, collation, DiscourageImplicitMeasures and the parallelism
+    # settings. Nothing here changes what a figure means.
+    "tmschema_model": "engine settings, not model content",
+}
+
+
+def test_every_unread_source_is_unread_on_purpose() -> None:
+    """The enumeration that found every gap in this module, kept running.
+
+    A source that starts carrying rows, or one this adapter quietly stops
+    reading, shows up here as a name with no entry in `UNREAD` -- which is the
+    signal to go and look at it, exactly as happened for `tmschema_columns`.
+    """
+    import re
+
+    from pbixray import PBIXRay
+
+    source = Path("concordance/adapters/pbix.py").read_text()
+    paths = [Path(f"data/models/{n}.pbix") for n in ("Sales_Returns_Sample", "StoreSales")]
+    if not all(p.exists() for p in paths):
+        pytest.skip("sample models not present")
+
+    carries_rows: set[str] = set()
+    for path in paths:
+        raw = PBIXRay(str(path))
+        for attribute in dir(raw):
+            if attribute.startswith("_") or attribute in {"close", "get_table", "iter_table"}:
+                continue
+            try:
+                frame = getattr(raw, attribute)
+                if len(frame):
+                    carries_rows.add(attribute)
+            except Exception:  # noqa: BLE001 - not every attribute is a frame
+                continue
+
+    unread = {
+        a
+        for a in carries_rows
+        if not re.search(rf'"{a}"|\'{a}\'|\braw\.{a}\b', source)
+    }
+    assert unread == set(UNREAD), {
+        "newly unread": sorted(unread - set(UNREAD)),
+        "now read, drop from UNREAD": sorted(set(UNREAD) - unread),
+    }
+
+
+def test_the_only_tables_dax_tables_adds_are_ones_power_bi_wrote(sales) -> None:
+    """Justifies the `dax_tables` entry above.
+
+    The adapter reads calculated-table DAX from partitions. If that ever missed
+    a table an author wrote, a calculated table's only statement of what it
+    contains would go unrecorded -- so the difference between the two sources
+    is asserted rather than assumed.
+    """
+    from pbixray import PBIXRay
+
+    from concordance.adapters.pbix import PbixAdapter
+
+    raw = PBIXRay(str(SALES))
+    missed = set(raw.dax_tables["TableName"]) - set(PbixAdapter()._calculated_tables(raw))
+    system = {t.name for t in sales.tables if t.is_system}
+    assert missed and missed <= system, missed

@@ -134,6 +134,57 @@ _SYSTEM_TABLE = re.compile(
     r"|^ClusterMappingTable( \d+)?$"
 )
 
+#: What a column's `SummarizeBy` means, in Power BI's own numbering. 2 is the
+#: one that carries information a name cannot: the author saying "do not
+#: summarize" about a column that is numeric and is not a quantity.
+_SUMMARIZE_BY = {
+    1: "default",
+    2: "none",
+    3: "sum",
+    4: "min",
+    5: "max",
+    6: "count",
+    7: "average",
+    8: "distinctcount",
+}
+
+#: `ObjectType` for a column in the extended-properties frame, in Power BI's
+#: own numbering.
+_COLUMN_OBJECT = 4
+
+
+def _parameter_tables(columns) -> set[str]:
+    """Tables that are a what-if parameter rather than data.
+
+    A what-if parameter is a whole table: one column the reader moves and a
+    measure reading it. The property that marks it sits on the *column*, so the
+    table is named from what its columns are -- and only when every one of them
+    is a parameter. A real table that happened to carry a parameter column
+    would otherwise drop out of the subject areas entirely, which is a worse
+    error than the one this fixes.
+    """
+    by_table: dict[str, list[bool]] = {}
+    for column in columns:
+        by_table.setdefault(column.table, []).append(bool(column.is_parameter))
+    return {table for table, flags in by_table.items() if flags and all(flags)}
+
+
+def _grouped_column(value) -> str:
+    """The column a `GroupingMetadata` property says its column groups."""
+    import json
+
+    try:
+        blob = json.loads(str(value or "{}"))
+    except (json.JSONDecodeError, TypeError):
+        return ""
+    for entry in blob.get("groupedColumns") or []:
+        column = (entry or {}).get("Column") or {}
+        name = str(column.get("Property", ""))
+        if name:
+            return name
+    return ""
+
+
 #: A partition whose rows come from a DAX expression rather than from a query
 #: against a source. Power BI's own numbering; 2 is `PartitionType.Calculated`.
 _CALCULATED_PARTITION = 2
@@ -215,6 +266,7 @@ class PbixAdapter:
         new_tables = sorted(t for t in calculated if t.casefold() not in seen)
 
         says_table = self._table_declarations(raw)
+        parameter_tables = _parameter_tables(model.columns)
         for name in declared + implied + new_tables:
             query = power_query.get(name)
             says = says_table.get(name.casefold(), {})
@@ -250,6 +302,7 @@ class PbixAdapter:
                     description=says.get("description", ""),
                     is_hidden=says.get("is_hidden", False),
                     data_category=says.get("data_category", ""),
+                    is_parameter=name in parameter_tables,
                 )
             )
         known_measures = {
@@ -260,6 +313,7 @@ class PbixAdapter:
             self._build_measure(r, known_measures, says_measure) for r in measure_rows
         ]
 
+        model.provenance = self._provenance(raw)
         model.relationships = self._build_relationships(raw)
         model.hierarchies = self._build_hierarchies(raw)
         model.roles = _with_members(
@@ -542,6 +596,8 @@ class PbixAdapter:
                 "is_hidden": bool(row.get("IsHidden")),
                 "format_string": _text(row.get("FormatString")),
                 "description": _text(row.get("Description")),
+                "summarize_by": _SUMMARIZE_BY.get(row.get("SummarizeBy"), ""),
+                "is_key": bool(row.get("IsKey")),
             }
         return found
 
@@ -584,6 +640,85 @@ class PbixAdapter:
                 "format_string": _text(row.get("FormatString")),
                 "is_hidden": bool(row.get("IsHidden")),
             }
+        return found
+
+    def _column_properties(self, raw: PBIXRay) -> dict[tuple[str, str], dict]:
+        """Extended properties, resolved to the columns they belong to.
+
+        The frame keys each property by an `ObjectID` that means a different
+        table depending on `ObjectType`, which is the same shape that makes
+        translations unreadable here -- except that for a column the mapping is
+        not a guess: the id is `Column.ID`, and this already reaches that table
+        to read format strings. So the join is real rather than assumed, and
+        two things come out of it.
+
+        `ParameterMetadata` marks a what-if parameter: a control the reader
+        moves, which the documents had been listing among the subject areas the
+        solution reports on. `GroupingMetadata` marks a column the author made
+        by grouping another, and names the one it groups.
+        """
+        rows = _rows(_safe(raw, "tmschema_extended_properties"))
+        wanted = {
+            int(row["ObjectID"]): str(row.get("Name", ""))
+            for row in rows
+            if row.get("ObjectType") == _COLUMN_OBJECT and row.get("ObjectID") is not None
+        }
+        if not wanted:
+            return {}
+
+        try:
+            reader = raw._metadata.source._db  # noqa: SLF001 -- see docstring
+            columns = _rows(
+                reader.query(
+                    "SELECT c.ID AS ID, t.Name AS TableName, c.ExplicitName AS Name "
+                    "FROM Column c JOIN [Table] t ON c.TableID = t.ID"
+                )
+            )
+        except Exception:  # noqa: BLE001 -- a private path, so anything at all
+            return {}
+
+        by_id = {
+            int(row["ID"]): (str(row.get("TableName", "")), str(row.get("Name", "")))
+            for row in columns
+            if row.get("ID") is not None
+        }
+        grouped = {
+            int(row["ObjectID"]): _grouped_column(row.get("Value"))
+            for row in rows
+            if row.get("Name") == "GroupingMetadata" and row.get("ObjectID") is not None
+        }
+
+        found: dict[tuple[str, str], dict] = {}
+        for object_id, name in wanted.items():
+            where = by_id.get(object_id)
+            if where is None:
+                continue
+            entry = found.setdefault(
+                (where[0].casefold(), where[1].casefold()),
+                {"is_parameter": False, "grouped_from": ""},
+            )
+            if name == "ParameterMetadata":
+                entry["is_parameter"] = True
+            elif name == "GroupingMetadata":
+                entry["grouped_from"] = grouped.get(object_id, "")
+        return found
+
+    def _provenance(self, raw: PBIXRay) -> dict[str, str]:
+        """What the file records about how it was made.
+
+        Three keys in these samples: the Desktop version that wrote it, whether
+        time intelligence (and so the hidden date tables) is on, and the order
+        the author put their queries in. The last is not read -- the model
+        already carries the tables, and their order in a query pane is not a
+        fact about the model -- but the first two are provenance a signed
+        document should carry.
+        """
+        wanted = {"PBIDesktopVersion", "__PBI_TimeIntelligenceEnabled", "PBI_ProTooling"}
+        found: dict[str, str] = {}
+        for row in _rows(_safe(raw, "metadata")):
+            name = str(row.get("Name", "")).strip()
+            if name in wanted:
+                found[name] = _text(row.get("Value"))
         return found
 
     def _synonyms(self, raw: PBIXRay) -> int:
@@ -660,6 +795,7 @@ class PbixAdapter:
         seen: set[tuple[str, str]] = set()
         declared = self._column_declarations(raw)
         sorts_by = self._sort_by_columns(raw)
+        properties = self._column_properties(raw)
 
         for row in _rows(raw.schema):
             table = str(row.get("TableName", "")).strip()
@@ -669,6 +805,7 @@ class PbixAdapter:
             seen.add((table, name))
             expr = calc.get((table, name))
             says = declared.get((table.casefold(), name.casefold()), {})
+            extra = properties.get((table.casefold(), name.casefold()), {})
             columns.append(
                 Column(
                     table=table,
@@ -680,6 +817,10 @@ class PbixAdapter:
                     format_string=says.get("format_string", ""),
                     description=says.get("description", ""),
                     sort_by=sorts_by.get((table.casefold(), name.casefold()), ""),
+                    summarize_by=says.get("summarize_by", ""),
+                    is_key=says.get("is_key", False),
+                    is_parameter=extra.get("is_parameter", False),
+                    grouped_from=extra.get("grouped_from", ""),
                     # A stored column's identity is its name and type; a
                     # calculated one's is the expression that produces it.
                     fingerprint=(

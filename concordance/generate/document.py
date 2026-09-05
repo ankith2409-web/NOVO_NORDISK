@@ -97,6 +97,9 @@ class Document:
     #: A BRD stating a metric as `0.4229` where the report states it as
     #: `42.29%` has asked its reader to sign off a figure they cannot find.
     formats: dict[str, str] = field(default_factory=dict)
+    #: Which tool wrote the file this was read from. A document somebody signs
+    #: should say what it was read from precisely enough to fetch again.
+    built_with: str = ""
     #: What moved since the version this model was compared against, if one was
     #: given. In the document as well as on the Drift tab, and for a reason a
     #: reviewer gave plainly: the document is what gets sent to someone, and
@@ -218,6 +221,9 @@ def build(
             for m in _every_measure(graph.model)
             if m.format_string
         },
+        built_with=(getattr(graph.model, "provenance", {}) or {}).get(
+            "PBIDesktopVersion", ""
+        ),
         limits=tuple(
             (gap.feature, gap.count, gap.reason) for gap in graph.model.coverage_gaps
         ),
@@ -378,6 +384,8 @@ def to_markdown(document: Document) -> str:
     lines.append(f"# {document.title}")
     lines.append("")
     lines.append(f"**Source model:** `{document.source}`  ")
+    if document.built_with:
+        lines.append(f"**Built with:** Power BI Desktop {document.built_with}  ")
     lines.append(f"**Generated:** {document.generated_on}  ")
     lines.append(
         f"**Requirements:** {counts['requirements']} "
