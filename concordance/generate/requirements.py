@@ -193,6 +193,15 @@ class RequirementDeriver:
 
     def _corroborate(self, measure) -> tuple["Corroboration", str]:
         """Whether anything in this file shows a measure being used."""
+        from concordance.generate.implicit import is_implicit
+
+        # Read *off* a visual, so it is shown on one by definition. Without
+        # this it was matched by name against the report's fields -- and the
+        # field is called "Price" while the figure is called "Sum of Price" --
+        # so every one of them was filed under "not used anywhere in this
+        # file", directly below the page that displays it.
+        if is_implicit(measure):
+            return (Corroboration.SHOWN_ON_REPORT, "")
         if measure.name in self._on_report:
             return (
                 Corroboration.SHOWN_ON_REPORT,
@@ -235,9 +244,27 @@ class RequirementDeriver:
     # -- measures -> the metrics the business tracks -------------------------
 
     def _from_measures(self) -> list[Requirement]:
+        from concordance.generate.implicit import from_report, is_implicit
+
         out: list[Requirement] = []
 
-        for measure in self.model.measures:
+        # The model's own measures, then the figures its report computes on a
+        # visual rather than in a measure.
+        #
+        # This is what made a document incomplete rather than wrong. Power BI
+        # lets an author drop a bare column on a chart and pick an aggregation
+        # there, and whole reports are built that way -- AdventureWorks carries
+        # exactly one measure while every figure on its three pages is an
+        # implicit Sum. A BRD that listed the one and none of the others
+        # described a solution nobody would recognise: the metrics on screen
+        # were simply absent from the specification of them.
+        #
+        # They are still not model objects, and nothing here pretends
+        # otherwise. Each says on its face that it was declared on a visual,
+        # and its fingerprint is prefixed so it can never be mistaken for an
+        # authored measure in the traceability matrix.
+        for measure in list(self.model.measures) + from_report(self.model):
+            derived = is_implicit(measure)
             node = measure_id(measure.table, measure.name)
             evidence = (
                 Evidence(
@@ -246,6 +273,41 @@ class RequirementDeriver:
                     detail=measure.expression.strip(),
                 ),
             )
+            if derived:
+                # Bound to the column it aggregates, which is a real node with
+                # a real fingerprint, rather than to a measure node that does
+                # not exist -- an implicit figure has no measure behind it, and
+                # that is the whole point of it.
+                #
+                # Caught by `test_every_requirement_is_bound_to_something_real`,
+                # and it was worth catching: a requirement pointing at nothing
+                # breaks the one guarantee this document makes, that every
+                # statement in it is bound to the object that satisfies it and
+                # can be traced when that object changes.
+                bound = next(iter(measure.depends_on_columns), None)
+                found = (
+                    next(
+                        (
+                            c
+                            for c in self.model.columns
+                            if (c.table, c.name) == bound
+                        ),
+                        None,
+                    )
+                    if bound
+                    else None
+                )
+                if found is None:
+                    # No column to bind to means nothing to trace it by, and an
+                    # untraceable requirement is worse than an absent one.
+                    continue
+                evidence = (
+                    Evidence(
+                        node_id=column_id(found.table, found.name),
+                        fingerprint=found.fingerprint,
+                        detail=measure.expression.strip(),
+                    ),
+                )
 
             # A measure with no expression is broken, not simple. Asserting
             # "shall be implemented exactly as the expression recorded here"
@@ -312,6 +374,12 @@ class RequirementDeriver:
                     statement=(
                         f"The solution shall report **{measure.name}**."
                         f"{descriptor}{source}"
+                        + (
+                            " This figure is produced by the report itself rather "
+                            "than by a measure in the model."
+                            if derived
+                            else ""
+                        )
                     ),
                     rationale=self._why(measure),
                     confidence=Confidence.HIGH,

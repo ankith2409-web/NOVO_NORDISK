@@ -123,7 +123,7 @@ PATTERNS: tuple[Pattern, ...] = (
         "aggregation",
         "aggregation",
         "summarises a column across the rows in the current filter context",
-        "It adds up a column over whatever the page is showing.",
+        "It summarises a column over whatever the page is showing.",
     ),
 )
 

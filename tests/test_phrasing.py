@@ -129,7 +129,12 @@ def test_a_real_model_no_longer_reads_the_same_way_every_time() -> None:
         for r in RequirementDeriver(graph).derive()
         if r.category == "Measure definitions"
     ]
-    assert len(statements) == 58, "the model this was measured on"
+    # A lower bound rather than the exact figure. The count moved when the
+    # report's own implicit aggregations started being documented too, and a
+    # test that pins it turns every such improvement into a failure -- the
+    # property being checked here is that the statements *vary*, not how many
+    # there are.
+    assert len(statements) >= 58, "the model this was measured on"
 
     frames = _frames(statements)
     # Was 4, and three of those differed only by a trailing dependency list --
