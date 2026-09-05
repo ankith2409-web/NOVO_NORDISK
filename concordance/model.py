@@ -184,6 +184,17 @@ class Table:
     description: str = ""
     #: True when the author hid the whole table from report authors.
     is_hidden: bool = False
+    #: Where this table's rows live: `"import"` when they are in the file,
+    #: `"directquery"` when they are fetched from the source at query time,
+    #: `"dual"` when either. Empty when the source does not say.
+    #:
+    #: It decides whether the central promise of this tool holds for a table.
+    #: Every figure here is computed by running the measure's own SQL against
+    #: the model's own rows -- and a DirectQuery table has no rows in the file
+    #: at all. Without reading this, a measure over one fails with "the
+    #: generated query did not run: table does not exist", which reads as a
+    #: defect in this tool rather than as the file saying where its data is.
+    storage_mode: str = ""
     #: True when the whole table is a what-if parameter: one column the reader
     #: moves and a measure reading it. Kept off the list of subject areas,
     #: which is meant to say what the business reports *on*.

@@ -83,6 +83,19 @@ _TRANSLATION_GAP = (
     "guessing"
 )
 
+#: Said whenever a table's rows are fetched at query time rather than stored.
+#:
+#: Every figure this tool produces comes from running a measure's own SQL
+#: against the model's own rows. For a DirectQuery table there are none in the
+#: file -- so the measure fails, and the failure reads as a defect here rather
+#: than as the file saying where its data actually is.
+_REMOTE_TABLE_GAP = (
+    "{names} are queried from the source at run time rather than stored in this "
+    "file, so this file carries no rows for them: figures over them cannot be "
+    "computed here, and their absence is the file's shape rather than a limit of "
+    "this tool"
+)
+
 #: Why the Q&A synonyms are counted and not used.
 #:
 #: They looked like the best thing left unread: a glossary wants the words a
@@ -147,6 +160,16 @@ _SUMMARIZE_BY = {
     7: "average",
     8: "distinctcount",
 }
+
+#: Where a partition's rows come from, in Power BI's own numbering. 2 is
+#: "default", which the engine writes on its own internal storage partitions
+#: and which says nothing about a table an author made.
+_STORAGE_MODE = {0: "import", 1: "directquery", 3: "dual", 4: "push"}
+
+#: Partition types that belong to a table somebody made: 2 is a calculated
+#: table, 4 is one loaded by a query. 3 is the engine's own per-column storage.
+_AUTHORED_PARTITION = (2, 4)
+
 
 #: `ObjectType` for a column in the extended-properties frame, in Power BI's
 #: own numbering.
@@ -266,6 +289,7 @@ class PbixAdapter:
         new_tables = sorted(t for t in calculated if t.casefold() not in seen)
 
         says_table = self._table_declarations(raw)
+        storage = self._storage_modes(raw)
         parameter_tables = _parameter_tables(model.columns)
         for name in declared + implied + new_tables:
             query = power_query.get(name)
@@ -303,6 +327,7 @@ class PbixAdapter:
                     is_hidden=says.get("is_hidden", False),
                     data_category=says.get("data_category", ""),
                     is_parameter=name in parameter_tables,
+                    storage_mode=storage.get(name.casefold(), ""),
                 )
             )
         known_measures = {
@@ -332,7 +357,7 @@ class PbixAdapter:
         )
         model.report_pages = self._report_pages(path)
         model.report_filters = self._report_filters(path)
-        model.coverage_gaps = self._coverage_gaps(raw)
+        model.coverage_gaps = self._coverage_gaps(raw, model)
         resolve_table_dependencies(model)
         return model
 
@@ -358,23 +383,28 @@ class PbixAdapter:
             return []
 
     def _report_filters(self, path: Path):
-        """The report's own filters, from the same archive as its pages.
+        """The report's own filters, in whichever format the report uses.
 
-        Only the legacy `Report/Layout` format carries them where this can read
-        them; the newer per-file format keeps filters elsewhere and is left
-        reporting none rather than guessing. Failing costs the filters and
-        nothing else, for the same reason `_report_pages` fails softly.
+        The same shape as `_report_pages`: the legacy blob first because it is
+        one read, and the newer per-file format otherwise. A file has one or
+        the other, never both.
+
+        Reading only the first was a real cost, and a quiet one. Store Sales is
+        saved in the newer format, and was reported as applying no filters at
+        all while its "New Stores" page is pinned to `Store type is Same
+        Store`. Failing costs the filters and nothing else, for the same reason
+        `_report_pages` fails softly.
         """
         import zipfile
 
-        from concordance.normalize.filters import read_filters
+        from concordance.normalize.filters import read_filters, read_pbir_filters
         from concordance.normalize.layout import _decode
 
         try:
             with zipfile.ZipFile(path) as archive:
-                if "Report/Layout" not in archive.namelist():
-                    return []
-                return read_filters(_decode(archive.read("Report/Layout")))
+                if "Report/Layout" in archive.namelist():
+                    return read_filters(_decode(archive.read("Report/Layout")))
+                return read_pbir_filters(archive)
         except (KeyError, OSError, zipfile.BadZipFile):
             return []
 
@@ -499,9 +529,10 @@ class PbixAdapter:
             )
         return out
 
-    def _coverage_gaps(self, raw: PBIXRay) -> list[CoverageGap]:
+    def _coverage_gaps(self, raw: PBIXRay, model=None) -> list[CoverageGap]:
         """Report model features present in the source but not yet extracted."""
         gaps: list[CoverageGap] = []
+        model = model if model is not None else SemanticModel("", "", "pbix")
         for attribute, label, minimum in _UNEXTRACTED_FEATURES:
             frame = _safe(raw, attribute)
             if frame is None:
@@ -518,6 +549,20 @@ class PbixAdapter:
                         reason="present in the model but not yet extracted by this adapter",
                     )
                 )
+
+        remote = sorted(
+            t.name
+            for t in model.tables
+            if t.storage_mode in {"directquery", "dual"} and not t.is_system
+        )
+        if remote:
+            gaps.append(
+                CoverageGap(
+                    feature="tables whose rows this file does not carry",
+                    count=len(remote),
+                    reason=_REMOTE_TABLE_GAP.format(names=", ".join(remote)),
+                )
+            )
 
         for count, feature, reason in (
             (self._synonyms(raw), "Q&A synonyms", _SYNONYM_GAP),
@@ -767,6 +812,18 @@ class PbixAdapter:
             if not table or not name or not sorts_by or sorts_by == name:
                 continue
             found[(table.casefold(), name.casefold())] = sorts_by
+        return found
+
+    def _storage_modes(self, raw: PBIXRay) -> dict[str, str]:
+        """Where each table's rows live. See `Table.storage_mode`."""
+        found: dict[str, str] = {}
+        for row in _rows(_safe(raw, "tmschema_partitions")):
+            if row.get("Type") not in _AUTHORED_PARTITION:
+                continue
+            name = str(row.get("TableName", "")).strip()
+            mode = _STORAGE_MODE.get(row.get("Mode"), "")
+            if name and mode:
+                found[name.casefold()] = mode
         return found
 
     def _table_declarations(self, raw: PBIXRay) -> dict[str, dict]:

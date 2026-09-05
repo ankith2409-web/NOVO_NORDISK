@@ -18,6 +18,15 @@ context, and the reason `generate/sql.py` refuses to translate a measure until
 the caller states a grain. A report page is a filter context somebody already
 stated; this reads it back out.
 
+Both report formats are read. The legacy one keeps everything in a single
+``Report/Layout`` blob; the newer one spreads a report over ``report.json``,
+one ``page.json`` per page and one ``visual.json`` per tile, and files each
+page's filters beside it. Only the first was read for a while, which meant
+Store Sales -- saved in the newer format -- was reported as applying *no
+filters at all* while its "New Stores" page is pinned to `Store type is Same
+Store`. That is the same failure this module was written for, in the file
+format it was not looking at.
+
 What it does not do is guess. Power BI's filter format is a nested expression
 tree with a long tail of shapes -- advanced filters, top-N, relative dates,
 measure-based filters. The common ones are read into a sentence; anything else
@@ -361,6 +370,103 @@ def _tile_name(container: Any) -> str:
     )
     text = str(text).strip("'")
     return text or _kind(str(visual.get("visualType") or ""))
+
+
+#: Where the newer format keeps its report definition.
+_PBIR = "Report/definition/"
+
+
+def _pbir_entry(entry: Any) -> dict | None:
+    """One filter from the newer format, in the shape `_one` already reads.
+
+    The two formats differ in one word: the older calls the filtered thing
+    `expression` and the newer calls it `field`. Everything below that -- the
+    `Where` clauses, the `From` aliases, the Top-N subqueries -- is identical,
+    so translating the wrapper is the whole of the work and the reading is
+    shared rather than written twice.
+    """
+    if not isinstance(entry, dict):
+        return None
+    return {
+        "name": entry.get("name"),
+        "expression": entry.get("field"),
+        "filter": entry.get("filter"),
+    }
+
+
+def _pbir_filters(blob: Any, scope: str, page: str) -> list[ReportFilter]:
+    """The `filterConfig.filters` array on one report, page or visual."""
+    if not isinstance(blob, dict):
+        return []
+    entries = (blob.get("filterConfig") or {}).get("filters")
+    if not isinstance(entries, list):
+        return []
+    found = (
+        _one(translated, scope, page)
+        for translated in (_pbir_entry(entry) for entry in entries)
+        if translated is not None
+    )
+    return [f for f in found if f is not None]
+
+
+def _pbir_tile_name(blob: Any) -> str:
+    """What to call one tile in the newer format."""
+    visual = (blob or {}).get("visual") or {}
+    title = (
+        ((visual.get("visualContainerObjects") or {}).get("title") or [{}])[0]
+        .get("properties", {})
+        .get("text", {})
+        .get("expr", {})
+        .get("Literal", {})
+        .get("Value", "")
+    )
+    text = str(title).strip("'")
+    return text or _kind(str(visual.get("visualType") or ""))
+
+
+def read_pbir_filters(archive) -> list[ReportFilter]:
+    """Every filter a report in the newer per-file format applies.
+
+    Same order and the same scopes as `read_filters`, from files instead of
+    from one blob: `report.json` reaches every page, each `page.json` reaches
+    one, and each `visual.json` reaches a single tile.
+    """
+    from concordance.normalize.layout import _load
+
+    try:
+        names = set(archive.namelist())
+    except Exception:  # noqa: BLE001 - an unreadable archive costs the filters
+        return []
+
+    found = _pbir_filters(_load(archive, f"{_PBIR}report.json"), "report", "")
+
+    root = f"{_PBIR}pages/"
+    folders = sorted(
+        {
+            name[len(root) :].split("/", 1)[0]
+            for name in names
+            if name.startswith(root) and name.endswith("/page.json")
+        }
+    )
+    for ordinal, folder in enumerate(folders):
+        definition = _load(archive, f"{root}{folder}/page.json")
+        if not isinstance(definition, dict):
+            continue
+        page = str(definition.get("displayName") or f"Page {ordinal + 1}")
+        found.extend(_pbir_filters(definition, "page", page))
+
+        prefix = f"{root}{folder}/visuals/"
+        for entry in sorted(
+            name
+            for name in names
+            if name.startswith(prefix) and name.endswith("/visual.json")
+        ):
+            blob = _load(archive, entry)
+            on_tile = _pbir_filters(blob, "visual", page)
+            if on_tile:
+                tile = _pbir_tile_name(blob)
+                found.extend(replace(f, visual=tile) for f in on_tile)
+    return found
 
 
 def read_filters(document: Any) -> list[ReportFilter]:

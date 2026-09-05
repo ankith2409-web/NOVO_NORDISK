@@ -371,3 +371,134 @@ def test_a_model_with_no_report_reports_no_filters() -> None:
     assert read_filters({"filters": "", "sections": []}) == []
     assert read_filters({"filters": "not json", "sections": []}) == []
     assert read_filters(None) == []
+
+
+# -- the same reading, from the other report format -----------------------------
+
+STORE_SALES = Path("data/models/StoreSales.pbix")
+
+
+@pytest.fixture(scope="module")
+def store():
+    if not STORE_SALES.exists():
+        pytest.skip(f"model not present: {STORE_SALES}")
+    return PbixAdapter().extract(str(STORE_SALES))
+
+
+def test_a_report_in_the_newer_format_has_its_filters_read(store) -> None:
+    """Store Sales was reported as applying no filters at all.
+
+    It applies two. Power BI's newer report format spreads a report over one
+    file per page and per tile and files each page's filters beside it, and
+    this only ever read the legacy single-blob format -- so a page pinned to
+    `Store type is New Store` looked unconditional, which is precisely the
+    failure this module exists to prevent, in the format it was not looking at.
+    """
+    assert "Report/Layout" not in _entries(STORE_SALES), (
+        "this fixture is meant to be in the newer format"
+    )
+    assert _texts(store.report_filters) == [
+        "Store[Store type] is New Store",
+        "Store[Store type] is Same Store",
+    ]
+
+
+def test_the_newer_format_reports_scope_the_same_way(store) -> None:
+    """One page filter and one on a single tile. The distinction has to survive
+    the change of format, or a reader learns to trust it in one file and not in
+    another."""
+    by_scope = {f.scope: f for f in store.report_filters}
+    assert by_scope["page"].page == "New Stores"
+    assert by_scope["page"].visual == ""
+    assert by_scope["visual"].page == "Store Sales Overview"
+    assert by_scope["visual"].visual == "scatterChart"
+
+
+def test_an_empty_filter_card_is_still_not_a_filter_in_the_newer_format(store) -> None:
+    """Store Sales carries thirteen filter entries and applies two.
+
+    The other eleven are cards sitting in the filter pane with nothing
+    selected. Reporting them would put a false alarm on a banner whose whole
+    job is to explain a discrepancy.
+    """
+    import json
+    import zipfile
+
+    declared = 0
+    with zipfile.ZipFile(STORE_SALES) as archive:
+        for name in archive.namelist():
+            if not name.startswith("Report/definition") or not name.endswith(".json"):
+                continue
+            try:
+                blob = json.loads(archive.read(name).decode("utf-8-sig"))
+            except (ValueError, UnicodeDecodeError):
+                continue
+            declared += len((blob.get("filterConfig") or {}).get("filters") or [])
+
+    assert declared == 13
+    assert len(store.report_filters) == 2
+
+
+def _entries(path: Path) -> set[str]:
+    import zipfile
+
+    with zipfile.ZipFile(path) as archive:
+        return set(archive.namelist())
+
+
+def test_both_formats_are_read_by_the_same_rules() -> None:
+    """The shapes below a filter are identical in the two formats -- the same
+    `Where` clauses, `From` aliases and Top-N subqueries. Only the wrapper
+    differs, so a fix to one is a fix to both by construction."""
+    from concordance.normalize.filters import _pbir_entry
+
+    field = _column("Store", "Store type")
+    body = {"Where": _in("Same Store")}
+    assert _pbir_entry({"name": "f", "field": field, "filter": body}) == {
+        "name": "f",
+        "expression": field,
+        "filter": body,
+    }
+    assert _pbir_entry("not a filter") is None
+
+
+def test_a_tile_that_renames_a_field_says_so(model) -> None:
+    """The project's subject in one assertion.
+
+    A card in Microsoft's sample shows `Sales[Amount]` captioned **Net Sales**
+    -- and that model also contains a measure called `Net Sales`, which is a
+    different calculation. `Details[Topic]` is captioned **Category** beside a
+    real `Product[Category]`. The caption lives in `dataTransforms`, a JSON
+    string beside the visual's config rather than in it, which is why it went
+    unread while everything else about the tile's fields was being read.
+    """
+    renamed = {
+        f.qualified_name: f.label
+        for visual in model.visuals()
+        for f in visual.fields
+        if f.label
+    }
+    assert renamed["Sales[Amount]"] == "Net Sales"
+    assert renamed["Details[Topic]"] == "Category"
+    assert renamed["Association[Probability]"] == "Confidence"
+    # A field the tile agrees with the model about carries no label at all.
+    assert all(f.label != f.name for v in model.visuals() for f in v.fields)
+
+
+def test_power_bis_own_default_caption_is_not_reported_as_a_rename() -> None:
+    """`First(Store[Store])` is captioned "First Store" by Power BI itself.
+
+    Reporting that would bury the real renames in noise, so a caption counts
+    only when it is not the field's name with its aggregation in front.
+    """
+    from concordance.normalize.layout import VisualField, _labels, _renamed
+
+    field = VisualField(role="Values", table="Store", name="Store", aggregation="First")
+    assert _renamed("First Store", field) == ""
+    assert _renamed("First of Store", field) == ""
+    assert _renamed("Store", field) == ""
+    assert _renamed("Location", field) == "Location"
+
+    assert _labels('{"selects":[{"queryName":"a","displayName":"X"}]}') == {"a": "X"}
+    assert _labels("not json") == {}
+    assert _labels(None) == {}

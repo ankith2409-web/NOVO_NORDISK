@@ -50,7 +50,7 @@ caller the report layer and nothing else.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 #: Power BI's aggregate-function codes, as written in ``Aggregation.Function``.
@@ -84,6 +84,16 @@ class VisualField:
     #: "Sum", "Avg", ... or "" when the field is projected as it stands, which
     #: is what a measure reference looks like.
     aggregation: str = ""
+    #: The word the tile actually puts on screen, when it is not the model's
+    #: own name for the field. Empty when they agree, which is most of them.
+    #:
+    #: This is the project's whole subject in one field. `Sales[Amount]` is
+    #: shown on one of Microsoft's cards as **Net Sales** -- and that model
+    #: also contains a measure called `Net Sales`, which is a different
+    #: calculation. `Details[Topic]` is shown as **Category** beside a real
+    #: `Product[Category]`. A reader looking at the report cannot tell which
+    #: is which, and until this was read neither could this tool.
+    label: str = ""
 
     @property
     def qualified_name(self) -> str:
@@ -252,7 +262,15 @@ def _pbir_visual(document: Any, page: str) -> Visual | None:
                     continue
                 field = _pbir_field(str(role), projection.get("field"))
                 if field is not None:
-                    fields.append(field)
+                    # Same fact, one level shallower: the newer format keeps
+                    # the caption on the projection rather than in a separate
+                    # `dataTransforms` blob.
+                    caption = str(projection.get("displayName") or "").strip()
+                    fields.append(
+                        replace(field, label=_renamed(caption, field))
+                        if caption
+                        else field
+                    )
 
     return Visual(
         page=page,
@@ -324,6 +342,7 @@ def _visual(container: Any, page: str) -> Visual | None:
 
     # The real bindings, keyed by the name the projections refer to them by.
     bound = _bindings(single.get("prototypeQuery"))
+    labels = _labels(container.get("dataTransforms"))
 
     fields: list[VisualField] = []
     projections = single.get("projections")
@@ -349,6 +368,9 @@ def _visual(container: Any, page: str) -> Visual | None:
                             table=parsed_field.table,
                             name=parsed_field.name,
                             aggregation=parsed_field.aggregation,
+                            label=_renamed(
+                                labels.get(query_ref, ""), parsed_field
+                            ),
                         )
                     )
 
@@ -358,6 +380,48 @@ def _visual(container: Any, page: str) -> Visual | None:
         title=_title(single.get("vcObjects") or {}, key="title"),
         fields=tuple(fields),
     )
+
+
+def _labels(transforms: Any) -> dict[str, str]:
+    """What each projection is captioned, keyed by the name it is referred to by.
+
+    Power BI keeps the caption in `dataTransforms`, a JSON string beside the
+    config rather than in it, which is why this was unread: everything else a
+    tile says about its fields is in `config.singleVisual`.
+    """
+    if isinstance(transforms, str):
+        try:
+            transforms = json.loads(transforms)
+        except json.JSONDecodeError:
+            return {}
+    if not isinstance(transforms, dict):
+        return {}
+    found: dict[str, str] = {}
+    for select in transforms.get("selects") or []:
+        if not isinstance(select, dict):
+            continue
+        reference = str(select.get("queryName") or "")
+        caption = str(select.get("displayName") or "").strip()
+        if reference and caption:
+            found[reference] = caption
+    return found
+
+
+def _renamed(caption: str, field: VisualField) -> str:
+    """A caption, unless it is one Power BI wrote rather than a person.
+
+    `First(Store[Store])` is captioned "First Store" by default, and reporting
+    that as a rename would bury the ten real ones -- `Sales[Amount]` shown as
+    "Net Sales" -- in fifteen. A caption counts only when it is not the name
+    with the aggregation put in front of it.
+    """
+    if not caption or caption == field.name:
+        return ""
+    defaults = {
+        f"{field.aggregation} {field.name}",
+        f"{field.aggregation} of {field.name}",
+    }
+    return "" if caption in defaults else caption
 
 
 def _title(objects: Any, key: str = "title") -> str:

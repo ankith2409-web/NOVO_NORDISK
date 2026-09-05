@@ -643,3 +643,172 @@ def test_the_only_tables_dax_tables_adds_are_ones_power_bi_wrote(sales) -> None:
     missed = set(raw.dax_tables["TableName"]) - set(PbixAdapter()._calculated_tables(raw))
     system = {t.name for t in sales.tables if t.is_system}
     assert missed and missed <= system, missed
+
+
+# -- where a table's rows actually are -------------------------------------------
+
+
+def test_every_table_in_these_files_stores_its_own_rows(sales, store) -> None:
+    """Which is why the tool's central promise holds for them.
+
+    Every figure it produces comes from running a measure's own SQL against
+    the model's own rows. That is only true of an Import table.
+    """
+    for model in (sales, store):
+        assert {t.storage_mode for t in model.user_tables()} == {"import"}
+        assert not [
+            g for g in model.coverage_gaps if "does not carry" in g.feature
+        ]
+
+
+def test_a_directquery_table_is_reported_as_rows_this_file_does_not_have() -> None:
+    """None of the samples uses DirectQuery, so this is the synthetic case.
+
+    It matters because of how it fails without this. A measure over a
+    DirectQuery table has no rows to run against, and the query comes back
+    "table does not exist" -- which reads as a defect in this tool rather than
+    as the file saying where its data lives.
+    """
+    from concordance.adapters.pbix import PbixAdapter
+    from concordance.model import SemanticModel, Table
+
+    model = SemanticModel(name="Remote", source_path="x.pbix", source_type="pbix")
+    model.tables = [
+        Table(name="Sales", fingerprint="a", storage_mode="directquery"),
+        Table(name="Ledger", fingerprint="b", storage_mode="dual"),
+        Table(name="Product", fingerprint="c", storage_mode="import"),
+        # A hidden date table Power BI wrote is not something to warn about.
+        Table(name="LocalDateTable_x", fingerprint="d", storage_mode="directquery",
+              is_system=True),
+    ]
+
+    class _Nothing:
+        def __getattr__(self, name):
+            raise AttributeError(name)
+
+    gaps = PbixAdapter()._coverage_gaps(_Nothing(), model)
+    remote = next(g for g in gaps if "does not carry" in g.feature)
+    assert remote.count == 2
+    assert "Ledger, Sales" in remote.reason
+    assert "Product" not in remote.reason
+    assert "LocalDateTable_x" not in remote.reason
+    assert "limit of this tool" in remote.reason
+
+
+def test_a_partitions_storage_mode_is_read_from_its_own_numbering() -> None:
+    """Power BI writes the mode as an integer, and 2 -- "default" -- appears on
+    the engine's own per-column storage partitions, where it says nothing about
+    a table an author made."""
+    import pandas as pd
+
+    from concordance.adapters.pbix import PbixAdapter
+
+    class _Raw:
+        tmschema_partitions = pd.DataFrame(
+            [
+                {"TableName": "Sales", "Type": 4, "Mode": 0},
+                {"TableName": "Live", "Type": 4, "Mode": 1},
+                {"TableName": "Either", "Type": 4, "Mode": 3},
+                {"TableName": "Derived", "Type": 2, "Mode": 0},
+                # The engine's own storage partition, which must not overwrite
+                # the table's real mode.
+                {"TableName": "H$Sales (1)$Amount (2)", "Type": 3, "Mode": 2},
+            ]
+        )
+
+    assert PbixAdapter()._storage_modes(_Raw()) == {
+        "sales": "import",
+        "live": "directquery",
+        "either": "dual",
+        "derived": "import",
+    }
+
+
+#: The TMDL side of the same audit: property names that appear in the
+#: .SemanticModel fixtures and are not read, with why. `mode` and `formatString`
+#: used to be on this list; enumerating is what took them off it.
+TMDL_UNREAD: dict[str, str] = {
+    # A column's name in the source system. Real lineage where it differs from
+    # the model's name -- and it differs nowhere across all six sample models,
+    # so reading it would add a field that is empty everywhere and testable
+    # nowhere. Worth taking off this list the day a file renames one.
+    "sourceColumn": "identical to the column name in every sample",
+    # Engine settings. The .pbix side reads PBIDesktopVersion as provenance,
+    # which answers the same question ("what wrote this") more legibly.
+    "compatibilityLevel": "engine version, and provenance is read from elsewhere",
+    "defaultPowerBIDataSourceVersion": "engine setting, not model content",
+    # Which icon set a KPI draws its status with. Presentation; the KPI's
+    # target and status *descriptions* are read, which is the meaning.
+    "statusGraphic": "presentation, and the KPI's descriptions are read",
+    # Not properties at all -- these are M and DAX keywords inside expressions,
+    # which the adapter keeps whole rather than parsing into properties.
+    "let": "M keyword inside an expression",
+    "in": "M keyword inside an expression",
+    "Source": "an M step name inside an expression",
+    "Promoted": "an M step name inside an expression",
+    "Indexed": "an M step name inside an expression",
+    "RETURN": "DAX keyword inside an expression",
+    "DAY": "DAX keyword inside an expression",
+}
+
+
+def test_every_unread_tmdl_property_is_unread_on_purpose() -> None:
+    """The same enumeration, for the other file format.
+
+    Held to the same standard on purpose: this project's rule is that a
+    guarantee depending on which format a model was saved in is not a
+    guarantee, and an audit that only ever ran against .pbix would let the
+    TMDL adapter drift exactly as far as it had drifted before.
+    """
+    import re
+
+    source = Path("concordance/adapters/tmdl.py").read_text()
+    files = list(Path("data/models").glob("*.SemanticModel/definition/**/*.tmdl"))
+    if not files:
+        pytest.skip("no .SemanticModel fixtures present")
+
+    seen: set[str] = set()
+    for path in files:
+        for line in path.read_text().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith(("///", "ref ")):
+                continue
+            named = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*[:=]", stripped)
+            if named:
+                seen.add(named.group(1))
+            elif re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", stripped):
+                seen.add(stripped)
+
+    unread = {p for p in seen if not re.search(rf'"{p}"|\'{p}\'', source)}
+    assert unread == set(TMDL_UNREAD), {
+        "newly unread": sorted(unread - set(TMDL_UNREAD)),
+        "now read, drop from TMDL_UNREAD": sorted(set(TMDL_UNREAD) - unread),
+    }
+
+
+def test_no_sample_model_renames_a_column_from_its_source() -> None:
+    """Justifies the `sourceColumn` entry above, in both formats.
+
+    If one ever does, that is a fact a lineage document should carry, and this
+    is where it should be noticed.
+    """
+    from pbixray import PBIXRay
+
+    renamed: list[str] = []
+    for name in ("Sales_Returns_Sample", "StoreSales", "Supply_Chain_Sample"):
+        path = Path(f"data/models/{name}.pbix")
+        if not path.exists():
+            continue
+        frame = PBIXRay(str(path)).tmschema_columns
+        # `notna` rather than a truth test: a missing SourceColumn arrives as
+        # NaN, and NaN is truthy.
+        stated = frame[frame.SourceColumn.notna() & frame.Name.notna()]
+        # And the engine's own storage columns, which are not an author's.
+        authored = stated[
+            ~stated.TableName.str.startswith(
+                ("DateTableTemplate_", "LocalDateTable_", "H$")
+            )
+        ]
+        for row in authored[authored.SourceColumn != authored.Name].itertuples():
+            renamed.append(f"{row.TableName}[{row.Name}] <- {row.SourceColumn}")
+    assert renamed == [], renamed

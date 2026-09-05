@@ -274,6 +274,19 @@ class _Parser:
         return "\n".join(collected)
 
 
+def _storage_mode(node) -> str:
+    """Where a table's rows live, from its partition's `mode`.
+
+    TMDL writes it in words -- `mode: import`, `mode: directQuery` -- so unlike
+    the .pbix side there is no enum to map, only a case to fold.
+    """
+    for partition in node.child("partition"):
+        mode = _unquote(partition.properties.get("mode", "")).casefold()
+        if mode:
+            return "directquery" if mode == "directquery" else mode
+    return ""
+
+
 def _unquote(name: str) -> str:
     name = name.strip()
     if name.startswith("'") and name.endswith("'") and len(name) >= 2:
@@ -487,6 +500,7 @@ class TmdlAdapter:
                     description=node.description or "",
                     is_hidden=node.properties.get("isHidden") == "true",
                     data_category=node.properties.get("dataCategory", ""),
+                    storage_mode=_storage_mode(node),
                 )
             )
 
