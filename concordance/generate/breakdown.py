@@ -945,6 +945,46 @@ def build(
         )
         series = cut if cut.drawable else None
 
+    # A restriction that leaves nothing to compare has to say so, and the
+    # panel exempt from it must not be shown alone.
+    #
+    # Found by testing: cross-filtering to a value no row carries dropped every
+    # panel except the one holding the filter -- which is computed *without* it
+    # by design -- so the page showed a chip reading "Store[Type] is X" above a
+    # chart of the unfiltered 1.25M. A filter announced in words and absent
+    # from the figures is the exact class of quiet wrong answer this project
+    # exists to prevent, and it is worse than an empty page because it looks
+    # like an answer.
+    #
+    # Reachable by an ordinary click, not only by a hand-made request: hold the
+    # page to a small group and a panel whose column has fewer than two values
+    # left under it is dropped, and if that is all of them, this is what
+    # remains.
+    narrowed = [b for b in drawn if not b.is_filter]
+    if (cross is not None or year is not None) and not narrowed and series is None:
+        held = (
+            f"{cross[0]}[{cross[1]}] is {cross[2]}"
+            if cross is not None
+            else f"the year {year}"
+        )
+        return Dashboard(
+            measure=measure,
+            available=False,
+            reason=(
+                f"Nothing is left to compare once {held} is applied — no column in "
+                f"this model has more than one group of {measure} under it, and there "
+                f"is no series either. Clear the filter to see the whole model."
+            ),
+            dimensions=tuple(
+                {"table": t, "column": c, "value": f"{t}[{c}]"} for t, c, _ in candidates
+            ),
+            years=tuple(offered),
+            year=year,
+            periods=tuple(periods),
+            cross=cross,
+            crossable=tuple(b.by for b in drawn),
+        )
+
     return Dashboard(
         measure=measure,
         # A model with no chartable dimension but a readable calendar still has

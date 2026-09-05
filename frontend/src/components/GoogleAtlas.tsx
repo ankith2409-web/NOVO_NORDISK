@@ -59,21 +59,43 @@ function load(key: string): Promise<void> {
   if (window.google?.maps) return Promise.resolve();
   if (window.__concordanceMapsReady) return window.__concordanceMapsReady;
 
-  window.__concordanceMapsReady = new Promise<void>((resolve, reject) => {
+  const pending = new Promise<void>((resolve, reject) => {
     const tag = document.createElement("script");
     tag.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&v=weekly`;
     tag.async = true;
-    tag.onload = () => resolve();
-    tag.onerror = () => reject(new Error("the Google Maps script could not be loaded"));
+    // Cleared on settle, so a page that keeps the map open does not hold a
+    // timer for the life of the session.
+    let deadline = 0;
+    const settle = (act: () => void) => {
+      window.clearTimeout(deadline);
+      act();
+    };
+    tag.onload = () => settle(resolve);
+    tag.onerror = () =>
+      settle(() => reject(new Error("the Google Maps script could not be loaded")));
     document.head.appendChild(tag);
-    // Google reports a bad key by drawing an error into the container rather
-    // than by failing the script, so `onerror` alone would wait forever.
-    setTimeout(
+    // A network that swallows the request rather than refusing it would
+    // otherwise leave this pending forever, and the panel loading forever
+    // with it.
+    deadline = window.setTimeout(
       () => reject(new Error("the Google Maps script did not load in time")),
       PATIENCE,
     );
   });
-  return window.__concordanceMapsReady;
+
+  // Cached only once it has *worked*. A rejected promise left on `window` is
+  // remembered for the life of the page, so a first attempt that failed --
+  // because the network was down for a moment, or the panel was opened before
+  // a proxy came up -- would make every later attempt fail instantly without
+  // trying, including after the reader navigated away and back. The failure
+  // has to cost one request each time rather than poison the page.
+  window.__concordanceMapsReady = pending;
+  pending.catch(() => {
+    if (window.__concordanceMapsReady === pending) {
+      window.__concordanceMapsReady = undefined;
+    }
+  });
+  return pending;
 }
 
 export function GoogleAtlas({

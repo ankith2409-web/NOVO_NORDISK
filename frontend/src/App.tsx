@@ -532,26 +532,56 @@ export default function App() {
         />
       )}
 
-      <div className="relative flex min-h-0 flex-1">
+      <div
+        className={cx(
+          "relative flex min-h-0 flex-1",
+          wide ? "flex-row" : "flex-col",
+        )}
+      >
         {/* w-44, not w-36. An uploaded model has neither optional capability,
             so it is the first state where an "off" badge sits beside a long
             label -- and the badge takes exactly enough room that the widest of
             them truncated at w-36. Measured rather than eyeballed, and set
             wide enough to leave headroom instead of landing on the next
             one-pixel margin. */}
+        {/* Down the side when there is room, across the top when there is not.
+            Measured on a 390px phone: a 176px sidebar took 45% of the window
+            and left the content 213px, which clipped the model's own name and
+            wrapped its description to four words a line. A tool that is
+            unreadable on the machine somebody brought to the meeting is not a
+            tool they will open in it.
+
+            The width is applied only in the docked layout, and the divider is
+            dropped with it: there is nothing beside a full-width strip to
+            trade width with, and a 9px drag target is well under the 44px a
+            finger needs anyway. */}
         <nav
-          style={{ width: nav.width }}
-          className="flex flex-none flex-col gap-0.5 bg-ground p-2"
+          style={wide ? { width: nav.width } : undefined}
+          className={cx(
+            "flex flex-none gap-0.5 bg-ground",
+            wide
+              ? "flex-col p-2"
+              : "flex-row items-center overflow-x-auto border-b border-hairline p-1.5",
+          )}
         >
           {VIEWS.map((entry, index) => (
             <Fragment key={entry.id}>
               {/* One line, once, before the first secondary item. Labelled, so
                   it reads as a deliberate second tier rather than as a gap. */}
-              {entry.group === "more" && VIEWS[index - 1]?.group !== "more" && (
-                <p className="mt-3 mb-1 px-2.5 font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
-                  also here
-                </p>
-              )}
+              {entry.group === "more" &&
+                VIEWS[index - 1]?.group !== "more" &&
+                (wide ? (
+                  <p className="mt-3 mb-1 px-2.5 font-mono text-[10px] tracking-[0.08em] text-faint uppercase">
+                    also here
+                  </p>
+                ) : (
+                  // A label would cost a third of the strip. The rule says the
+                  // same thing in two pixels.
+                  <span
+                    aria-hidden
+                    className="mx-1 h-5 w-px flex-none self-center bg-hairline"
+                  />
+                ))}
             <button
               onClick={() => setView(entry.id)}
               aria-current={view === entry.id ? "page" : undefined}
@@ -562,6 +592,9 @@ export default function App() {
                 "flex items-center justify-between gap-1 rounded px-2.5 py-1.5 text-left text-sm",
                 "transition-colors duration-(--duration-feedback) ease-(--ease-standard)",
                 "pointer-coarse:min-h-11",
+                // In the strip a button may not shrink below its own label, or
+                // eight of them squeeze into eight columns of broken words.
+                wide ? "" : "flex-none whitespace-nowrap",
                 view === entry.id
                   ? "bg-accent-soft font-medium text-accent"
                   : "text-muted hover:bg-raised hover:text-ink",
@@ -582,7 +615,7 @@ export default function App() {
             </Fragment>
           ))}
         </nav>
-        <Divider pane={nav} />
+        {wide && <Divider pane={nav} />}
 
         {/* Keyed on the model: every view loads on mount, so without this a
             switch would leave the previous model's tables and requirements on

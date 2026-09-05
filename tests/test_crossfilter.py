@@ -241,3 +241,43 @@ def test_a_measure_that_cannot_be_cut_over_time_gets_no_flat_line(sales) -> None
 def test_sparklines_without_data_are_not_a_crash(sales) -> None:
     model, _ = sales
     assert B.sparklines(model, None, ["Net Sales"]) == {}
+
+
+# -- a filter that matches nothing ---------------------------------------------
+
+
+def test_a_filter_matching_no_rows_does_not_show_unfiltered_figures(sales) -> None:
+    """Found by testing, and the worst shape a bug in this feature can take.
+
+    Holding the page to a value no row carries drops every panel except the one
+    holding the filter -- which is computed *without* it by design, so it still
+    reads the whole model. The page then showed a chip saying "Store[Type] is
+    X" above a chart of the unfiltered 1.25M: a filter announced in words and
+    absent from the figures, which looks like an answer and is not one.
+
+    Reachable by an ordinary click, not only by a hand-made request: hold the
+    page to a small group, and a panel whose column has fewer than two values
+    left under it is dropped. If that is all of them, this is what remains.
+    """
+    model, connection = sales
+    built = B.build(model, connection, "Net Sales", cross=("Store", "Type", "NoSuchValue"))
+    assert not built.available
+    assert built.breakdowns == ()
+    # And it says which restriction emptied it, so the reader knows what to undo.
+    assert "Store[Type] is NoSuchValue" in built.reason
+
+
+def test_the_filter_is_still_reported_so_it_can_be_cleared(sales) -> None:
+    """An empty page whose filter has vanished from the payload is a page with
+    no way back to the model."""
+    model, connection = sales
+    built = B.build(model, connection, "Net Sales", cross=("Store", "Type", "NoSuchValue"))
+    assert built.cross == ("Store", "Type", "NoSuchValue")
+
+
+def test_a_filter_that_does_match_is_unaffected(sales) -> None:
+    """The guard must not fire on the ordinary case."""
+    model, connection = sales
+    built = B.build(model, connection, "Net Sales", cross=("Store", "Type", "External"))
+    assert built.available
+    assert any(not b.is_filter for b in built.breakdowns)
