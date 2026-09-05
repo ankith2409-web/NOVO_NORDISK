@@ -37,6 +37,7 @@ import {
   type TileField,
   type ValuesPayload,
 } from "@/lib/api";
+import { GoogleAtlas } from "@/components/GoogleAtlas";
 import {
   Atlas,
   Bars,
@@ -64,6 +65,7 @@ import {
 import { ChevronIcon } from "@/components/icons";
 import { cx } from "@/lib/cx";
 import { useLoad } from "@/lib/useLoad";
+import { useCurrentTheme } from "@/lib/useCurrentTheme";
 import {
   MARK_CLASS,
   isMarked,
@@ -1006,7 +1008,12 @@ function Breakdowns({ measure, picked }: { measure: string; picked: boolean }) {
  */
 function Where({ measure }: { measure: string }) {
   const { data, error } = useLoad<MapPayload>(() => api.atlas(measure), [measure]);
+  // Google decides its own colours when the map is constructed, so a theme
+  // change has to rebuild it rather than restyle it.
+  const theme = useCurrentTheme();
   const [showSql, setShowSql] = useState(false);
+  // Why Google was not used, when it was configured and did not work.
+  const [refused, setRefused] = useState<string | null>(null);
 
   if (error) return null;
 
@@ -1036,13 +1043,43 @@ function Where({ measure }: { measure: string }) {
         <Empty>{data.reason}</Empty>
       ) : (
         <>
-          <div className="max-w-xl">
-            <Atlas
-              places={data.places}
-              measure={measure}
-              label={data.label_column || "location"}
-            />
+          {/* Above the map, not below it: this is the reason the map underneath
+              is not the one the operator configured, and a cause printed after
+              its effect reads as a second, unrelated complaint. Named rather
+              than swallowed -- a key that is missing, restricted to another
+              domain or over quota fails inside Google's own script, so without
+              this the panel would quietly show a different map and nobody would
+              know which. */}
+          {refused && (
+            <p className="text-[11.5px] text-review">
+              Google Maps is configured on this server but could not be used —{" "}
+              {refused}. The built-in map is below instead; the points are the same
+              either way.
+            </p>
+          )}
+          <div className="max-w-2xl">
+            {/* Google's map when this server is configured for one, and the
+                built-in map otherwise. The choice belongs to whoever runs the
+                server rather than to the reader, because it is a question
+                about a key and a billing account, not a preference. */}
+            {data.basemap === "google" && data.maps_key && !refused ? (
+              <GoogleAtlas
+                places={data.places}
+                measure={measure}
+                label={data.label_column || "location"}
+                apiKey={data.maps_key}
+                theme={theme}
+                onFallback={setRefused}
+              />
+            ) : (
+              <Atlas
+                places={data.places}
+                measure={measure}
+                label={data.label_column || "location"}
+              />
+            )}
           </div>
+
           <p className="flex items-center gap-1.5 text-[11.5px] text-muted">
             Every point sits at the coordinates this file records for it.
             <Info label="what is drawn on this map">

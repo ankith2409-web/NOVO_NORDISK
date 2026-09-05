@@ -433,6 +433,35 @@ Provider setup: put `GEMINI_API_KEY=...` in a `.env` file at the project root (g
 The model sits behind a provider interface, so swapping it is configuration, and tests run
 against a scripted fake with no network or key.
 
+### Google Maps on the dashboard
+
+The map that plots a measure at each location's own coordinates draws its own tiles by
+default and needs nothing configured. Set `GOOGLE_MAPS_API_KEY` and it uses Google Maps
+instead — Google's tiles, projection, pan and zoom, with the model's figures on top:
+
+```
+GOOGLE_MAPS_API_KEY=... concordance serve model.pbix
+```
+
+Three things worth knowing before you set it.
+
+**This key is meant to be public.** A Maps *browser* key appears in the page source of
+every site that uses one; Google's documented protection is an HTTP-referrer restriction
+on the key, not concealment. So this one is sent to the browser deliberately, and it is
+the only key here that ever is — a model provider's key is a bearer secret and stays on
+the server. Restrict the key to your own host in the Google Cloud console, and expect to
+attach a billing account: the Maps JavaScript API has a free monthly allowance and then
+charges.
+
+**No key is committed, and there is no default.** It is read from the environment only, so
+a fork of this repository carries nobody's key.
+
+**It degrades rather than breaking.** A key that is missing, restricted to another domain
+or over quota fails inside Google's own script rather than in a request this code can
+inspect, so the load is given a deadline. When it passes, the panel says so by name and
+draws the built-in map instead. The points are unchanged either way — they come from the
+measure's own SQL, not from the map under them.
+
 ### Web interface
 
 `serve` runs the same agent behind a local browser page — the problem statement's "chatbot

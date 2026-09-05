@@ -1207,6 +1207,26 @@ def sparklines(context: ApiContext, params: Params) -> dict[str, Any]:
     }
 
 
+#: Where the Google Maps browser key is read from. An environment variable
+#: rather than a file in the repository, and never a default: a key committed
+#: to a repository is a key on every fork of it.
+#:
+#: Worth being exact about what kind of secret this is, because the answer is
+#: "not one". A Maps *browser* key is designed to travel to the browser -- it
+#: appears in the page source of every site that uses one, and Google's own
+#: documented protection is an HTTP-referrer restriction on the key rather than
+#: concealment. So handing it to the client is correct here, and is not the
+#: same act as handing over a model provider's key, which is a bearer secret
+#: and is never sent to the page.
+_MAPS_KEY_VAR = "GOOGLE_MAPS_API_KEY"
+
+
+def _maps_key() -> str:
+    import os
+
+    return os.environ.get(_MAPS_KEY_VAR, "").strip()
+
+
 def atlas(context: ApiContext, params: Params) -> dict[str, Any]:
     """One measure, plotted where it happened.
 
@@ -1214,6 +1234,11 @@ def atlas(context: ApiContext, params: Params) -> dict[str, Any]:
     for one that does not. Turning a postal code into a position would mean a
     lookup against data outside the file, and a map drawn from a guess puts a
     location somewhere it is not.
+
+    The response carries whichever basemap this server is configured for.
+    Google Maps when a key is set, and the built-in tiles otherwise -- the
+    points are identical either way, because they come from the query rather
+    than from the map under them.
     """
     from concordance.generate.geo import build
 
@@ -1234,6 +1259,11 @@ def atlas(context: ApiContext, params: Params) -> dict[str, Any]:
     built = build(model, connection, wanted)
     return {
         "model": model.name,
+        # Whichever basemap this server is configured for. The points are
+        # identical either way -- they come from the query, not from the map
+        # under them.
+        "basemap": "google" if _maps_key() else "tiles",
+        "maps_key": _maps_key(),
         "measure": built.measure,
         "available": built.available,
         "reason": built.reason,

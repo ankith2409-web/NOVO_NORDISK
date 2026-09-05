@@ -451,6 +451,14 @@ export interface Place {
 
 export interface MapPayload {
   model: string;
+  /** Which basemap this server is configured for. "google" when a Maps key is
+   *  set, "tiles" otherwise. The points are identical either way. */
+  basemap?: "google" | "tiles";
+  /** The Google Maps *browser* key, when one is configured. Designed to reach
+   *  the browser -- Google protects it with an HTTP-referrer restriction, not
+   *  by concealment -- unlike a model provider's key, which never leaves the
+   *  server. */
+  maps_key?: string;
   measure: string;
   available: boolean;
   /** Why there is no map. Stated rather than left blank -- a model with no
