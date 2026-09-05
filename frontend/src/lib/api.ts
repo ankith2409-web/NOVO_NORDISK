@@ -324,9 +324,13 @@ export interface ReportPayload {
 }
 
 export interface ReportFilterPayload {
-  /** "report" reaches every page; "page" reaches one. */
+  /** "report" reaches every page, "page" reaches one, "visual" reaches a
+   *  single tile -- the most local kind and the most deceiving, because the
+   *  figure it changes sits beside others it does not. */
   scope: string;
   page: string;
+  /** The tile, for a visual-level filter. */
+  visual?: string;
   target: string;
   text: string;
   /** False when the filter's shape was not one the reader understands. It is
@@ -350,6 +354,25 @@ export interface MeasureValue {
   sql: string;
   /** Why there is no figure. Empty when there is one. */
   reason: string;
+  /** The figure as the file itself asks for it -- `$1,248,013`, `42.3%`.
+   *
+   *  The model declares a format string on almost every measure, and this
+   *  project spent a long time printing raw ratios beside a report showing
+   *  percentages while asserting the file did not state one. It does. Empty
+   *  when the measure carries no format, or carries one the server declines to
+   *  apply (a date picture, a conditional format) -- in which case the figure
+   *  the query returned is shown, which is always true even when it is not
+   *  what Power BI would draw. */
+  shown?: string;
+  /** The same, at the size a card is: `$1.25M`. Rendered on the server so the
+   *  abbreviation keeps the currency symbol rather than turning an amount into
+   *  a count. */
+  compact?: string;
+  /** What that format means, in words -- `a currency amount, no decimal
+   *  places, grouped in thousands`. For a reader who does not read VBA. */
+  format?: string;
+  /** The format string verbatim, for anyone who does. */
+  format_string?: string;
 }
 
 export interface ValuesPayload {
@@ -365,9 +388,17 @@ export interface ValuesPayload {
 export interface Slice {
   label: string;
   value: number;
-  /** Where this group sits in time, as a date string, when the model can say.
-   *  Empty otherwise. This is what makes "in date order" real rather than a
-   *  guess about what month names mean -- it is the earliest date the data
+  /** This slice as the file asks for it. Empty when the measure declares no
+   *  format, or one the server declines to apply. */
+  shown?: string;
+  /** Where this group sits in the model's own order, when it can say. Empty
+   *  otherwise, and compared as text -- the server pads numbers so that `2`
+   *  does not sort after `10`.
+   *
+   *  This is what makes "Model's order" real rather than a guess about what
+   *  month names mean. Two things fill it: the sort-by column the model
+   *  declares for that column (`Calendar[Month]` is sorted by
+   *  `Calendar[MonthSort]`), and failing that the earliest date the data
    *  itself records for the group. */
   order: string;
 }
@@ -380,8 +411,12 @@ export interface BreakdownPayload {
   column: string;
   /** The slices summed. Only a quantity of anything when `additive`. */
   total: number;
+  /** That total, as the file asks for it. Empty when there is no format. */
+  shown?: string;
   /** The measure's figure for the whole model, or null when it has none. */
   whole: number | null;
+  /** That figure, as the file asks for it. */
+  whole_shown?: string;
   /** Whether the parts really do sum to the whole -- measured on the server by
    *  running the measure both ways, never inferred from its name. An average
    *  or a ratio splits into a valid comparison whose parts mean nothing added
@@ -431,6 +466,9 @@ export interface DashboardPayload {
   /** True when the measure being charted is an aggregation the report declares
    *  on a visual rather than one the model carries. */
   implicit: boolean;
+  /** What the charted measure's format string means, in words. Empty when it
+   *  declares none, or one the server declines to apply. */
+  format?: string;
 }
 
 /** Each measure over time, small enough to sit under its own figure. */
@@ -447,6 +485,8 @@ export interface Place {
   lat: number;
   lon: number;
   value: number;
+  /** The value as the model asks for it. Empty when it declares no format. */
+  shown?: string;
 }
 
 export interface MapPayload {

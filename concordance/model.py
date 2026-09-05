@@ -51,6 +51,36 @@ class Column:
     #: DAX expression when this is a calculated column; None for a stored one.
     expression: str | None = None
     fingerprint: str = ""
+    #: What Power BI has been told this column *is* -- `Latitude`, `ImageUrl`,
+    #: `City`, `WebUrl`. Empty when the author left it as plain data.
+    #:
+    #: This is a declaration, and reading it replaces guesswork elsewhere in
+    #: this project with a fact. The map used to decide a column held a
+    #: latitude by looking at its name; the chart picker used to decide a
+    #: column held an image by sniffing its values for a JPEG header. Both
+    #: questions are answered here, by the file, and had simply never been
+    #: asked of it.
+    data_category: str = ""
+    #: True when the author hid the column from report authors. It is still in
+    #: the model and still readable -- hidden is a statement about intent, and
+    #: a reader deciding whether a column is part of the solution wants it.
+    is_hidden: bool = False
+    #: How Power BI renders it -- `0.0%;-0.0%;0.0%`, `\#,0`. Empty when the
+    #: column carries none, which is most of them.
+    format_string: str = ""
+    #: The author's own description, where they wrote one.
+    description: str = ""
+    #: The column on the same table that puts this one in order -- `Month` is
+    #: sorted by `MonthSort`, `FiscalMonth` by `Period`. Empty for the great
+    #: majority, which sort by themselves.
+    #:
+    #: This is the model stating a sequence outright. Two places in this
+    #: project used to say the file did not: "Power BI records a column's
+    #: display order in a sort-by column that this file's reader does not
+    #: expose, so `Jan, Feb, Mar` cannot be ordered by reading the labels".
+    #: It records it in `Column.SortByColumnID`, and the reader queries five of
+    #: that table's twenty-odd fields.
+    sort_by: str = ""
 
     @property
     def qualified_name(self) -> str:
@@ -69,6 +99,17 @@ class Measure:
     fingerprint: str
     display_folder: str | None = None
     description: str | None = None
+    #: How Power BI renders this measure -- `\$#,0;-\$#,0;\$#,0`,
+    #: `0.0%;-0.0%;0.0%`. Empty when the author left it on the default.
+    #:
+    #: This is the difference between reporting `0.4229` and reporting
+    #: `42.29%`, and the tool spent a long time telling readers the file did
+    #: not state it. It does; it is simply not in the table PBIXRay surfaces.
+    format_string: str = ""
+    #: True when the author hid the measure from report authors -- usually an
+    #: intermediate step in a chain, and worth saying so rather than
+    #: presenting it beside the figures somebody is meant to read.
+    is_hidden: bool = False
     #: Qualified (table, column) pairs this measure reads.
     depends_on_columns: frozenset[tuple[str, str]] = field(default_factory=frozenset)
     #: Names of other measures this measure reads.
@@ -116,6 +157,12 @@ class Table:
     #: Such a table has no stored columns at all -- both its rows and its columns
     #: come from this expression -- so it is the only record of what it holds.
     dax_expression: str | None = None
+    #: The author's own description of the table, where they wrote one. The
+    #: best available answer to "what is this table for", and it comes from
+    #: the person who built it rather than from this tool's inference.
+    description: str = ""
+    #: True when the author hid the whole table from report authors.
+    is_hidden: bool = False
 
     @property
     def is_calculated(self) -> bool:

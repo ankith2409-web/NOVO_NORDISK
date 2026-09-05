@@ -20,6 +20,7 @@ import pytest
 from concordance.adapters.pbix import PbixAdapter
 from concordance.generate import geo
 from concordance.generate.evaluate import open_data
+from concordance.model import Column
 
 SALES = Path("data/models/Sales_Returns_Sample.pbix")
 STORE = Path("data/models/StoreSales.pbix")
@@ -76,12 +77,11 @@ def test_half_a_pair_is_not_a_pair() -> None:
     """A latitude with no longitude cannot be plotted, and inventing the other
     half from some nearby numeric column is how a map ends up lying."""
 
-    class Column:
-        def __init__(self, table, name):
-            self.table, self.name, self.data_type = table, name, "double"
-
     class Model:
-        columns = [Column("Site", "Latitude"), Column("Site", "Headcount")]
+        columns = [
+            Column("Site", "Latitude", "double"),
+            Column("Site", "Headcount", "double"),
+        ]
 
     assert geo.coordinate_columns(Model(), "Site") is None
 

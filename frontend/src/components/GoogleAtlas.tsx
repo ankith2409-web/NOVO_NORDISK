@@ -106,7 +106,7 @@ export function GoogleAtlas({
   theme,
   onFallback,
 }: {
-  places: { label: string; lat: number; lon: number; value: number }[];
+  places: { label: string; lat: number; lon: number; value: number; shown?: string }[];
   measure: string;
   /** What one point is, e.g. "Store". */
   label: string;
@@ -170,7 +170,11 @@ export function GoogleAtlas({
             note.setContent(
               `<div style="font:13px system-ui;padding:2px 4px">` +
                 `<strong>${escapeHtml(place.label)}</strong><br>` +
-                `${escapeHtml(measure)}: ${place.value.toLocaleString()}` +
+                // As the model asks for it where it says how, exactly as on
+                // the built-in map and every chart beside it.
+                `${escapeHtml(measure)}: ${escapeHtml(
+                  place.shown || place.value.toLocaleString(),
+                )}` +
                 `</div>`,
             );
             note.setPosition({ lat: place.lat, lng: place.lon });
@@ -205,9 +209,11 @@ export function GoogleAtlas({
       />
       <p className="min-h-[1.4em] text-[11.5px] text-muted tabular" aria-live="polite">
         {active
-          ? `${active} — ${
-              places.find((p) => p.label === active)?.value.toLocaleString() ?? ""
-            }`
+          ? `${active} — ${(() => {
+              const place = places.find((p) => p.label === active);
+              if (!place) return "";
+              return place.shown || place.value.toLocaleString();
+            })()}`
           : `${places.length} ${label.toLowerCase()}s, sized by ${measure}. Click one for its figure.`}
       </p>
     </div>

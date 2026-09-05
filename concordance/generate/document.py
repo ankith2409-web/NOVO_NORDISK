@@ -93,6 +93,10 @@ class Document:
     #: seen produce a number. Empty when the source carries no data -- a
     #: `.SemanticModel` folder is a schema -- and never estimated.
     figures: dict[str, float] = field(default_factory=dict)
+    #: How the model says each measure should be rendered, by measure name.
+    #: A BRD stating a metric as `0.4229` where the report states it as
+    #: `42.29%` has asked its reader to sign off a figure they cannot find.
+    formats: dict[str, str] = field(default_factory=dict)
     #: What moved since the version this model was compared against, if one was
     #: given. In the document as well as on the Drift tab, and for a reason a
     #: reviewer gave plainly: the document is what gets sent to someone, and
@@ -206,6 +210,14 @@ def build(
         sql_dialect=sql_dialect,
         subject_areas=tuple(sorted(t.name for t in graph.model.user_tables())),
         figures=dict(figures or {}),
+        # Read from the model rather than passed in: the caller supplying the
+        # figures has no more access to the format strings than this does, and
+        # a figure and the way it is meant to be written belong together.
+        formats={
+            m.name: m.format_string
+            for m in _every_measure(graph.model)
+            if m.format_string
+        },
         limits=tuple(
             (gap.feature, gap.count, gap.reason) for gap in graph.model.coverage_gaps
         ),
@@ -826,7 +838,28 @@ def _figure_for(document: "Document", requirement) -> str | None:
     value = document.figures.get(name)
     if value is None:
         return None
+    declared = document.formats.get(name, "")
+    if declared:
+        from concordance.generate.formats import render
+
+        # What the report shows, which is what a reader is being asked to
+        # recognise. `render` returns nothing for a format it will not apply,
+        # and then the figure stands as the query returned it.
+        shown = render(value, declared)
+        if shown:
+            return shown
     return _readable(value) or None
+
+
+def _every_measure(model):
+    """The model's own measures, and the ones its report declares on visuals.
+
+    Both kinds get figures in a BRD, so both need the format that says how to
+    write one.
+    """
+    from concordance.generate.implicit import all_measures
+
+    return all_measures(model)
 
 
 def _at_a_glance(document: "Document", counts: dict) -> list[str]:

@@ -40,12 +40,13 @@ export type Order = "largest" | "smallest" | "label" | "time";
 /**
  * The groups, arranged.
  *
- * `time` is the one that needs the data's help: the labels alone cannot be put
- * in date order, because sorting `Jan, Feb, Mar` as text puts April first. Each
- * slice carries the earliest date its group actually occupies, and that is what
- * this sorts on. A slice with no such date -- the folded "N more", which is
- * several groups at several times -- goes last, which is the only honest place
- * for it.
+ * `time` is the one that needs the model's help: the labels alone cannot be put
+ * in order, because sorting `Jan, Feb, Mar` as text puts April first. Each
+ * slice carries a key the server worked out -- the sort-by column the model
+ * declares for that column where there is one, and otherwise the earliest date
+ * the group actually occupies -- and that is what this sorts on. A slice with
+ * no key -- the folded "N more", which is several groups at several times --
+ * goes last, which is the only honest place for it.
  */
 export function arrange(slices: Slice[], order: Order): Slice[] {
   const out = [...slices];
@@ -94,11 +95,12 @@ export function chartFor(
   // size. Unlike everything else here this reads a name, which is safe because
   // only the chart's shape rides on it -- no claim about the numbers does.
   //
-  // What this does *not* do is put the periods in order. Power BI stores that
-  // in a sort-by column, and the reader this project uses does not expose one,
-  // so "Jan, Feb, Mar" is a set of strings here and sorting them would give
-  // April first. The columns stay ranked by size like every other chart, and
-  // the panel says so rather than letting the shape imply a chronology.
+  // Putting the periods in order is a separate question, answered by the
+  // server: it reads the sort-by column the model declares -- `Calendar[Month]`
+  // is sorted by `Calendar[MonthSort]` -- and falls back to the dimension's own
+  // dates where none is declared. Where neither is available the columns stay
+  // ranked by size like every other chart, and the panel says so rather than
+  // letting the shape imply a chronology.
   const ordered = namesAPeriod(column);
   if (ordered) {
     // Never a ring once it is a sequence -- bars keep the order too, and are
@@ -157,9 +159,19 @@ export function brief(value: number): string {
   return Number(value.toPrecision(2)).toString();
 }
 
-/** The full figure, for the readout under a chart where there is room for it. */
-export function exact(value: number): string {
-  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+/**
+ * The full figure, for the readout under a chart where there is room for it.
+ *
+ * `shown` is what the model itself says the figure looks like -- `$881,949`,
+ * `42.3%` -- rendered on the server from the format string the measure
+ * declares. It wins when it is there, because a chart reading 0.42 beside a
+ * report reading 42.29% is the discrepancy this project exists to remove. It
+ * is absent for a measure that declares no format, and for one whose format is
+ * not a number picture, and then the figure is shown exactly as the query
+ * returned it.
+ */
+export function exact(value: number, shown?: string): string {
+  return shown || value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
 function share(value: number, total: number): string {
@@ -219,6 +231,7 @@ export function Hovercard({
   unit = "%",
   label,
   value,
+  shown,
   note,
 }: {
   left: number;
@@ -229,6 +242,9 @@ export function Hovercard({
   unit?: "%" | "px";
   label: string;
   value: number;
+  /** The figure as the model asks for it, when it says. Preferred over the
+   *  raw number -- see `exact`. */
+  shown?: string;
   /** A second line, e.g. a share of the total. */
   note?: string;
 }) {
@@ -245,7 +261,7 @@ export function Hovercard({
     >
       <span className="block text-[11px] leading-tight text-muted">{label}</span>
       <span className="block font-mono text-[12.5px] leading-tight font-semibold text-ink tabular">
-        {exact(value)}
+        {exact(value, shown)}
       </span>
       {note && (
         <span className="block text-[10.5px] leading-tight text-faint">{note}</span>
@@ -267,7 +283,8 @@ function Readout({
     <p className="min-h-[1.4em] text-[11.5px] text-muted tabular" aria-live="polite">
       {slice ? (
         <>
-          <span className="font-medium text-ink">{slice.label}</span> — {exact(slice.value)}
+          <span className="font-medium text-ink">{slice.label}</span> —{" "}
+          {exact(slice.value, slice.shown)}
           {total ? ` · ${share(slice.value, total)} of the total` : ""}
         </>
       ) : (
@@ -344,6 +361,7 @@ export function Donut({ slices, by, measure, onPick, picked }: ChartProps) {
               top={(middles[active].y / 160) * 100}
               label={slices[active].label}
               value={slices[active].value}
+          shown={slices[active].shown}
               note={
                 total ? `${share(slices[active].value, total)} of the total` : undefined
               }
@@ -480,6 +498,7 @@ export function Bars({
           unit="px"
           label={slices[active].label}
           value={slices[active].value}
+          shown={slices[active].shown}
           note={
             additive && total ? `${share(slices[active].value, total)} of the total` : undefined
           }
@@ -594,6 +613,7 @@ export function Columns({
             unit="px"
             label={slices[active].label}
             value={slices[active].value}
+          shown={slices[active].shown}
             note={
               additive && total
                 ? `${share(slices[active].value, total)} of the total`
@@ -878,6 +898,7 @@ export function Trend({
           top={(y(slices[at].value) / H) * 100}
           label={slices[at].label}
           value={slices[at].value}
+          shown={slices[at].shown}
         />
       )}
       <svg
@@ -1222,7 +1243,7 @@ export function Atlas({
   measure,
   label,
 }: {
-  places: { label: string; lat: number; lon: number; value: number }[];
+  places: { label: string; lat: number; lon: number; value: number; shown?: string }[];
   measure: string;
   /** What one point is, e.g. "Store". */
   label: string;
@@ -1372,6 +1393,7 @@ export function Atlas({
           top={(y(places[active].lat) / (H + 18)) * 100}
           label={places[active].label}
           value={places[active].value}
+          shown={places[active].shown}
         />
       )}
       <svg

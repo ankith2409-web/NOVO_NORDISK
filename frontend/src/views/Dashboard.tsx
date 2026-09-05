@@ -353,10 +353,11 @@ export function Dashboard({
                   <>
                     Every figure above was computed by running that measure&rsquo;s own
                     SQL against the {computed.rows.toLocaleString()} rows this file
-                    carries — open a card to see the query that produced it. Shown as
-                    the query returned them: Power BI renders a ratio like 0.42 as
-                    42.29% using a format string this file does not expose, so
-                    reinterpreting one here would be a guess.
+                    carries — open a card to see the query that produced it. Where the
+                    model declares how a measure should be rendered, it is shown that
+                    way; open a card for the format it declares and for the raw figure
+                    the query returned. A measure declaring no format, or one that is
+                    not a number picture, is shown exactly as the query returned it.
                   </>
                 ) : (
                   computed.reason
@@ -391,6 +392,30 @@ export function Dashboard({
                 <p className="text-[12px] text-muted">
                   On {opened.shownOn.map((where) => where.page).join(", ")}
                 </p>
+                {/* What the model says this figure looks like, and the figure
+                    underneath it. Both, because the rendered form is what makes
+                    a card comparable to Power BI's and the raw one is what the
+                    SQL below actually returned -- a reader checking the query
+                    needs the number the query gives back. */}
+                {figures.get(opened.field.name)?.shown && (
+                  <p className="text-[12px] text-muted">
+                    Shown as{" "}
+                    <span className="font-mono">
+                      {figures.get(opened.field.name)?.shown}
+                    </span>{" "}
+                    — the model declares this measure as{" "}
+                    {figures.get(opened.field.name)?.format}. The query below
+                    returns{" "}
+                    <span className="font-mono">
+                      {figures
+                        .get(opened.field.name)
+                        ?.value?.toLocaleString(undefined, {
+                          maximumFractionDigits: 4,
+                        })}
+                    </span>
+                    .
+                  </p>
+                )}
                 <FieldBody field={opened.field} />
               </article>
             )}
@@ -562,9 +587,10 @@ function TileRow({ tile, marked }: { tile: Tile; marked: string | null }) {
  * and rounding it to two decimals renders a real measure as `0.00`, which reads
  * as "this is zero" rather than "this is small".
  *
- * Nothing is reinterpreted. Power BI shows `Gross Margin %` as `42.29%` because
- * the measure carries a format string; that string is not in what this file's
- * reader exposes, so the ratio is shown as the ratio it is.
+ * Used only where the file declares no format for the measure. Where it does,
+ * the server renders the figure the way the model asks -- `$1.25M`, `42.3%` --
+ * and that form is preferred, because a card showing `0.42` beside a report
+ * showing `42.29%` is the discrepancy this whole project exists to remove.
  */
 function readable(value: number): string {
   const size = Math.abs(value);
@@ -628,10 +654,18 @@ function KpiCard({
           <span
             className="truncate font-mono text-[22px] leading-none font-semibold tabular"
             // The full figure, unabbreviated, for anyone who needs the digits
-            // the card does not have room for.
-            title={value.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+            // the card does not have room for. As the file asks for it where it
+            // says how, and always with the raw figure beside it -- the card is
+            // checkable against its own SQL, and a formatted number is not.
+            title={
+              figure?.shown
+                ? `${figure.shown} — ${value.toLocaleString(undefined, {
+                    maximumFractionDigits: 4,
+                  })} as the query returned it`
+                : value.toLocaleString(undefined, { maximumFractionDigits: 4 })
+            }
           >
-            {readable(value)}
+            {figure?.compact || readable(value)}
           </span>
         ) : (
           <span className="text-[13px] text-review">no single figure</span>
@@ -693,7 +727,7 @@ function ReportFilters({ filters }: { filters: ReportFilterPayload[] }) {
             onClick={() => setOpen((was) => !was)}
             className="ml-auto text-[11.5px] text-accent underline underline-offset-2"
           >
-            {open ? "hide the per-page filters" : `all ${filters.length}`}
+            {open ? "hide them" : `all ${filters.length}`}
           </button>
         )}
       </div>
@@ -713,16 +747,24 @@ function ReportFilters({ filters }: { filters: ReportFilterPayload[] }) {
         </p>
       ) : (
         <p className="mt-1.5 max-w-prose text-[12.5px] text-ink">
-          Individual pages narrow what they show, so a card in Power BI can differ from
-          the same measure computed here over every row in the file.
+          Individual pages and tiles narrow what they show, so a card in Power BI can
+          differ from the same measure computed here over every row in the file.
         </p>
       )}
 
       {open && perPage.length > 0 && (
         <ul className="mt-2 flex flex-col gap-1 border-t border-review/30 pt-2">
-          {perPage.map((filter) => (
-            <li key={`${filter.page}-${filter.text}`} className="text-[11.5px]">
-              <span className="font-mono text-faint">{filter.page}</span>{" "}
+          {perPage.map((filter, at) => (
+            <li key={`${filter.page}-${filter.visual ?? ""}-${filter.text}-${at}`} className="text-[11.5px]">
+              <span className="font-mono text-faint">
+                {filter.page}
+                {/* Named down to the tile where the filter belongs to one.
+                    A page filter changes every figure on the page and a visual
+                    filter changes one of them, which is the harder case to
+                    spot: the card beside it is unaffected and looks like it
+                    disagrees. */}
+                {filter.visual ? ` › ${filter.visual}` : ""}
+              </span>{" "}
               <span className={filter.readable ? "text-muted" : "text-review"}>
                 {filter.text}
               </span>
@@ -748,13 +790,18 @@ function ReportFilters({ filters }: { filters: ReportFilterPayload[] }) {
  */
 //: The arrangements offered, in the order a reader is likely to want them.
 //: `time` is offered only where the data can support it, which is decided per
-//: chart rather than for the section -- `Calendar[Month]` can be put in date
-//: order and `Store[Chain]` cannot.
+//: chart rather than for the section -- `Calendar[Month]` can be put in the
+//: model's own order and `Store[Chain]` cannot.
+//:
+//: Called "the model's order" rather than "date order" because that is what it
+//: is: the sort-by column the author declared, where they declared one, and the
+//: dimension's own earliest dates only where they did not. `Details[Topic]`
+//: has a declared order and nothing to do with time.
 const ORDERS: { value: Order; label: string }[] = [
   { value: "largest", label: "Largest first" },
   { value: "smallest", label: "Smallest first" },
   { value: "label", label: "A\u2013Z" },
-  { value: "time", label: "In date order" },
+  { value: "time", label: "Model\u2019s order" },
 ];
 /**
  * The dashboard proper: one measure, cut every way this file can honestly cut
@@ -1131,9 +1178,10 @@ function Panel({
   picked?: string | null;
 }) {
   const [showSql, setShowSql] = useState(false);
-  // A chart whose groups have no place in time cannot honour "in date order",
-  // so it keeps the ranking and says so, rather than silently ignoring the
-  // control or shuffling into an order that means nothing.
+  // A chart whose groups carry no order -- neither a sort-by column the model
+  // declares nor dates that partition time -- cannot honour it, so it keeps
+  // the ranking and says so, rather than silently ignoring the control or
+  // shuffling into an order that means nothing.
   const timeable = canOrderByTime(breakdown.slices);
   const applied: Order = order === "time" && !timeable ? "largest" : order;
   const slices = arrange(breakdown.slices, applied);

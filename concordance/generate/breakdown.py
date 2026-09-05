@@ -50,6 +50,14 @@ MAX_SLICES = 10
 #: column called `Category` has to survive a rule aimed at `CategoryID`.
 _NOT_A_DIMENSION = ("id", "key", "guid", "code", "url", "image", "pic", "photo")
 
+#: Data categories that describe a *link or a picture* rather than a value
+#: anybody would group by. Stated by the model, so no sniffing required.
+#:
+#: This module already rejected these by inspecting a value -- a string
+#: starting `http://` or with a JPEG's header -- which catches them and is a
+#: guess. Where the author has said what the column is, that is the answer.
+_NOT_A_LABEL = {"imageurl", "weburl", "barcode"}
+
 
 #: Points on a time series. Higher than `MAX_SLICES` on purpose: a monthly
 #: series over three years is thirty-six points and is *more* readable for
@@ -69,13 +77,16 @@ class Slice:
     #: Where this group falls in time, as an ISO date, when the model carries
     #: something to say so. Empty when it does not.
     #:
-    #: This is what makes "in date order" an option rather than a guess. Power
-    #: BI records a column's display order in a sort-by column that this file's
-    #: reader does not expose, so `Jan, Feb, Mar` cannot be ordered by reading
-    #: the labels -- alphabetically that is April first. But the `Calendar`
-    #: table those labels come from also holds real dates, and the earliest
-    #: date in each group is a fact in the data rather than an inference about
-    #: what the words mean. That is what this holds.
+    #: This is what makes "in date order" an option rather than a guess:
+    #: `Jan, Feb, Mar` sorted as text starts at April.
+    #:
+    #: Two things can fill it, and the first is better. Power BI records a
+    #: column's display order in a *sort-by column* -- `Calendar[Month]` is
+    #: sorted by `Calendar[MonthSort]` -- which is the author stating the
+    #: sequence outright. Where they did not, the dimension table's own dates
+    #: are the fallback: the earliest date in each group is a fact in the data
+    #: rather than an inference about what the words mean, and it is used only
+    #: when the groups really do partition time.
     order: str = ""
 
 
@@ -151,6 +162,11 @@ def _find(model, measure: str):
     from concordance.generate.implicit import find
 
     return find(model, measure)
+
+
+def _declared_unusable(column) -> bool:
+    """True when the model itself says this column is not a label."""
+    return (getattr(column, "data_category", "") or "").casefold() in _NOT_A_LABEL
 
 
 def _named_like_an_id(column: str) -> bool:
@@ -465,8 +481,69 @@ def _period_label(moment: Any, period: str) -> str:
     return moment.strftime(_PERIOD_FORMATS.get(period, "%Y-%m-%d"))
 
 
+def _sort_key(values: list) -> dict:
+    """Sort values as strings that sort the way the values do.
+
+    `Slice.order` is compared as text, both here and in the browser, so `2`
+    must not come after `10`. Where every value is a non-negative number they
+    are padded to a common width; where any is not, they are left as they are
+    and compared as text, which is what the model was going to give a reader
+    anyway.
+    """
+    numbers = []
+    for value in values:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return {value: str(value) for value in values}
+        if value < 0:
+            return {value: str(value) for value in values}
+        numbers.append(value)
+    return {value: f"{float(value):018.4f}" for value in numbers}
+
+
+def _declared_order(model, connection, table: str, column: str) -> dict[str, str]:
+    """Each group's place in the order the author declared for it.
+
+    A sort-by column is the model saying "show these in this sequence", and it
+    beats anything inferred: it works for `Fiscal calendar[FiscalMonth]`, whose
+    three years of January mean there is no single date to anchor it at, and it
+    is right even where the labels have nothing to do with time at all --
+    `Details[Topic]` sorts by `Details[TSort]`.
+    """
+    declared = next(
+        (
+            c.sort_by
+            for c in model.columns
+            if c.table == table and c.name == column and c.sort_by
+        ),
+        "",
+    )
+    if not declared:
+        return {}
+
+    quoted_table = table.replace('"', '""')
+    quoted_label = column.replace('"', '""')
+    quoted_sort = declared.replace('"', '""')
+    try:
+        rows = connection.execute(
+            f'SELECT "{quoted_label}", MIN("{quoted_sort}") '
+            f'FROM "{quoted_table}" GROUP BY 1'
+        ).fetchall()
+    except Exception:  # noqa: BLE001 - no order is a missing option, not a failure
+        return {}
+
+    found = [(str(label), key) for label, key in rows if key is not None]
+    if not found:
+        return {}
+    keys = _sort_key([key for _, key in found])
+    return {label: keys[key] for label, key in found}
+
+
 def _anchors(model, connection, table: str, column: str) -> dict[str, str]:
     """Each group's place in time, but only where the groups *are* places in time.
+
+    Asked of the model first: where a column declares a sort-by column, that is
+    the answer, because it is a statement rather than an inference. What
+    follows is the fallback for the columns that declare none.
 
     Two questions, and the second is the one that matters. Getting the earliest
     date per group is easy. Deciding whether that date means anything is not,
@@ -483,6 +560,10 @@ def _anchors(model, connection, table: str, column: str) -> dict[str, str]:
     2014, and there is no single point in time to put it at. Restrict the model
     to one year and the same column passes, because then there is.
     """
+    stated = _declared_order(model, connection, table, column)
+    if stated:
+        return stated
+
     dates = _date_columns(model, table)
     if not dates:
         return {}
@@ -539,6 +620,15 @@ def chartable(model, connection) -> list[tuple[str, str, int]]:
         if (column.table, column.name) in keys:
             continue  # a join key groups by an opaque id
         if _named_like_an_id(column.name):
+            continue
+        # Asked of the file before anything is asked of the data: a column the
+        # author categorised as an image or a link is not a dimension, and
+        # knowing that costs no query at all.
+        if _declared_unusable(column):
+            continue
+        # And a column the author hid is one they took out of the report on
+        # purpose. Charting it puts back exactly what they removed.
+        if getattr(column, "is_hidden", False):
             continue
 
         tried += 1

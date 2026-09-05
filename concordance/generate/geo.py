@@ -113,17 +113,34 @@ def _matches(column: str, names: tuple[str, ...]) -> bool:
 def coordinate_columns(model, table: str) -> tuple[str, str] | None:
     """The latitude and longitude columns on one table, if it has a pair.
 
-    Both halves or neither. A table with a latitude and no longitude cannot be
-    plotted, and picking some other numeric column to stand in for the missing
-    half would be inventing a position.
+    The model's own declaration first, and the name only as a fallback.
+
+    Power BI records what a column *is* in its data category -- `Latitude`,
+    `Longitude`, `City`, `ImageUrl` -- and this module used to ignore that and
+    read the name instead. Which worked on the sample, and is guesswork: a
+    column called `Lat` holding a customer's initials would have been plotted,
+    and one the author categorised as a latitude but named `Y` would not. The
+    file states it; asking is strictly better than inferring.
+
+    The name-matching stays as a fallback, because plenty of models never set a
+    category at all, and a map drawn from a well-named pair is better than no
+    map. Both halves or neither, either way: a table with a latitude and no
+    longitude cannot be plotted, and picking some other numeric column to
+    stand in for the missing half would be inventing a position.
     """
-    lat = next(
-        (c.name for c in model.columns if c.table == table and _matches(c.name, _LAT_NAMES)),
-        None,
+    here = [c for c in model.columns if c.table == table]
+
+    def declared(category: str) -> str | None:
+        return next(
+            (c.name for c in here if (c.data_category or "").casefold() == category),
+            None,
+        )
+
+    lat = declared("latitude") or next(
+        (c.name for c in here if _matches(c.name, _LAT_NAMES)), None
     )
-    lon = next(
-        (c.name for c in model.columns if c.table == table and _matches(c.name, _LON_NAMES)),
-        None,
+    lon = declared("longitude") or next(
+        (c.name for c in here if _matches(c.name, _LON_NAMES)), None
     )
     return (lat, lon) if lat and lon else None
 

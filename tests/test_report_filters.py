@@ -58,10 +58,42 @@ def test_a_report_filter_is_marked_as_reaching_every_page(model) -> None:
 
 
 def test_each_page_filter_names_its_page(model) -> None:
-    by_page = {f.page: f.text for f in model.report_filters if not f.reaches_everything}
+    by_page = {f.page: f.text for f in model.report_filters if f.scope == "page"}
     assert by_page["Net Sales"] == "Sales[Status] is Sold"
     assert by_page["Returns"] == "Sales[Status] is Returned"
     assert by_page["Return Rate"] == "Product[Product] is OneNote"
+
+
+def test_every_filter_below_report_level_says_where_it_lives(model) -> None:
+    """A filter a reader cannot locate is a filter they cannot check.
+
+    Page and visual scope answer different questions -- one narrows a whole
+    page, the other narrows a single card while everything beside it stays
+    wide -- so the scope has to be as visible as the sentence.
+    """
+    for found in model.report_filters:
+        if found.reaches_everything:
+            continue
+        assert found.scope in {"page", "visual"}
+        assert found.page, found.text
+        # Only a visual filter belongs to a tile, and it always names one.
+        assert bool(found.visual) == (found.scope == "visual"), found.text
+
+
+def test_the_tile_filters_on_this_report_are_read(model) -> None:
+    """Ten filters that sat on single tiles and were reported by nobody.
+
+    A page filter is at least visible in the filter pane. One of these narrows
+    a single card to the top 8 of a ranking while the card beside it stays
+    wide, and until the visual scope existed the tool described both as
+    unconditional.
+    """
+    on_tiles = [f for f in model.report_filters if f.scope == "visual"]
+    assert len(on_tiles) == 10
+    assert (
+        "Association[RightItemSetId] is in the top 8 by Sum of Association[Importance]"
+        in _texts(on_tiles)
+    )
 
 
 def test_every_filter_in_this_report_was_understood(model) -> None:
@@ -156,6 +188,155 @@ def test_a_comparison_reads_as_one() -> None:
     ]
     found = read_filters(_document(_column("Sales", "Amount"), where))
     assert _texts(found) == ["Sales[Amount] is more than 1000"]
+
+
+def test_a_top_n_filter_reads_as_a_ranking() -> None:
+    """Power BI writes "top 8" as membership of a subquery, not as an operator.
+
+    Read only as far as the `In`, this looks like a list of values holding no
+    values, which is how five real filters in Microsoft's own sample came to be
+    reported as shapes this tool could not read.
+    """
+    where = [
+        {
+            "Condition": {
+                "In": {
+                    "Expressions": [_column("Association", "RightItemSetId")],
+                    "Table": {"SourceRef": {"Source": "subquery"}},
+                }
+            }
+        }
+    ]
+    document = {
+        "filters": json.dumps(
+            [
+                {
+                    "name": "Filter",
+                    "expression": _column("Association", "RightItemSetId"),
+                    "filter": {
+                        "From": [
+                            {
+                                "Name": "subquery",
+                                "Type": 2,
+                                "Expression": {
+                                    "Subquery": {
+                                        "Query": {
+                                            "From": [
+                                                {"Name": "a", "Entity": "Association", "Type": 0}
+                                            ],
+                                            "OrderBy": [
+                                                {
+                                                    "Direction": 2,
+                                                    "Expression": {
+                                                        "Aggregation": {
+                                                            "Function": 0,
+                                                            "Expression": {
+                                                                "Column": {
+                                                                    "Expression": {
+                                                                        "SourceRef": {"Source": "a"}
+                                                                    },
+                                                                    "Property": "Importance",
+                                                                }
+                                                            },
+                                                        }
+                                                    },
+                                                }
+                                            ],
+                                            "Top": 8,
+                                        }
+                                    }
+                                },
+                            }
+                        ],
+                        "Where": where,
+                    },
+                }
+            ]
+        ),
+        "sections": [],
+    }
+    assert _texts(read_filters(document)) == [
+        "Association[RightItemSetId] is in the top 8 by Sum of Association[Importance]"
+    ]
+
+
+def test_a_bottom_n_filter_says_bottom() -> None:
+    """Ascending order keeps the other end, and saying "top" would invert it."""
+    document = {
+        "filters": json.dumps(
+            [
+                {
+                    "name": "Filter",
+                    "expression": _column("Store", "Chain"),
+                    "filter": {
+                        "From": [
+                            {
+                                "Name": "q",
+                                "Type": 2,
+                                "Expression": {
+                                    "Subquery": {
+                                        "Query": {
+                                            "From": [
+                                                {"Name": "s", "Entity": "Store", "Type": 0}
+                                            ],
+                                            "OrderBy": [
+                                                {
+                                                    "Direction": 1,
+                                                    "Expression": {
+                                                        "Measure": {
+                                                            "Expression": {
+                                                                "SourceRef": {"Source": "s"}
+                                                            },
+                                                            "Property": "Net Sales",
+                                                        }
+                                                    },
+                                                }
+                                            ],
+                                            "Top": 3,
+                                        }
+                                    }
+                                },
+                            }
+                        ],
+                        "Where": [
+                            {
+                                "Condition": {
+                                    "In": {
+                                        "Expressions": [_column("Store", "Chain")],
+                                        "Table": {"SourceRef": {"Source": "q"}},
+                                    }
+                                }
+                            }
+                        ],
+                    },
+                }
+            ]
+        ),
+        "sections": [],
+    }
+    assert _texts(read_filters(document)) == [
+        "Store[Chain] is in the bottom 3 by Store[Net Sales]"
+    ]
+
+
+def test_a_source_alias_resolves_to_the_table_it_stands_for() -> None:
+    """`"Source": "a"` is `FROM Association AS a`, not a table called "a"."""
+    from concordance.normalize.filters import _entity_and_property
+
+    aliased = {"Column": {"Expression": {"SourceRef": {"Source": "a"}}, "Property": "Importance"}}
+    assert _entity_and_property(aliased, {"a": "Association"}) == ("Association", "Importance")
+    # With nothing to resolve it against, it stays honestly anonymous rather
+    # than reporting a table named "a".
+    assert _entity_and_property(aliased) == ("", "Importance")
+
+
+def test_an_untitled_custom_visual_is_described_not_identified() -> None:
+    """A GUID and a build stamp are true and useless as a place to point at."""
+    from concordance.normalize.filters import _kind
+
+    assert _kind("PBI_CV_885EF3C3_31C1_4745_B2B9_20771D5AD196") == "a custom visual"
+    assert _kind("ClusterMap1652434605854") == "ClusterMap"
+    assert _kind("barChart") == "barChart"
 
 
 # -- what it refuses to invent ------------------------------------------------

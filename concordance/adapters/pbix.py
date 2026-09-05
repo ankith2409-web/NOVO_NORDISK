@@ -192,8 +192,10 @@ class PbixAdapter:
         seen = known | {t.casefold() for t in implied}
         new_tables = sorted(t for t in calculated if t.casefold() not in seen)
 
+        says_table = self._table_declarations(raw)
         for name in declared + implied + new_tables:
             query = power_query.get(name)
+            says = says_table.get(name.casefold(), {})
             model.tables.append(
                 Table(
                     name=name,
@@ -223,13 +225,16 @@ class PbixAdapter:
                     ),
                     power_query=power_query.get(name),
                     dax_expression=calculated.get(name),
+                    description=says.get("description", ""),
+                    is_hidden=says.get("is_hidden", False),
                 )
             )
         known_measures = {
             str(r.get("Name", "")).strip().casefold() for r in measure_rows
         }
+        says_measure = self._measure_declarations(raw)
         model.measures = [
-            self._build_measure(r, known_measures) for r in measure_rows
+            self._build_measure(r, known_measures, says_measure) for r in measure_rows
         ]
 
         model.relationships = self._build_relationships(raw)
@@ -486,11 +491,129 @@ class PbixAdapter:
                 out[(table, column)] = str(expr)
         return out
 
+    def _column_declarations(self, raw: PBIXRay) -> dict[tuple[str, str], dict]:
+        """What the model says about each column, beyond its name and type.
+
+        `raw.schema` is the storage schema -- what a column *is made of*.
+        `tmschema_columns` is the semantic model's own record of what it *is*:
+        the data category, whether the author hid it, how it is formatted, and
+        any description they wrote. Only the first was ever read, which is why
+        two other parts of this project ended up guessing at answers stated
+        here: the map decided a column held a latitude by its name, and the
+        chart picker decided one held an image by sniffing its bytes.
+        """
+        found: dict[tuple[str, str], dict] = {}
+        for row in _rows(_safe(raw, "tmschema_columns")):
+            table = str(row.get("TableName", "")).strip()
+            name = str(row.get("Name", "")).strip()
+            if not table or not name:
+                continue
+            found[(table.casefold(), name.casefold())] = {
+                "data_category": _text(row.get("DataCategory")),
+                "is_hidden": bool(row.get("IsHidden")),
+                "format_string": _text(row.get("FormatString")),
+                "description": _text(row.get("Description")),
+            }
+        return found
+
+    def _measure_declarations(self, raw: PBIXRay) -> dict[tuple[str, str], dict]:
+        """How each measure is meant to be rendered, and whether it is hidden.
+
+        This one has to reach past PBIXRay. It surfaces a `tmschema_columns`
+        table but no `tmschema_measures`, and its `dax_measures` query selects
+        five of the twenty columns the model's own `Measure` table holds --
+        `FormatString` and `IsHidden` are not among them. So the tool told
+        readers that "Power BI renders a ratio like 0.42 as 42.29% using a
+        format string this file does not expose", and that was simply untrue:
+        `Net Sales` declares `\\$#,0;-\\$#,0;\\$#,0` and `Net Sales Variance %`
+        declares `0.0%;-0.0%;0.0%`, right there in the file, unread.
+
+        Reaching into another library's internals is a cost, so it is paid
+        narrowly: one read-only query, every failure swallowed, and a model
+        that loses nothing but the formats if a future PBIXRay moves the
+        furniture.
+        """
+        try:
+            reader = raw._metadata.source._db  # noqa: SLF001 -- see docstring
+            rows = _rows(
+                reader.query(
+                    "SELECT t.Name AS TableName, m.Name AS Name, "
+                    "m.FormatString AS FormatString, m.IsHidden AS IsHidden "
+                    "FROM Measure m JOIN [Table] t ON m.TableID = t.ID"
+                )
+            )
+        except Exception:  # noqa: BLE001 -- a private path, so anything at all
+            return {}
+
+        found: dict[tuple[str, str], dict] = {}
+        for row in rows:
+            table = str(row.get("TableName", "")).strip()
+            name = str(row.get("Name", "")).strip()
+            if not table or not name:
+                continue
+            found[(table.casefold(), name.casefold())] = {
+                "format_string": _text(row.get("FormatString")),
+                "is_hidden": bool(row.get("IsHidden")),
+            }
+        return found
+
+    def _sort_by_columns(self, raw: PBIXRay) -> dict[tuple[str, str], str]:
+        """Which column puts each other column in order, where one is declared.
+
+        `Calendar[Month]` is sorted by `Calendar[MonthSort]`; without reading
+        that, `Jan, Feb, Mar` is three strings and sorting them starts at
+        April. Same private path as `_measure_declarations`, for the same
+        reason and with the same containment: losing it costs the ordering and
+        nothing else.
+        """
+        try:
+            reader = raw._metadata.source._db  # noqa: SLF001 -- see docstring
+            rows = _rows(
+                reader.query(
+                    "SELECT t.Name AS TableName, c.ExplicitName AS Name, "
+                    "s.ExplicitName AS SortBy "
+                    "FROM Column c JOIN [Table] t ON c.TableID = t.ID "
+                    "JOIN Column s ON c.SortByColumnID = s.ID"
+                )
+            )
+        except Exception:  # noqa: BLE001 -- a private path, so anything at all
+            return {}
+
+        found: dict[tuple[str, str], str] = {}
+        for row in rows:
+            table = str(row.get("TableName", "")).strip()
+            name = str(row.get("Name", "")).strip()
+            sorts_by = str(row.get("SortBy", "")).strip()
+            if not table or not name or not sorts_by or sorts_by == name:
+                continue
+            found[(table.casefold(), name.casefold())] = sorts_by
+        return found
+
+    def _table_declarations(self, raw: PBIXRay) -> dict[str, dict]:
+        """What the author said about each table, in their own words.
+
+        A description written by the person who built the table beats anything
+        this tool can infer about what it is for, and `tmschema_tables` has
+        been carrying them unread.
+        """
+        found: dict[str, dict] = {}
+        for row in _rows(_safe(raw, "tmschema_tables")):
+            name = str(row.get("Name", "")).strip()
+            if not name:
+                continue
+            found[name.casefold()] = {
+                "description": _text(row.get("Description")),
+                "is_hidden": bool(row.get("IsHidden")),
+            }
+        return found
+
     def _build_columns(
         self, raw: PBIXRay, calc: dict[tuple[str, str], str]
     ) -> list[Column]:
         columns: list[Column] = []
         seen: set[tuple[str, str]] = set()
+        declared = self._column_declarations(raw)
+        sorts_by = self._sort_by_columns(raw)
 
         for row in _rows(raw.schema):
             table = str(row.get("TableName", "")).strip()
@@ -499,12 +622,18 @@ class PbixAdapter:
                 continue
             seen.add((table, name))
             expr = calc.get((table, name))
+            says = declared.get((table.casefold(), name.casefold()), {})
             columns.append(
                 Column(
                     table=table,
                     name=name,
                     data_type=str(row.get("PandasDataType", "unknown")),
                     expression=expr,
+                    data_category=says.get("data_category", ""),
+                    is_hidden=says.get("is_hidden", False),
+                    format_string=says.get("format_string", ""),
+                    description=says.get("description", ""),
+                    sort_by=sorts_by.get((table.casefold(), name.casefold()), ""),
                     # A stored column's identity is its name and type; a
                     # calculated one's is the expression that produces it.
                     fingerprint=(
@@ -521,19 +650,29 @@ class PbixAdapter:
         # than silently dropping a real model object.
         for (table, name), expr in calc.items():
             if (table, name) not in seen:
+                says = declared.get((table.casefold(), name.casefold()), {})
                 columns.append(
                     Column(
                         table=table,
                         name=name,
                         data_type="calculated",
                         expression=expr,
+                        data_category=says.get("data_category", ""),
+                        is_hidden=says.get("is_hidden", False),
+                        format_string=says.get("format_string", ""),
+                        description=says.get("description", ""),
                         fingerprint=fingerprint_dax(expr),
                     )
                 )
 
         return columns
 
-    def _build_measure(self, row: dict, known_measures: set[str]) -> Measure:
+    def _build_measure(
+        self,
+        row: dict,
+        known_measures: set[str],
+        declared: dict[tuple[str, str], dict] | None = None,
+    ) -> Measure:
         table = str(row.get("TableName", "")).strip()
         name = str(row.get("Name", "")).strip()
         # `row.get("Expression") or ""` looks safe but is not: a pandas NaN is
@@ -565,6 +704,7 @@ class PbixAdapter:
             else:
                 qualified_columns.add((ref_table, ref_name))
 
+        says = (declared or {}).get((table.casefold(), name.casefold()), {})
         return Measure(
             table=table,
             name=name,
@@ -572,6 +712,8 @@ class PbixAdapter:
             fingerprint=fingerprint_dax(expression),
             display_folder=_optional(row.get("DisplayFolder")),
             description=_optional(row.get("Description")),
+            format_string=says.get("format_string", ""),
+            is_hidden=says.get("is_hidden", False),
             depends_on_columns=frozenset(qualified_columns | same_table_columns),
             depends_on_measures=frozenset(measures),
         )
@@ -927,6 +1069,15 @@ def _rows(frame) -> list[dict]:
         # to_dict would produce nothing useful anyway.
         return [] if frame.empty else frame.to_dict("records")
     return list(frame)
+
+
+def _text(value) -> str:
+    """One cell as a stripped string, with pandas' many spellings of nothing
+    all coming out as the empty string."""
+    if not _present(value):
+        return ""
+    text = str(value).strip()
+    return "" if text.casefold() in ("none", "nan", "<na>") else text
 
 
 def _present(value) -> bool:

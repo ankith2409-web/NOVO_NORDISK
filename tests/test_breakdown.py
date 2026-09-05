@@ -336,13 +336,14 @@ def test_the_tolerance_is_relative_not_absolute(parts, whole, expected) -> None:
 
 
 def test_a_real_period_carries_the_date_it_sits_at(store) -> None:
-    """The anchor is what makes "in date order" real rather than a guess.
+    """The anchor is what makes an ordering real rather than a guess.
 
-    Power BI records a column's display order in a sort-by column this file's
-    reader does not expose, so year and month labels cannot be ordered by
-    reading them. The table those labels come from also holds real dates, and
-    the earliest date in each group is a fact in the data rather than an
-    inference about what the words mean.
+    Labels cannot be ordered by reading them -- alphabetically `Jan, Feb, Mar`
+    starts at April. Where the author declared a sort-by column, that answers
+    it outright. `FiscalYear` declares none, and this is the fallback: the
+    table those labels come from also holds real dates, and the earliest date
+    in each group is a fact in the data rather than an inference about what the
+    words mean.
     """
     model, connection = store
     anchors = B._anchors(model, connection, "Fiscal calendar", "FiscalYear")
@@ -372,12 +373,42 @@ def test_a_month_that_repeats_across_years_is_not_one_point_in_time(store) -> No
     """Store Sales' fiscal calendar covers three years, so its "Jan" is January
     2013 *and* January 2014.
 
-    Ordering those twelve labels would imply a chronology the data does not
-    have. This is the case a name-based rule gets wrong in the confident
-    direction -- `FiscalMonth` could hardly sound more like a period.
+    So there is no date to anchor those twelve labels at, and inferring one
+    would imply a chronology the data does not have. This is the case a
+    name-based rule gets wrong in the confident direction -- `FiscalMonth`
+    could hardly sound more like a period.
+
+    The author settled it anyway, by declaring `Period` as the column's sort
+    order; that is read separately and is what `_anchors` now answers with.
+    Stripping the declaration leaves the inference on its own, which is what
+    this checks.
+    """
+    from dataclasses import replace
+
+    model, connection = store
+    without = replace(
+        model,
+        columns=[
+            replace(c, sort_by="") if c.table == "Fiscal calendar" else c
+            for c in model.columns
+        ],
+    )
+    assert B._anchors(without, connection, "Fiscal calendar", "FiscalMonth") == {}
+
+
+def test_the_author_can_settle_an_order_the_data_cannot(store) -> None:
+    """The other half of the case above.
+
+    Twelve months with no single point in time, put in the order the model
+    declares for them -- which is what Power BI shows and what the date rule,
+    correctly, cannot produce.
     """
     model, connection = store
-    assert B._anchors(model, connection, "Fiscal calendar", "FiscalMonth") == {}
+    ordered = B._anchors(model, connection, "Fiscal calendar", "FiscalMonth")
+    assert [label for label, _ in sorted(ordered.items(), key=lambda kv: kv[1])] == [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ]
 
 
 def test_a_split_that_is_not_a_period_carries_no_order(store) -> None:

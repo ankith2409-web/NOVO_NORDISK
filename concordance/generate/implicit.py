@@ -124,6 +124,9 @@ def from_report(model) -> list[Measure]:
     """
     columns = {(c.table.casefold(), c.name.casefold()) for c in model.columns}
     known = {m.name.casefold() for m in model.measures}
+    formats = {
+        (c.table.casefold(), c.name.casefold()): c.format_string for c in model.columns
+    }
 
     # Two tables can both carry an `Amount`, and "Sum of Amount" twice in one
     # list names two different calculations identically -- which is the exact
@@ -182,6 +185,17 @@ def from_report(model) -> list[Measure]:
                         "them rewritten as DAX so the figure can be computed and checked."
                     ),
                     depends_on_columns=frozenset({(field.table, field.name)}),
+                    # Summing a currency column gives a currency; counting one
+                    # gives a count, whatever the column is formatted as. So
+                    # the column's format carries over only for the
+                    # aggregations that leave the unit alone -- a `Count of
+                    # Sales Amount` shown as `$412` would be a plain lie about
+                    # what the figure is.
+                    format_string=(
+                        formats.get((field.table.casefold(), field.name.casefold()), "")
+                        if dax in NUMERIC_ONLY
+                        else ""
+                    ),
                 )
     return list(found.values())
 

@@ -794,6 +794,7 @@ def report(context: ApiContext, params: Params) -> dict[str, Any]:
             {
                 "scope": f.scope,
                 "page": f.page,
+                "visual": f.visual,
                 "target": f.target,
                 "text": f.text,
                 "readable": f.readable,
@@ -1016,6 +1017,45 @@ def find(context: ApiContext, params: Params) -> dict[str, Any]:
     return search(context.graph, (params.get("q") or [""])[0])
 
 
+def _format_of(model, name: str) -> str:
+    """The format string the file declares for one measure, if it declares one.
+
+    Looks past the model's own measures to the ones the report declares on its
+    visuals, because an implicit `Sum of Sales Amount` inherits the format of
+    the column it sums and a reader has no way to tell the two kinds apart on
+    the page.
+    """
+    from concordance.generate.implicit import find
+
+    found = find(model, name)
+    return found.format_string if found else ""
+
+
+def _shown(model, name: str, value: float | None) -> dict[str, Any]:
+    """A figure as the file asks for it, beside the figure the query returned.
+
+    Both, never one. The rendered form is what the report shows and what makes
+    a Concordance figure comparable to a Power BI card; the raw one is what the
+    SQL beneath it actually returned, and dropping it would leave a reader
+    checking a query against a number that has been through a format. When the
+    format is one `generate/formats.py` declines to apply, `shown` is empty and
+    the page falls back to the raw figure.
+    """
+    from concordance.generate.formats import compact, describe, render
+
+    declared = _format_of(model, name)
+    if value is None or not declared:
+        return {"shown": "", "compact": "", "format": "", "format_string": declared}
+    return {
+        "shown": render(value, declared) or "",
+        # The same figure at the size a card is, so the card does not have to
+        # take the format apart a second time in TypeScript to abbreviate it.
+        "compact": compact(value, declared) or "",
+        "format": describe(declared),
+        "format_string": declared,
+    }
+
+
 def values(context: ApiContext, params: Params) -> dict[str, Any]:
     """What each measure actually comes to, run against the model's own rows.
 
@@ -1038,6 +1078,7 @@ def values(context: ApiContext, params: Params) -> dict[str, Any]:
                 "sql": value.sql,
                 "reason": value.reason,
                 "implicit": value.implicit,
+                **_shown(context.graph.model, value.measure, value.value),
             }
             for value in run.values
         ],
@@ -1054,6 +1095,7 @@ def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
     rather than drawing an empty grid.
     """
     from concordance.generate.breakdown import build
+    from concordance.generate.formats import describe, render
 
     model = context.graph.model
     wanted = _one(params, "measure", required=False)
@@ -1126,6 +1168,14 @@ def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
         }
 
     built = build(model, connection, wanted, year=year, period=period, cross=cross)
+    # One lookup for the whole payload: every bar, slice and point below is the
+    # same measure, so they all carry the same declared format.
+    declared = _format_of(model, built.measure)
+
+    def as_declared(value: float | None) -> str:
+        if value is None or not declared:
+            return ""
+        return render(value, declared) or ""
 
     def rendered(b) -> dict[str, Any]:
         return {
@@ -1133,14 +1183,22 @@ def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
             "table": b.table,
             "column": b.column,
             "total": b.total,
+            "shown": as_declared(b.total),
             "whole": b.whole,
+            "whole_shown": as_declared(b.whole),
             "additive": b.additive,
             "is_filter": b.is_filter,
             "folded": b.folded,
             "sql": b.sql,
             "reason": b.reason,
             "slices": [
-                {"label": s.label, "value": s.value, "order": s.order} for s in b.slices
+                {
+                    "label": s.label,
+                    "value": s.value,
+                    "order": s.order,
+                    "shown": as_declared(s.value),
+                }
+                for s in b.slices
             ],
         }
 
@@ -1173,6 +1231,10 @@ def dashboard(context: ApiContext, params: Params) -> dict[str, Any]:
             v.measure == built.measure and v.implicit
             for v in context.evaluated().values
         ),
+        # What the file says this measure looks like -- `a currency amount, no
+        # decimal places` -- so the page can say why a bar reads $1,248,013
+        # where the SQL beneath it returned 1248013.
+        "format": describe(declared) if declared else "",
     }
 
 
@@ -1256,7 +1318,10 @@ def atlas(context: ApiContext, params: Params) -> dict[str, Any]:
         return {"model": model.name, "measure": wanted, "available": False,
                 "reason": reason, "places": [], "bounds": []}
 
+    from concordance.generate.formats import render
+
     built = build(model, connection, wanted)
+    declared = _format_of(model, built.measure)
     return {
         "model": model.name,
         # Whichever basemap this server is configured for. The points are
@@ -1272,7 +1337,16 @@ def atlas(context: ApiContext, params: Params) -> dict[str, Any]:
         "sql": built.sql,
         "bounds": list(built.bounds),
         "places": [
-            {"label": p.label, "lat": p.latitude, "lon": p.longitude, "value": p.value}
+            {
+                "label": p.label,
+                "lat": p.latitude,
+                "lon": p.longitude,
+                "value": p.value,
+                # As the file asks for it, exactly as on every other chart --
+                # a point reading 881949 beside a bar reading $881,949 is the
+                # same figure looking like two.
+                "shown": (render(p.value, declared) or "") if declared else "",
+            }
             for p in built.places
         ],
     }
