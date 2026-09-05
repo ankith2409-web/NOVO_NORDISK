@@ -83,6 +83,28 @@ _TRANSLATION_GAP = (
     "guessing"
 )
 
+#: Why the Q&A synonyms are counted and not used.
+#:
+#: They looked like the best thing left unread: a glossary wants the words a
+#: business actually uses, and this is where Power BI keeps them. Reading them
+#: is the part that settles it. Across the three sample files there are 565
+#: terms and not one was typed by a person -- every entry is `Generated` (the
+#: column's own name with the spaces put back: "location ID" for `LocationID`)
+#: or `Suggested` (Power BI's thesaurus, which offers "artifact advertised" for
+#: `Product Advertised` and "order" for `Backorder Percentage`).
+#:
+#: A glossary of business terms containing "artifact advertised" is worse than
+#: no glossary, because a reader has no way to tell which entries a person
+#: stood behind. So the count is reported and the words are not used, and the
+#: day a file turns up with authored synonyms in it this is the note that says
+#: what to do about it.
+_SYNONYM_GAP = (
+    "Q&A synonyms are present and not used as business vocabulary: in the files "
+    "read so far every term is machine-generated -- either the object's own name "
+    "respaced, or a thesaurus suggestion -- so treating them as words a business "
+    "chose would put invented phrases in a glossary"
+)
+
 #: What PBIXRay's `rls` frame cannot show, however well it is read. Its query
 #: joins TablePermission, so a role that filters no table produces no row at
 #: all, and it never selects Role.ModelPermission. Both are stated as gaps
@@ -227,6 +249,7 @@ class PbixAdapter:
                     dax_expression=calculated.get(name),
                     description=says.get("description", ""),
                     is_hidden=says.get("is_hidden", False),
+                    data_category=says.get("data_category", ""),
                 )
             )
         known_measures = {
@@ -442,6 +465,12 @@ class PbixAdapter:
                     )
                 )
 
+        for count, feature, reason in (
+            (self._synonyms(raw), "Q&A synonyms", _SYNONYM_GAP),
+        ):
+            if count:
+                gaps.append(CoverageGap(feature=feature, count=count, reason=reason))
+
         translations = _safe(raw, "tmschema_translations")
         try:
             translated = len(translations) if translations is not None else 0
@@ -557,6 +586,22 @@ class PbixAdapter:
             }
         return found
 
+    def _synonyms(self, raw: PBIXRay) -> int:
+        """How many Q&A terms the model carries. See `_SYNONYM_GAP`."""
+        import json
+
+        rows = _rows(_safe(raw, "tmschema_linguistic_metadata"))
+        found = 0
+        for row in rows:
+            try:
+                blob = json.loads(str(row.get("Content") or "{}"))
+            except (json.JSONDecodeError, TypeError):
+                continue
+            for entity in (blob.get("Entities") or {}).values():
+                for term in (entity or {}).get("Terms") or []:
+                    found += len(term or {})
+        return found
+
     def _sort_by_columns(self, raw: PBIXRay) -> dict[tuple[str, str], str]:
         """Which column puts each other column in order, where one is declared.
 
@@ -604,6 +649,7 @@ class PbixAdapter:
             found[name.casefold()] = {
                 "description": _text(row.get("Description")),
                 "is_hidden": bool(row.get("IsHidden")),
+                "data_category": _text(row.get("DataCategory")),
             }
         return found
 

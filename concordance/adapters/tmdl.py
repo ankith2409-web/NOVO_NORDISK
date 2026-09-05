@@ -484,6 +484,9 @@ class TmdlAdapter:
                         ),
                     ),
                     power_query=power_query,
+                    description=node.description or "",
+                    is_hidden=node.properties.get("isHidden") == "true",
+                    data_category=node.properties.get("dataCategory", ""),
                 )
             )
 
@@ -507,6 +510,19 @@ class TmdlAdapter:
                         name=column.name,
                         data_type=column.properties.get("dataType", "unknown"),
                         expression=expression,
+                        # The same declarations the .pbix adapter reads, from
+                        # the same model saved the other way. Held to that on
+                        # purpose: a guarantee that depends on which file
+                        # format a model was saved in is not a guarantee, and
+                        # a map that finds its coordinates in one and guesses
+                        # in the other is exactly that.
+                        data_category=column.properties.get("dataCategory", ""),
+                        is_hidden=column.properties.get("isHidden") == "true",
+                        format_string=_unquote(
+                            column.properties.get("formatString", "")
+                        ),
+                        description=column.description or "",
+                        sort_by=_unquote(column.properties.get("sortByColumn", "")),
                         fingerprint=(
                             fingerprint_dax(expression)
                             if expression
@@ -765,6 +781,8 @@ class TmdlAdapter:
             fingerprint=fingerprint_dax(expression),
             display_folder=node.properties.get("displayFolder"),
             description=node.description,
+            format_string=_unquote(node.properties.get("formatString", "")),
+            is_hidden=node.properties.get("isHidden") == "true",
             depends_on_columns=frozenset(columns),
             depends_on_measures=frozenset(measures),
         )

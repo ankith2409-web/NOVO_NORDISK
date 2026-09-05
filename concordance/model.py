@@ -163,6 +163,11 @@ class Table:
     description: str = ""
     #: True when the author hid the whole table from report authors.
     is_hidden: bool = False
+    #: What the model says the table *is*. In practice one value matters:
+    #: `Time`, which is Power BI's "mark as date table" -- the author naming
+    #: their calendar outright, where this project otherwise has to work it out
+    #: from the shape of the relationships and the spread of the values.
+    data_category: str = ""
 
     @property
     def is_calculated(self) -> bool:

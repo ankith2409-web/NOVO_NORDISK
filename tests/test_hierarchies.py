@@ -209,15 +209,41 @@ def test_rls_still_reports_what_this_format_cannot_show() -> None:
     assert "model-level permission" in residual.reason
 
 
+#: Gaps that are a decision rather than a to-do. Reported because a reader has
+#: to know something is there and unused; excluded from the "nothing unread"
+#: claim below because nothing about them is waiting to be implemented.
+_BY_CHOICE = {"Q&A synonyms"}
+
+
 @pytest.mark.parametrize("name", SAMPLES)
 def test_sample_models_report_nothing_unread(name: str) -> None:
-    """Everything these three contain is now read.
+    """Everything these three contain that this adapter means to read, it reads.
 
     The claim is only worth anything because the checker can distinguish the
     two cases -- `test_unextracted_features_are_reported_when_present` shows
     it still reports what it cannot read.
+
+    What is left is one deliberate abstention. Q&A synonyms are read, counted
+    and not used as vocabulary: across these three files all 565 terms are
+    machine-generated, and a glossary containing Power BI's suggestion of
+    "artifact advertised" would be worse than no glossary. That is a judgement
+    somebody can disagree with, which is exactly why it is stated in the
+    document rather than made silently.
     """
-    assert PbixAdapter().extract(str(_available(name))).coverage_gaps == []
+    gaps = PbixAdapter().extract(str(_available(name))).coverage_gaps
+    assert [g.feature for g in gaps if g.feature not in _BY_CHOICE] == []
+
+
+@pytest.mark.parametrize("name", SAMPLES)
+def test_a_deliberate_abstention_says_why(name: str) -> None:
+    """"Not yet extracted" and "read and deliberately not used" are different
+    facts about a document, and were being reported in identical words."""
+    gaps = PbixAdapter().extract(str(_available(name))).coverage_gaps
+    for gap in gaps:
+        if gap.feature in _BY_CHOICE:
+            assert gap.count > 0
+            assert "machine-generated" in gap.reason
+            assert "not yet extracted" not in gap.reason
 
 
 def test_coverage_gaps_reach_the_serialised_graph(adventure_works: SemanticGraph) -> None:

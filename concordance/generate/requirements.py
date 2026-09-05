@@ -1207,13 +1207,23 @@ class RequirementDeriver:
                     kind=Kind.FUNCTIONAL,
                     category="Documented gaps",
                     statement=(
-                        f"This model contains {gap.count} {gap.feature} which are **not "
-                        f"covered by this document** and require separate specification."
+                        f"The {gap.count} {gap.feature} this model carries shall be "
+                        f"specified separately — this document does not cover them."
                     ),
+                    # The gap's own reason, because the two kinds are not the
+                    # same thing and were being described identically. Some are
+                    # objects this adapter cannot yet read; others it can read
+                    # and deliberately does not use, and a reader deciding
+                    # whether to go and look needs to know which.
                     rationale=(
-                        "The extractor detected these objects but does not yet read their "
-                        "definitions. Recording the gap prevents the document from being "
-                        "mistaken for a complete specification."
+                        f"{gap.reason[0].upper()}{gap.reason[1:]}. Recording it here "
+                        "prevents the document from being mistaken for a complete "
+                        "specification."
+                        if gap.reason
+                        else (
+                            "Recording the gap prevents the document from being "
+                            "mistaken for a complete specification."
+                        )
                     ),
                     confidence=Confidence.LOW,
                     evidence=(),

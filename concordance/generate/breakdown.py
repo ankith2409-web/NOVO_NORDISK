@@ -238,17 +238,32 @@ def calendar_column(model, connection=None) -> tuple[str, str] | None:
     than the month it rolls up to. Without a connection there is nothing to
     measure, so the old refusal stands.
 
+    All of which is reasoning about a question the author may simply have
+    answered. Power BI's "mark as date table" writes `dataCategory: Time` on
+    the table, and where that is present it settles which table is the calendar
+    outright -- no leaf test, no counting. Only the choice of *column* within
+    it is still measured, and even that only when the table holds more than
+    one date.
+
     Whether the column can actually be *reached* from a given measure is a
     separate question this cannot answer, because it depends on the measure.
     `usable_years` settles that by trying it.
     """
-    referenced = {r.to_table for r in model.relationships}
-    references = {r.from_table for r in model.relationships}
-    tables = [
-        table
-        for table in sorted(referenced - references)
-        if _date_columns(model, table)
+    marked = [
+        t.name
+        for t in model.tables
+        if (t.data_category or "").casefold() == "time" and _date_columns(model, t.name)
     ]
+    if len(marked) == 1:
+        tables = marked
+    else:
+        referenced = {r.to_table for r in model.relationships}
+        references = {r.from_table for r in model.relationships}
+        tables = [
+            table
+            for table in sorted(referenced - references)
+            if _date_columns(model, table)
+        ]
     if len(tables) != 1:
         return None
 

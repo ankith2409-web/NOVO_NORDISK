@@ -323,3 +323,74 @@ def test_a_declared_order_beats_an_inferred_one(store) -> None:
         ],
     )
     assert bd._anchors(stripped, connection, "Store", "Opening month") == {}
+
+
+# -- the same file saved the other way -------------------------------------------
+
+
+TMDL_MODELS = sorted(Path("data/models").glob("*.SemanticModel"))
+
+
+@pytest.fixture(scope="module")
+def clinical():
+    path = Path("data/models/ClinicalTrialSafety.SemanticModel")
+    if not path.exists():
+        pytest.skip(f"model not present: {path}")
+    from concordance.adapters.tmdl import TmdlAdapter
+
+    return TmdlAdapter().extract(str(path))
+
+
+def test_a_tmdl_model_states_the_same_things_and_they_are_read(clinical) -> None:
+    """The .pbix adapter and the TMDL adapter read one model saved two ways.
+
+    This project already holds that rule for fingerprints -- "a guarantee that
+    depends on which file format a model was saved in is not a guarantee" --
+    and the declarations are no different. A map that finds its coordinates in
+    one format and guesses in the other is exactly the thing the rule is
+    against. Twenty-three of twenty-four measures here declare a format, and
+    every one of them used to be dropped on the floor.
+    """
+    assert sum(1 for m in clinical.measures if m.format_string) == 23
+    assert sum(1 for c in clinical.columns if c.format_string) == 8
+    assert sum(1 for c in clinical.columns if c.is_hidden) == 2
+    assert all(t.description for t in clinical.tables)
+
+
+@pytest.mark.parametrize("path", TMDL_MODELS, ids=lambda p: p.stem)
+def test_no_tmdl_model_silently_drops_its_formats(path: Path) -> None:
+    """A count per model, so a reader that quietly stops surfacing one is
+    noticed here rather than in a document six months later."""
+    from concordance.adapters.tmdl import TmdlAdapter
+    from concordance.generate.formats import render
+
+    model = TmdlAdapter().extract(str(path))
+    declared = [m for m in model.measures if m.format_string]
+    assert len(declared) >= len(model.measures) - 1, [
+        m.name for m in model.measures if not m.format_string
+    ]
+    # And what is read is read well enough to use: every measure format here
+    # is a number picture, so all of them render.
+    for measure in declared:
+        assert render(1234.5, measure.format_string) is not None, measure.format_string
+
+
+def test_a_table_the_author_marked_as_the_date_table_is_believed(clinical) -> None:
+    """"Mark as date table" is the author answering the question outright.
+
+    Without it this works the calendar out from the shape of the relationships,
+    and on this model that reasoning declines -- so a file whose author had
+    said which table was the calendar was reported as having none, and lost its
+    year filter and every cut over time with it.
+    """
+    from dataclasses import replace
+
+    from concordance.generate.breakdown import calendar_column
+
+    assert [t.name for t in clinical.tables if t.data_category] == ["Calendar"]
+    assert calendar_column(clinical) == ("Calendar", "Date")
+
+    unmarked = replace(
+        clinical, tables=[replace(t, data_category="") for t in clinical.tables]
+    )
+    assert calendar_column(unmarked) is None
