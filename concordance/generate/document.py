@@ -87,6 +87,12 @@ class Document:
     limits: tuple[tuple[str, int, str], ...] = ()
     #: Business terms and what they mean, from the model's own descriptions.
     glossary: tuple[tuple[str, str], ...] = ()
+    #: What each metric currently comes to, where the file carries the rows to
+    #: work it out. A business document about metrics that never says what any
+    #: of them is worth asks its reader to approve a definition they have never
+    #: seen produce a number. Empty when the source carries no data -- a
+    #: `.SemanticModel` folder is a schema -- and never estimated.
+    figures: dict[str, float] = field(default_factory=dict)
     #: What moved since the version this model was compared against, if one was
     #: given. In the document as well as on the Drift tab, and for a reason a
     #: reviewer gave plainly: the document is what gets sent to someone, and
@@ -148,6 +154,7 @@ def build(
     sql_grain: tuple[str, ...] | None = None,
     sql_dialect: str = "duckdb",
     drift=None,
+    figures: dict[str, float] | None = None,
 ) -> Document:
     """Assemble one document from a model's derived requirements.
 
@@ -198,6 +205,7 @@ def build(
         sql_grain=tuple(sql_grain or ()),
         sql_dialect=sql_dialect,
         subject_areas=tuple(sorted(t.name for t in graph.model.user_tables())),
+        figures=dict(figures or {}),
         limits=tuple(
             (gap.feature, gap.count, gap.reason) for gap in graph.model.coverage_gaps
         ),
@@ -363,7 +371,11 @@ def to_markdown(document: Document) -> str:
         f"**Requirements:** {counts['requirements']} "
         f"({counts['high']} stated, {counts['medium']} inferred, {counts['low']} need confirmation)"
     )
-    if counts.get("uncorroborated"):
+    # Deliberately not repeated in the business document: the "At a glance"
+    # table below says the same thing, and said it better -- this line was
+    # labelled "In use" and then described what was *not* in use, which is the
+    # kind of small contradiction that costs a reader their trust in the rest.
+    if counts.get("uncorroborated") and document.kind is not Kind.BUSINESS:
         lines.append(
             f"**In use:** {counts['uncorroborated']} metric(s) below are not shown on "
             "any report page in this file and are read by no other measure  "
@@ -384,6 +396,9 @@ def to_markdown(document: Document) -> str:
         "this document is treated as approved."
     )
     lines.append("")
+
+    if document.kind is Kind.BUSINESS:
+        lines.extend(_at_a_glance(document, counts))
 
     lines.extend(_front_matter(document))
     # Before the requirements and after the front matter: someone re-reading a
@@ -406,62 +421,126 @@ def to_markdown(document: Document) -> str:
     for index, section in enumerate(document.sections, start=1):
         lines.append(f"## {index}. {section.title}")
         lines.append("")
-        for requirement in section.requirements:
-            flag = " ⚠ *needs confirmation*" if requirement.needs_review else ""
-            lines.append(f"### {requirement.id}{flag}")
-            lines.append("")
-            lines.append(requirement.statement)
-            lines.append("")
-            lines.append(f"*Rationale:* {requirement.rationale}")
-            lines.append("")
-            lines.append(f"*Confidence:* {requirement.confidence.value}")
-            lines.append("")
-            # Deliberately its own line rather than folded into the rationale.
-            # Confidence says where the statement came from; this says whether
-            # anything corroborates that the metric is actually used, and a
-            # reader has to be able to see the two are different questions.
-            if requirement.caveat:
-                lines.append(f"*In use:* {requirement.caveat}")
-                lines.append("")
-            # Show the implementation only when a single piece of evidence *is*
-            # the implementation. For a requirement spanning many objects, one
-            # arbitrary detail line would misrepresent what it is bound to.
-            #
-            # And only in the FRD. The reviewer drew the line herself: "BRD is
-            # basically the complete business information ... very plain English,
-            # that is it, and FRD is where you get into the details." A BRD
-            # carrying thirty lines of DAX is not a business document, and the
-            # person it is written for cannot read it. The statement and the
-            # rationale say the same thing in words; the traceability matrix
-            # still binds each one to the object it came from, so nothing is
-            # lost -- it moves.
-            if document.kind is not Kind.FUNCTIONAL:
-                pass
-            elif len(requirement.evidence) == 1 and requirement.evidence[0].detail:
-                detail = requirement.evidence[0].detail
-                if "\n" in detail:
-                    lines.append("*Implementation:*")
-                    lines.append("")
-                    lines.append(f"```{_fence_language(requirement.evidence[0].node_id)}")
-                    lines.append(detail)
-                    lines.append("```")
-                else:
-                    lines.append(f"*Implementation:* `{detail}`")
-                lines.append("")
-            if len(requirement.evidence) > 1:
-                lines.append(
-                    f"*Bound to {len(requirement.evidence)} objects — see the "
-                    f"traceability matrix.*"
-                )
-                lines.append("")
 
-            # After the implementation, so the DAX and the SQL read as one pair.
-            lines.extend(_sql_lines(document, requirement))
-            lines.append("")
+        ordered = list(section.requirements)
+        groups: list[tuple[str, str, list]] = [("", "", ordered)]
+        # The metrics section is the one a business reader is here for, and a
+        # flat alphabetical run of fifty is unreadable. Split by the question
+        # they would ask first -- is anyone using this? -- with the answer that
+        # needs no action first and the one that needs a decision second.
+        if document.kind is Kind.BUSINESS and section.title == "Metrics and KPIs":
+            in_use = [r for r in ordered if not r.uncorroborated]
+            idle = [r for r in ordered if r.uncorroborated]
+            groups = []
+            if in_use:
+                groups.append((
+                    "In use",
+                    "Each of these is shown on a page of this report, or feeds a "
+                    "metric that is. Nothing here needs a decision.",
+                    in_use,
+                ))
+            if idle:
+                groups.append((
+                    "Not used anywhere in this file",
+                    "Nothing in this file shows these being used: no report page "
+                    "displays them and no other metric reads them. That is not a "
+                    "verdict — each may be new, used by a report outside this file, "
+                    "or left behind. Somebody who knows the business has to say "
+                    "which, and this is the list to take to that conversation.",
+                    idle,
+                ))
+
+        for heading, preamble, members in groups:
+            if heading:
+                lines.append(f"### {heading}")
+                lines.append("")
+                lines.append(preamble)
+                lines.append("")
+            for requirement in members:
+                flag = " ⚠ *needs confirmation*" if requirement.needs_review else ""
+                lines.append(f"### {requirement.id}{flag}")
+                lines.append("")
+                lines.append(requirement.statement)
+                lines.append("")
+                # The number, where the file carries the rows to work it out.
+                # A business document about metrics that never says what any of
+                # them is worth asks its reader to approve a definition they
+                # have never seen produce a figure.
+                figure = _figure_for(document, requirement)
+                if figure is not None:
+                    lines.append(f"*Currently:* **{figure}**")
+                    lines.append("")
+                if requirement.rationale:
+                    label = "Why it is here" if document.kind is Kind.BUSINESS else "Rationale"
+                    lines.append(f"*{label}:* {requirement.rationale}")
+                    lines.append("")
+                if document.kind is Kind.BUSINESS:
+                    # "high" tells a business reader nothing they can act on.
+                    # What they need to know is whether a person has to check
+                    # it, which is what the confidence has always meant.
+                    lines.append(f"*Basis:* {_basis(requirement.confidence)}")
+                else:
+                    lines.append(f"*Confidence:* {requirement.confidence.value}")
+                lines.append("")
+                # Deliberately its own line rather than folded into the rationale.
+                # Confidence says where the statement came from; this says whether
+                # anything corroborates that the metric is actually used, and a
+                # reader has to be able to see the two are different questions.
+                if requirement.caveat:
+                    lines.append(f"*In use:* {requirement.caveat}")
+                    lines.append("")
+                # Show the implementation only when a single piece of evidence *is*
+                # the implementation. For a requirement spanning many objects, one
+                # arbitrary detail line would misrepresent what it is bound to.
+                #
+                # And only in the FRD. The reviewer drew the line herself: "BRD is
+                # basically the complete business information ... very plain English,
+                # that is it, and FRD is where you get into the details." A BRD
+                # carrying thirty lines of DAX is not a business document, and the
+                # person it is written for cannot read it. The statement and the
+                # rationale say the same thing in words; the traceability matrix
+                # still binds each one to the object it came from, so nothing is
+                # lost -- it moves.
+                if document.kind is not Kind.FUNCTIONAL:
+                    pass
+                elif len(requirement.evidence) == 1 and requirement.evidence[0].detail:
+                    detail = requirement.evidence[0].detail
+                    if "\n" in detail:
+                        lines.append("*Implementation:*")
+                        lines.append("")
+                        lines.append(f"```{_fence_language(requirement.evidence[0].node_id)}")
+                        lines.append(detail)
+                        lines.append("```")
+                    else:
+                        lines.append(f"*Implementation:* `{detail}`")
+                    lines.append("")
+                if len(requirement.evidence) > 1:
+                    lines.append(
+                        f"*Bound to {len(requirement.evidence)} objects — see the "
+                        f"traceability matrix.*"
+                    )
+                    lines.append("")
+
+                # After the implementation, so the DAX and the SQL read as one pair.
+                lines.extend(_sql_lines(document, requirement))
+                lines.append("")
 
     lines.extend(_glossary_lines(document))
 
-    lines.append("## Traceability matrix")
+    # Named as an appendix in the business document. It is a table of hashes,
+    # it is the last thing in a long file, and a reader who does not know it is
+    # for auditors will assume they were meant to read it.
+    if document.kind is Kind.BUSINESS:
+        lines.append("## Appendix — traceability matrix")
+        lines.append("")
+        lines.append(
+            "For auditors and reviewers rather than for the business reader. Each "
+            "requirement above is bound to the fingerprint of the object in the model "
+            "that satisfies it, so a change to that object can be traced back to every "
+            "requirement it affects."
+        )
+    else:
+        lines.append("## Traceability matrix")
     lines.append("")
     lines.append("| Requirement | Bound to | Fingerprint | Confidence |")
     lines.append("|---|---|---|---|")
@@ -704,6 +783,111 @@ def _changes_lines(document: Document) -> list[str]:
                 f" — affects {', '.join(row.affects)}" if row.affects else ""
             ))
         lines.append("")
+    return lines
+
+
+#: How a figure reads in a document rather than on a dashboard: grouped, and
+#: rounded only where the digits past the point are noise.
+def _readable(value: float) -> str:
+    if value != value or value in (float("inf"), float("-inf")):
+        return ""
+    if abs(value) >= 1000 or value == int(value):
+        return f"{value:,.0f}"
+    return f"{value:,.4f}".rstrip("0").rstrip(".")
+
+
+#: Confidence, said as what a reader should do about it.
+_BASIS = {
+    "high": "the model states this directly — no confirmation needed.",
+    "medium": "inferred from how the model is built. Worth a glance.",
+    "low": "the model could not settle this on its own. Somebody has to decide.",
+}
+
+
+def _basis(confidence) -> str:
+    return _BASIS.get(getattr(confidence, "value", ""), str(confidence))
+
+
+def _figure_for(document: "Document", requirement) -> str | None:
+    """The current value of the metric a requirement is about, if there is one.
+
+    Matched through the requirement's own evidence rather than by parsing its
+    sentence: the evidence is what the requirement is *bound* to, so a figure
+    found this way is the figure for the object the document is describing and
+    cannot drift onto a similarly-named one.
+    """
+    if not document.figures or len(requirement.evidence) != 1:
+        return None
+    node = requirement.evidence[0].node_id
+    if not node.startswith("measure:"):
+        return None
+    # `measure:Analysis DAX[Net Sales]` -> `Net Sales`
+    name = node.split("[", 1)[1].rstrip("]") if "[" in node else ""
+    value = document.figures.get(name)
+    if value is None:
+        return None
+    return _readable(value) or None
+
+
+def _at_a_glance(document: "Document", counts: dict) -> list[str]:
+    """The five things a business reader wants before deciding to read on.
+
+    A BRD generated from a real model runs to sixty-odd requirements over
+    several hundred lines, and the version this replaces opened straight into
+    them. That is a document people skim, and a skimmed specification is the
+    failure this project exists to prevent -- so the shape of it goes first, in
+    a table, and the reader chooses where to spend their attention.
+
+    Every figure here is counted from the requirements themselves rather than
+    stated separately, so the summary cannot drift away from the body it
+    summarises.
+    """
+    metrics = [
+        requirement
+        for section in document.sections
+        if section.title == "Metrics and KPIs"
+        for requirement in section.requirements
+    ]
+    shown = [m for m in metrics if not m.uncorroborated]
+    unused = [m for m in metrics if m.uncorroborated]
+    areas = [a for a in document.subject_areas]
+
+    lines = ["## At a glance", ""]
+    lines.append("| | |")
+    lines.append("|---|---|")
+    lines.append(
+        f"| **What it reports on** | {len(areas)} subject areas"
+        + (f": {', '.join(areas[:6])}" + (", …" if len(areas) > 6 else "") if areas else "")
+        + " |"
+    )
+    lines.append(f"| **Metrics defined** | {len(metrics)} |")
+    lines.append(
+        f"| **Used somewhere in this file** | {len(shown)} — shown on a report page, "
+        "or read by another metric |"
+    )
+    if unused:
+        lines.append(
+            f"| **Not used anywhere in this file** | {len(unused)} — worth a look; "
+            "see section 2 |"
+        )
+    if document.review_queue:
+        lines.append(
+            f"| **Needs your decision** | {len(document.review_queue)} — listed below |"
+        )
+    lines.append("")
+    if document.figures:
+        lines.append(
+            f"Each metric below carries what it currently comes to on this file's own "
+            f"rows — {len(document.figures)} of them could be computed. Those are the "
+            "numbers you are approving a definition for."
+        )
+        lines.append("")
+    lines.append(
+        "Read the next two pages if you own this reporting. Everything after "
+        "*Metrics and KPIs* is supporting detail, and the traceability appendix at "
+        "the end is for auditors rather than for you."
+    )
+    lines.append("")
     return lines
 
 

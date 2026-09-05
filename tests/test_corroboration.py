@@ -148,7 +148,12 @@ def test_the_brd_counts_them_and_marks_each_one() -> None:
     assert built.counts()["uncorroborated"] > 0
 
     text = document.to_markdown(built)
-    assert "**In use:**" in text
+    # The count is stated, and each one is marked where it sits. The header
+    # line that used to carry the count was dropped from the business document
+    # -- it was labelled "In use" and then described what was *not* in use --
+    # so this asserts the two properties rather than the wording of either.
+    assert str(built.counts()["uncorroborated"]) in text
+    assert "Not used anywhere in this file" in text
     assert "*In use:*" in text
     # And the blind spot itself is stated, not left for the reader to infer.
     assert "Confidence records where a statement came from" in text

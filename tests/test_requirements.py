@@ -197,7 +197,9 @@ def test_markdown_contains_a_traceability_row_per_requirement(
     built = doc.build(sales_graph, Kind.BUSINESS)
     markdown = doc.to_markdown(built)
 
-    assert "## Traceability matrix" in markdown
+    # Headed as an appendix in the business document and plainly in the
+    # functional one, so the property is that the table is headed at all.
+    assert "raceability matrix" in markdown
     for requirement in built.requirements:
         assert requirement.id in markdown
 

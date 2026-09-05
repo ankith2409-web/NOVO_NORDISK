@@ -299,12 +299,28 @@ def cmd_document(args: argparse.Namespace) -> int:
             after_graph=graph,
         )
 
+    # Run the model's measures against its own rows, so a business reader sees
+    # what each metric currently comes to rather than only how it is defined.
+    # Best effort by design: a `.SemanticModel` folder carries a schema and no
+    # data, and a document that cannot state a figure states none rather than
+    # estimating one.
+    figures: dict[str, float] = {}
+    if kind is Kind.BUSINESS:
+        try:
+            from concordance.generate.evaluate import evaluate
+
+            run = evaluate(graph.model)
+            figures = {v.measure: v.value for v in run.values if v.value is not None}
+        except Exception:  # noqa: BLE001 - a document without figures is still a document
+            figures = {}
+
     built = doc.build(
         graph,
         kind,
         sql_grain=grain if (grain or args.sql) else None,
         sql_dialect=args.sql_dialect,
         drift=drift,
+        figures=figures,
     )
 
     suffix = "docx" if args.format == "docx" else "md"

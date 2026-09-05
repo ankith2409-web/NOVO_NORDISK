@@ -27,6 +27,14 @@ class Pattern:
     label: str
     #: What the reader should understand the measure to be doing.
     description: str
+    #: The same thing for the business document, in one short clause.
+    #:
+    #: The technical description is right for an FRD, whose reader is about to
+    #: implement the thing. In a BRD it lands as jargon explained with more
+    #: jargon -- "it applies conditional logic, which returns different results
+    #: depending on business conditions" -- printed beside fifty metrics. This
+    #: is the sentence a business owner can read once and act on.
+    plain: str = ""
 
 
 #: Function name -> pattern. Only functions whose presence genuinely implies the
@@ -55,54 +63,67 @@ PATTERNS: tuple[Pattern, ...] = (
         "period-over-period comparison",
         "evaluates the metric over a shifted or cumulative date range, comparing it "
         "against an earlier period or accumulating it to date",
+        "It compares this period against an earlier one.",
     ),
     Pattern(
         "ranking",
         "ranking",
         "orders members by value to produce a league table or top-N selection",
+        "It ranks things against each other, such as a top-ten.",
     ),
     Pattern(
         "ratio",
         "ratio",
         "divides one quantity by another, with explicit handling of division by zero",
+        "It is one figure divided by another, so it is a rate rather than a total.",
     ),
     Pattern(
         "context_removal",
         "total-relative calculation",
         "deliberately ignores part of the active filter context in order to "
         "compare a member against an overall total",
+        "It measures a part against the overall total, so it stays the same when "
+        "you filter the page.",
     ),
     Pattern(
         "row_iteration",
         "row-level calculation",
         "computes a value per row before aggregating, rather than aggregating "
         "pre-computed column values",
+        "It works a figure out line by line before adding it up.",
     ),
     Pattern(
         "relationship_override",
         "alternate relationship",
         "evaluates against a relationship other than the active one, allowing the "
         "same fact to be analysed along a different key",
+        "It joins the data a different way from the rest of the report — worth "
+        "knowing if a figure here disagrees with one elsewhere.",
     ),
     Pattern(
         "distinct_count",
         "distinct count",
         "counts unique members rather than rows",
+        "It counts each thing once, however many times it appears.",
     ),
     Pattern(
         "conditional",
         "conditional logic",
         "returns different results depending on business conditions",
+        "It gives a different answer depending on the situation.",
     ),
     Pattern(
         "scope_aware",
         "context-sensitive behaviour",
         "changes what it reports depending on the level of detail being viewed",
+        "Its answer depends on how far the reader has drilled in, so it means "
+        "different things at different levels.",
     ),
     Pattern(
         "aggregation",
         "aggregation",
         "summarises a column across the rows in the current filter context",
+        "It adds up a column over whatever the page is showing.",
     ),
 )
 

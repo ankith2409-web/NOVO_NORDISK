@@ -147,6 +147,49 @@ class RequirementDeriver:
             for visual in self.model.visuals()
             for field in visual.fields
         }
+        # Which pages, not just whether. A business reader's first question
+        # about a metric is where they would see it, and the answer is in the
+        # file -- it was simply not being carried into the document.
+        self._pages_showing: dict[str, list[str]] = {}
+        for visual in self.model.visuals():
+            page = getattr(visual, "page", "") or ""
+            for field in visual.fields:
+                seen = self._pages_showing.setdefault(field.name, [])
+                if page and page not in seen:
+                    seen.append(page)
+
+    def _why(self, measure) -> str:
+        """Why this metric is in the document, in terms a reader can act on.
+
+        This used to read "A measure named Analysis DAX[Net Sales] is defined
+        in the model, so the business tracks this quantity" -- for every metric,
+        identically, fifty times in one document. It is circular (the metric is
+        here because it is here), it is written in the file's vocabulary rather
+        than the reader's, and a paragraph repeated fifty times is a paragraph
+        nobody reads by the third.
+
+        So it says whichever of these is true, in order of what a business
+        reader actually asks: what the author said it was for, then where it is
+        seen, then what depends on it. Where none of those is known the line is
+        omitted entirely rather than padded -- silence is honest, and a
+        tautology is not.
+        """
+        described = (getattr(measure, "description", "") or "").strip()
+        if described:
+            return f"The model's author describes it as: {described}"
+
+        pages = self._pages_showing.get(measure.name) or []
+        if pages:
+            where = _join(pages[:4]) + (" and elsewhere" if len(pages) > 4 else "")
+            page_word = "page" if len(pages) == 1 else "pages"
+            return f"It is shown on the {where} {page_word} of this report."
+
+        readers = self.graph.dependents_of(measure_id(measure.table, measure.name))
+        if readers:
+            count = len(readers)
+            noun = "metric" if count == 1 else "metrics"
+            return f"{count} other {noun} in this model are calculated from it."
+        return ""
 
     def _corroborate(self, measure) -> tuple["Corroboration", str]:
         """Whether anything in this file shows a measure being used."""
@@ -241,30 +284,36 @@ class RequirementDeriver:
             # BUSINESS: what the metric is, in plain terms. Phrased without an
             # article so every pattern label reads correctly -- "a ranking" and
             # "a conditional logic" cannot share a sentence frame.
+            # The business document gets the plain sentence and the functional
+            # one keeps the precise clause. Same detected behaviour, two
+            # readers -- and the technical wording in a BRD reads as jargon
+            # explained with jargon, fifty times over.
             descriptor = (
-                f" It applies {behaviour.label}, which {behaviour.description}."
+                f" {behaviour.plain}"
+                if behaviour and behaviour.plain
+                else f" It applies {behaviour.label}, which {behaviour.description}."
                 if behaviour
                 else ""
             )
             source = ""
             if columns:
-                source = f" It is calculated from {_join(columns)}."
+                source = f" It is calculated from {_join(_plain(c) for c in columns)}."
             elif upstream:
-                source = f" It is derived from {_join(f'[{m}]' for m in upstream)}."
+                source = f" It is built from {_join(upstream)}."
 
             out.append(
                 Requirement(
                     id=f"REQ-B-{_identity('measure', measure.table, measure.name)}",
                     kind=Kind.BUSINESS,
                     category="Metrics and KPIs",
+                    # "shall report X" rather than "shall report X as a
+                    # reportable metric", which said the same thing twice and
+                    # said it fifty times over.
                     statement=(
-                        f"The solution shall report **{measure.name}** as a reportable "
-                        f"metric.{descriptor}{source}"
+                        f"The solution shall report **{measure.name}**."
+                        f"{descriptor}{source}"
                     ),
-                    rationale=(
-                        f"A measure named {measure.qualified_name} is defined in the "
-                        f"model, so the business tracks this quantity."
-                    ),
+                    rationale=self._why(measure),
                     confidence=Confidence.HIGH,
                     evidence=evidence,
                     corroboration=corroboration,
@@ -1104,6 +1153,19 @@ class RequirementDeriver:
             )
 
         return out
+
+
+def _plain(reference: str) -> str:
+    """`Calendar[Date]` as "Date (Calendar)".
+
+    Square brackets are DAX. They belong in the functional document, where the
+    reader is writing the formula, and not in the business one, where they are
+    punctuation nobody has been taught.
+    """
+    if "[" in reference and reference.endswith("]"):
+        table, column = reference[:-1].split("[", 1)
+        return f"{column} ({table})"
+    return reference
 
 
 def _join(items) -> str:
