@@ -495,7 +495,12 @@ function PageCard({
             open && "rotate-90",
           )}
         />
-        <span className="min-w-0 truncate text-sm font-semibold">{name}</span>
+        {/* A report page's own title, which is how a reader finds the tile
+            they are looking for -- and the first thing clipped when the window
+            narrows. */}
+        <span className="min-w-0 truncate text-sm font-semibold" title={name}>
+          {name}
+        </span>
         <span className="ml-auto flex-none font-mono text-[11px] text-faint tabular">
           {tiles.length} tiles · {withFormula} with a formula
         </span>
@@ -632,8 +637,15 @@ function KpiCard({
           <span className="text-[13px] text-review">no single figure</span>
         )}
       </span>
-      <span className="truncate text-[13px] font-medium">{field.name}</span>
-      <span className="truncate font-mono text-[10.5px] text-faint">
+      <span className="truncate text-[13px] font-medium" title={field.name}>
+        {field.name}
+      </span>
+      {/* Clipped first on a narrow window, which is exactly where a reader
+          most needs to know which table a card's measure lives on. */}
+      <span
+        className="truncate font-mono text-[10.5px] text-faint"
+        title={`${field.table} · on ${places} page${places === 1 ? "" : "s"}`}
+      >
         {field.table} · on {places} page{places === 1 ? "" : "s"}
       </span>
       {/* The same measure's own query at a coarser grain, so the card carries

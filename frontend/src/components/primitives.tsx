@@ -7,7 +7,7 @@
  * a projector in a bright room flattens the muted palette this tool uses on
  * purpose. A word costs a few pixels and survives all three.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
 import type { Confidence, Verdict } from "@/lib/api";
 import { AlertIcon, InfoIcon, RetryIcon } from "@/components/icons";
@@ -109,6 +109,69 @@ export function Button({
 }
 
 /**
+ * The name of an icon-only control, shown where the pointer is.
+ *
+ * This replaces the `title` attribute, which was doing two jobs badly. It
+ * appears after about a second and a half, in the operating system's styling
+ * rather than the page's, which beside the instant cards the charts now use
+ * reads as a different application's furniture. And because these controls
+ * also carry an `aria-label` with the same words, several screen readers
+ * announce the name twice -- once as the accessible name and once as the
+ * description.
+ *
+ * So the name lives in `aria-label` alone, and this draws it. Hover *and*
+ * focus, because a control a keyboard user can reach is a control they should
+ * be able to identify, which a `title` never managed either.
+ */
+function Named({ label, children }: { label: string; children: ReactNode }) {
+  const [shown, setShown] = useState(false);
+  const [shift, setShift] = useState(0);
+  const bubble = useRef<HTMLSpanElement>(null);
+
+  // Centred on the control, then nudged back inside the window if that put it
+  // over an edge. Measured rather than guessed: these controls sit at the far
+  // right of the header, where a centred tooltip runs off the page and the
+  // name it exists to give is the half that gets cut off.
+  useLayoutEffect(() => {
+    if (!shown || !bubble.current) return;
+    const box = bubble.current.getBoundingClientRect();
+    const margin = 8;
+    const over = box.right - (window.innerWidth - margin);
+    const under = margin - box.left;
+    setShift(over > 0 ? -over : under > 0 ? under : 0);
+  }, [shown, label]);
+
+  return (
+    <span
+      className="relative inline-flex"
+      onPointerEnter={() => setShown(true)}
+      onPointerLeave={() => setShown(false)}
+      onFocusCapture={() => setShown(true)}
+      onBlurCapture={() => setShown(false)}
+    >
+      {children}
+      {shown && (
+        <span
+          ref={bubble}
+          // Presentational: the accessible name is on the control itself, and
+          // announcing this as well is the duplication being removed.
+          aria-hidden
+          style={{ transform: `translateX(calc(-50% + ${shift}px))` }}
+          className={cx(
+            "pointer-events-none absolute top-full left-1/2 z-40 mt-1.5",
+            "max-w-[min(18rem,calc(100vw-1rem))] rounded-md border border-edge",
+            "bg-surface px-2 py-1 text-[11px] leading-tight whitespace-nowrap text-ink",
+            "shadow-[0_4px_14px_rgb(0_0_0/0.16)]",
+          )}
+        >
+          {label}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
  * A button that is only an icon, and therefore must say what it is.
  *
  * `label` is not optional. An icon-only control with no accessible name is
@@ -127,15 +190,16 @@ export function IconButton({
   children: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      className={controlClasses(tone, "icon", className)}
-      {...rest}
-    >
-      {children}
-    </button>
+    <Named label={label}>
+      <button
+        type="button"
+        aria-label={label}
+        className={controlClasses(tone, "icon", className)}
+        {...rest}
+      >
+        {children}
+      </button>
+    </Named>
   );
 }
 
@@ -259,7 +323,6 @@ export function Info({
         onClick={() => setOpen((was) => !was)}
         aria-expanded={open}
         aria-label={open ? `Hide ${label}` : `About ${label}`}
-        title={`About ${label}`}
         className={cx(
           "inline-flex size-[18px] cursor-pointer items-center justify-center rounded-full",
           "transition-colors duration-(--duration-feedback) ease-(--ease-standard)",

@@ -378,7 +378,10 @@ function AllInOnePlace({
             )}
           />
           <span className="text-sm font-semibold">Everything in one place</span>
-          <span className="truncate font-mono text-[11px] text-faint">
+          <span
+            className="truncate font-mono text-[11px] text-faint"
+            title={`all ${counts.measures} definitions, to copy in one go`}
+          >
             all {counts.measures} definitions, to copy in one go
           </span>
         </button>
@@ -556,6 +559,7 @@ function Structure({
                       setFocusTable(focusTable === table.name ? "" : table.name)
                     }
                     className="min-w-0 flex-1 truncate text-left text-sm"
+                    title={table.name}
                   >
                     {table.name}
                   </button>

@@ -241,7 +241,13 @@ export function Model({ focus = null }: { focus?: FocusRequest | null }) {
                 <span className="w-2.5 font-mono text-[10px] text-faint">
                   {expanded.has(table.name) ? "−" : "+"}
                 </span>
-                <span className={cx("truncate", table.isSystem && "text-faint")}>
+                {/* A generated date table's name is a GUID and is always
+                    clipped, so without this there is no way to tell two of
+                    them apart. */}
+                <span
+                  title={table.name}
+                  className={cx("truncate", table.isSystem && "text-faint")}
+                >
                   {table.name}
                 </span>
                 {table.isMeasureOnly && (
@@ -276,7 +282,9 @@ export function Model({ focus = null }: { focus?: FocusRequest | null }) {
                     <span className="w-7 flex-none font-mono text-[9px] text-faint">
                       {KIND_LABEL[child.kind] ?? child.kind}
                     </span>
-                    <span className="truncate">{child.name}</span>
+                    <span className="truncate" title={child.name}>
+                      {child.name}
+                    </span>
                   </button>
                 ))}
             </div>
