@@ -148,6 +148,25 @@ class ApiContext:
             # a model with fifteen chartable columns.
             return self._connection.cursor(), self._rows, self._data_reason
 
+    def warm(self) -> None:
+        """Do the slow part before anybody asks for it.
+
+        Both caches below are filled on first use, which is correct and puts
+        the whole cost in front of the first person to arrive. Loading a
+        million rows into DuckDB and running every measure over them takes
+        seconds, and for those seconds the dashboard -- the page this tool
+        opens on -- is a grid of cards reading "computing…". The work has to
+        happen; it does not have to happen while somebody is watching.
+
+        Failure is not raised. `data` already reports an unreadable source as a
+        reason rather than an exception, and a warm-up that took the server
+        down would trade a slow first paint for no server at all.
+        """
+        try:
+            self.evaluated()
+        except Exception:  # noqa: BLE001 - a cold cache is the worst outcome here
+            pass
+
     def evaluated(self):
         """The model's measures, run against its own data. Computed once."""
         from concordance.generate.evaluate import Evaluation, evaluate

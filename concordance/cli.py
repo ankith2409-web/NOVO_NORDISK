@@ -501,8 +501,28 @@ def cmd_serve(args: argparse.Namespace) -> int:
     try:
         provider = _build_provider(args)
     except LlmError as error:
+        # Started anyway, without the chat.
+        #
+        # Refusing here cost the whole program over one panel of it. Eight
+        # pages -- the dashboard, the SQL, the documents, the model browser,
+        # drift, the warehouse check, the confirmation queue -- ask a language
+        # model nothing, because every figure they show is computed by running
+        # SQL against the file's own rows. Somebody who cloned this to see what
+        # it does got an error message and no server at all, over a feature
+        # they had not asked to use.
+        #
+        # `ask` still refuses, because `ask` *is* the chat. Here it is one
+        # collapsible panel, and it says the same thing this prints when
+        # somebody tries to use it.
+        from concordance.llm.unconfigured import UnconfiguredProvider
+
         print(f"{error}", file=sys.stderr)
-        return 2
+        print(
+            "\nStarting without the chat. Every other page works -- they read "
+            "the file rather than asking a model.\n",
+            file=sys.stderr,
+        )
+        provider = UnconfiguredProvider(reasons=str(error).splitlines()[1:])
 
     # Resolved here, once, from arguments the operator typed. The browser never
     # names a file -- it names a key in the registry below -- so no request can

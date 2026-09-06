@@ -1426,6 +1426,33 @@ def _capabilities_of(context: api.ApiContext) -> list[str]:
     return enabled
 
 
+def _warm_in_background(context) -> None:
+    """Fill each model's caches on a daemon thread, default first.
+
+    Default first because that is the one the browser will ask for; the rest
+    follow so that switching models is not a second cold start. Daemon threads
+    so Ctrl-C still stops the server mid-load rather than waiting for a million
+    rows to finish arriving.
+    """
+    import threading
+
+    if context is None:
+        return
+    contexts = getattr(context, "contexts", None)
+    if contexts is None:
+        ordered = [context]
+    else:
+        default = getattr(context, "default", "")
+        ordered = [contexts[default]] if default in contexts else []
+        ordered += [c for name, c in sorted(contexts.items()) if name != default]
+
+    def run() -> None:
+        for one in ordered:
+            one.warm()
+
+    threading.Thread(target=run, name="concordance-warm", daemon=True).start()
+
+
 def serve(
     graph: SemanticGraph,
     provider: LlmProvider,
@@ -1447,6 +1474,7 @@ def serve(
         auth0=auth0,
         accepts_uploads=accepts_uploads,
     )
+    _warm_in_background(context)
     httpd = ThreadingHTTPServer((host, port), handler)
     base = f"http://{host}:{httpd.server_port}/"
     # The printed link carries the token, so the person who started the server

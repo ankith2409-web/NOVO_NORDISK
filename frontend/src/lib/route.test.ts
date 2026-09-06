@@ -79,3 +79,33 @@ describe("writing an address", () => {
     expect(routeToHash({ view: "overview", model: "" })).toBe("#/overview");
   });
 });
+
+describe("linking to an object, not just a page", () => {
+  it("carries the object through a round trip", () => {
+    const route = { view: "dashboard", model: "StoreSales", focus: "Total Sales Var" };
+    expect(readRoute(routeToHash(route))).toEqual(route);
+  });
+
+  it("encodes an object name with characters a URL cares about", () => {
+    // Measure names are whatever an author typed. `% Return Rate` and
+    // `Sales & Returns` are both real, and both would truncate the link if the
+    // `%` and the `&` went in raw.
+    for (const focus of ["% Return Rate", "Sales & Returns", "A+B", "a/b?c=d"]) {
+      const hash = routeToHash({ view: "model", model: "M", focus });
+      expect(readRoute(hash).focus).toBe(focus);
+    }
+  });
+
+  it("leaves the object out when a link is only about a page", () => {
+    expect(routeToHash({ view: "review", model: "M" })).toBe("#/review?model=M");
+    expect(readRoute("#/review?model=M").focus).toBeUndefined();
+  });
+
+  it("reads the object whichever order the query is in", () => {
+    expect(readRoute("#/dashboard?focus=Net%20Sales&model=M")).toEqual({
+      view: "dashboard",
+      model: "M",
+      focus: "Net Sales",
+    });
+  });
+});

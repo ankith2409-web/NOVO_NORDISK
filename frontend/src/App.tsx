@@ -136,6 +136,7 @@ export default function App() {
   function setView(next: ViewId) {
     setViewState(next);
     remember("view", next);
+    setFocus(null);
     // A reader chose this, so it earns a history entry: Back should return
     // them to the page they came from, not to before the app loaded.
     writeRoute({ view: next, model: activeRef.current }, "push");
@@ -146,6 +147,8 @@ export default function App() {
   // the switch.
   const [loaded, setLoaded] = useState<LoadedModel[]>([]);
   const [active, setActive] = useState("");
+  /** A model a link asked for that this server does not have. */
+  const [missingModel, setMissingModel] = useState("");
   // Read by `setView`, which is called from handlers created on earlier
   // renders: closing over `active` there would write a stale model into the
   // address bar the first time somebody navigates after switching.
@@ -299,6 +302,14 @@ export default function App() {
         (asked && names.includes(asked) ? asked : null) ??
         recallOneOf("model", names) ??
         result.data.default;
+      // Said out loud, never swallowed.
+      //
+      // Falling back is right -- a link is better than a dead end. Falling
+      // back *silently* is the one thing this tool must not do: somebody
+      // following a link to a model this server was not given would read
+      // another model's figures under the heading they were sent, and every
+      // number on the page would be correct and about the wrong thing.
+      if (asked && !names.includes(asked)) setMissingModel(asked);
       api.use(restored);
       setActive(restored);
     })();
@@ -307,31 +318,6 @@ export default function App() {
   useEffect(() => {
     activeRef.current = active;
   }, [active]);
-
-  // The address bar follows the app. Replaced rather than pushed: this fires
-  // for the state the app *arrived* in as well as for the state a reader chose,
-  // and a Back button that walks through a page's own start-up is one nobody
-  // trusts. A deliberate move pushes, in `setView` and `switchTo`.
-  useEffect(() => {
-    if (!active) return;
-    writeRoute({ view, model: active }, "replace");
-  }, [view, active]);
-
-  // Back, Forward, and a hand-edited address.
-  useEffect(() => {
-    function onPop() {
-      const asked = readRoute();
-      const ids = VIEWS.map((entry) => entry.id) as string[];
-      if (asked.view && ids.includes(asked.view)) setViewState(asked.view as ViewId);
-      if (asked.model && asked.model !== active) switchTo(asked.model);
-    }
-    window.addEventListener("popstate", onPop);
-    window.addEventListener("hashchange", onPop);
-    return () => {
-      window.removeEventListener("popstate", onPop);
-      window.removeEventListener("hashchange", onPop);
-    };
-  });
 
   const [uploading, setUploading] = useState(false);
 
@@ -344,7 +330,15 @@ export default function App() {
    * up "Total Sales", scrolls away, and looks it up again means it both times.
    */
   const [focus, setFocus] = useState<{ view: ViewId; target: string; at: number } | null>(
-    null,
+    () => {
+      // A link may name the object, not just the page. Read once, at the same
+      // moment as the view, so the page it belongs to is already the one
+      // rendering when the view goes looking for something to scroll to.
+      const asked = readRoute();
+      const ids = VIEWS.map((entry) => entry.id) as string[];
+      if (!asked.focus || !asked.view || !ids.includes(asked.view)) return null;
+      return { view: asked.view as ViewId, target: asked.focus, at: Date.now() };
+    },
   );
   const [finding, setFinding] = useState(false);
   // Not in the snapshot build, which has no server to search. Offering the
@@ -361,14 +355,50 @@ export default function App() {
     // rather than dropped: landing somewhere is better than a click that does
     // nothing, and the overview names every other page.
     const id = (known ? view : "overview") as ViewId;
-    setView(id);
+    setViewState(id);
+    remember("view", id);
     setFocus({ view: id, target, at: Date.now() });
+    // Pushed with the object in it, so Back leaves the object as well as the
+    // page, and so the address bar is a link worth copying the moment you
+    // arrive somewhere.
+    writeRoute({ view: id, model: activeRef.current, focus: target }, "push");
   }
 
   /** What a view should scroll to, or null when it was not the destination. */
   function focusFor(view: ViewId): { target: string; at: number } | null {
     return focus && focus.view === view ? { target: focus.target, at: focus.at } : null;
   }
+
+  // The address bar follows the app. Replaced rather than pushed: this fires
+  // for the state the app *arrived* in as well as for the state a reader chose,
+  // and a Back button that walks through a page's own start-up is one nobody
+  // trusts. A deliberate move pushes, in `setView` and `switchTo`.
+  useEffect(() => {
+    if (!active) return;
+    const here = focus && focus.view === view ? focus.target : undefined;
+    writeRoute({ view, model: active, focus: here }, "replace");
+  }, [view, active, focus]);
+
+  // Back, Forward, and a hand-edited address.
+  useEffect(() => {
+    function onPop() {
+      const asked = readRoute();
+      const ids = VIEWS.map((entry) => entry.id) as string[];
+      if (asked.view && ids.includes(asked.view)) {
+        const id = asked.view as ViewId;
+        setViewState(id);
+        setFocus(asked.focus ? { view: id, target: asked.focus, at: Date.now() } : null);
+      }
+      if (asked.model && asked.model !== active) switchTo(asked.model);
+    }
+    window.addEventListener("popstate", onPop);
+    window.addEventListener("hashchange", onPop);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      window.removeEventListener("hashchange", onPop);
+    };
+  });
+
 
   /**
    * Adopt a model the server has just read, and move to it.
@@ -693,6 +723,26 @@ export default function App() {
             switch would leave the previous model's tables and requirements on
             screen under the new model's name. */}
         <main key={active} className="min-h-0 flex-1 overflow-auto">
+          {/* Outside the keyed content below only in spirit: it is about the
+              link that got you here rather than about the model showing. */}
+          {missingModel && active && (
+            <div className="m-3 flex flex-wrap items-start gap-x-3 gap-y-1 rounded border border-review/40 bg-review-soft p-3 text-[13px]">
+              <span className="text-ink">
+                This link asked for{" "}
+                <span className="font-mono">{missingModel}</span>, which this
+                server was not given. Showing{" "}
+                <span className="font-mono">{active}</span> instead — the
+                figures below are that model&rsquo;s, not the one you were sent.
+              </span>
+              <button
+                type="button"
+                onClick={() => setMissingModel("")}
+                className="ml-auto shrink-0 text-[12px] text-accent underline underline-offset-2"
+              >
+                dismiss
+              </button>
+            </div>
+          )}
           {!resolved && <p className="p-4 font-mono text-xs text-faint">Connecting…</p>}
           {resolved && view === "overview" && (
             <Overview

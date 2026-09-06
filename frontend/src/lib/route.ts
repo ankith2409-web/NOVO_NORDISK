@@ -24,6 +24,8 @@
 export interface Route {
   view: string;
   model: string;
+  /** The object on that page, when a link names one. `Net Sales`, `Store`. */
+  focus?: string;
 }
 
 /** `#/dashboard?model=Store%20Sales` -> `{view, model}`. */
@@ -40,14 +42,27 @@ export function readRoute(hash: string = window.location.hash): Partial<Route> {
   for (const pair of query.split("&")) {
     const [key, value = ""] = pair.split("=");
     if (key === "model" && value) found.model = decodeURIComponent(value);
+    if (key === "focus" && value) found.focus = decodeURIComponent(value);
   }
   return found;
 }
 
 /** The address for a place in the app, as a string anyone can paste. */
 export function routeToHash(route: Route): string {
-  const model = route.model ? `?model=${encodeURIComponent(route.model)}` : "";
-  return `#/${encodeURIComponent(route.view)}${model}`;
+  const parts: string[] = [];
+  if (route.model) parts.push(`model=${encodeURIComponent(route.model)}`);
+  // The object, when the link is about one. This is the difference between
+  // "look at the dashboard" and "look at Net Sales", and the second is what
+  // anybody actually wants to send.
+  if (route.focus) parts.push(`focus=${encodeURIComponent(route.focus)}`);
+  const query = parts.length ? `?${parts.join("&")}` : "";
+  return `#/${encodeURIComponent(route.view)}${query}`;
+}
+
+/** The whole address, ready to paste somewhere that is not this tab. */
+export function absoluteHref(route: Route): string {
+  const { origin, pathname, search } = window.location;
+  return `${origin}${pathname}${search}${routeToHash(route)}`;
 }
 
 /**

@@ -37,6 +37,7 @@ import {
   type TileField,
   type ValuesPayload,
 } from "@/lib/api";
+import { CopyLink } from "@/components/CopyLink";
 import { GoogleAtlas } from "@/components/GoogleAtlas";
 import {
   Atlas,
@@ -153,6 +154,7 @@ export function Dashboard({
   const scope = useRef<HTMLDivElement>(null);
   const marked = useFocusTarget(focus, scope);
 
+
   const figures = useMemo(() => {
     const by = new Map<string, MeasureValue>();
     for (const value of computed?.values ?? []) by.set(value.measure, value);
@@ -202,6 +204,23 @@ export function Dashboard({
     }
     return [...byMeasure.values()];
   }, [pages]);
+
+  // A link that names a KPI opens it, rather than only scrolling to it.
+  //
+  // Marking was enough when the only way here was search: somebody who typed a
+  // name is already looking at the screen and can click. A link is read by
+  // somebody who was sent it, and "here is the card, now open it yourself" is
+  // most of the way to not having sent them anything -- the formula, the SQL
+  // and the figure they were meant to see are all behind that click.
+  useEffect(() => {
+    if (!focus?.target) return;
+    const named = kpis.find(
+      (entry) => entry.field.name.toLowerCase() === focus.target.toLowerCase(),
+    );
+    if (named) setPicked(named.field.name);
+    // `focus.at` rather than the target: arriving at the same object twice is
+    // two arrivals, and the second must reopen a card the reader has closed.
+  }, [focus?.target, focus?.at, kpis]);
 
   if (error)
     return (
@@ -377,6 +396,18 @@ export function Dashboard({
                   <span className="font-mono text-[10.5px] text-faint">
                     {opened.field.table}
                   </span>
+                  {/* The reason the card can be opened by URL at all: a
+                      reviewer who wants a second opinion on this figure needs
+                      something to send, and it has to name the figure rather
+                      than the page it happens to be on. */}
+                  <CopyLink
+                    route={{
+                      view: "dashboard",
+                      model: api.active(),
+                      focus: opened.field.name,
+                    }}
+                    what={opened.field.name}
+                  />
                   <button
                     type="button"
                     onClick={() => setPicked("")}
