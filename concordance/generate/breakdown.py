@@ -499,6 +499,23 @@ _PERIOD_FORMATS = {
 }
 
 
+#: What a group with no value is called, which is what Power BI calls it.
+#:
+#: There is now a way to reach one. Joins are LEFT joins, so a sale pointing at
+#: a product that does not exist survives into the breakdown with no category
+#: -- and `str(None)` is `"None"`, which reads as a category somebody named
+#: "None" rather than as the absence of one.
+BLANK = "(Blank)"
+
+
+def _label(value: Any) -> str:
+    """One group's label, with an absent one named rather than stringified."""
+    if value is None:
+        return BLANK
+    text = str(value)
+    return text if text.strip() else BLANK
+
+
 def _period_label(moment: Any, period: str) -> str:
     """One bucket, written the way it would be said."""
     if not hasattr(moment, "strftime"):
@@ -558,7 +575,7 @@ def _declared_order(model, connection, table: str, column: str) -> dict[str, str
     except Exception:  # noqa: BLE001 - no order is a missing option, not a failure
         return {}
 
-    found = [(str(label), key) for label, key in rows if key is not None]
+    found = [(_label(label), key) for label, key in rows if key is not None]
     if not found:
         return {}
     keys = _sort_key([key for _, key in found])
@@ -605,7 +622,7 @@ def _anchors(model, connection, table: str, column: str) -> dict[str, str]:
     except Exception:  # noqa: BLE001 - no anchor is a missing option, not a failure
         return {}
 
-    spans = [(str(label), first, last) for label, first, last in rows if first is not None]
+    spans = [(_label(label), first, last) for label, first, last in rows if first is not None]
     if len(spans) < MIN_CLASSES:
         return {}
     # Sorted by start already, so one pass settles it: any group still running
@@ -829,9 +846,9 @@ def one(
 
     slices = [
         Slice(
-            label=str(row[label_at]),
+            label=_label(row[label_at]),
             value=float(row[at]),
-            order=anchors.get(str(row[label_at]), ""),
+            order=anchors.get(_label(row[label_at]), ""),
         )
         for row in rows
         # A group with no figure is dropped rather than drawn as zero: an empty

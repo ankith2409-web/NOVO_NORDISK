@@ -192,6 +192,41 @@ def _parameter_tables(columns) -> set[str]:
     return {table for table, flags in by_table.items() if flags and all(flags)}
 
 
+def _name(value) -> str:
+    """One object's name, exactly as the model spells it.
+
+    Deliberately *not* stripped. `Supply Analytics[Product ]` in Microsoft's
+    Supply Chain sample really does end in a space, and trimming it renamed the
+    column: the model then held `Product` while the data held `Product `, so
+    every query this tool generated for it failed with "column not found", the
+    report's own tile could not be bound to it, and the implicit measure over
+    it was dropped. One trailing space, three wrong answers.
+
+    A name that is *only* whitespace is still treated as absent, which is the
+    emptiness guard every caller relies on -- as is every spelling of nothing
+    a frame can hand back. `str(numpy.nan)` is `"nan"`, which is a perfectly
+    good name for a column and a disastrous one for a missing value.
+    """
+    if not _present(value):
+        return ""
+    text = str(value)
+    return "" if not text.strip() else text
+
+
+def _flag(value) -> bool:
+    """One cell as a boolean, where absent means false.
+
+    `bool(numpy.nan)` is `True`, so a LEFT JOIN that finds nothing reports the
+    flag as set. Every `IsHidden` and `IsKey` in this adapter goes through
+    here for that reason.
+    """
+    if not _present(value):
+        return False
+    if isinstance(value, str):
+        return value.strip().casefold() not in ("", "0", "false", "none", "nan")
+    return bool(value)
+
+
 def _grouped_column(value) -> str:
     """The column a `GroupingMetadata` property says its column groups."""
     import json
@@ -249,9 +284,9 @@ class PbixAdapter:
         declared = list(raw.tables)
         known = {name.casefold() for name in declared}
         measure_hosts = {
-            str(r.get("TableName", "")).strip()
+            _name(r.get("TableName"))
             for r in measure_rows
-            if str(r.get("TableName", "")).strip()
+            if _name(r.get("TableName"))
         }
 
         # And a calculated table appears in neither list, for a different
@@ -331,7 +366,7 @@ class PbixAdapter:
                 )
             )
         known_measures = {
-            str(r.get("Name", "")).strip().casefold() for r in measure_rows
+            _name(r.get("Name")).casefold() for r in measure_rows
         }
         says_measure = self._measure_declarations(raw)
         model.measures = [
@@ -438,7 +473,7 @@ class PbixAdapter:
         for row in _rows(_safe(raw, "tmschema_partitions")):
             if int(row.get("Type", 0) or 0) != _CALCULATED_PARTITION:
                 continue
-            name = str(row.get("TableName", "")).strip()
+            name = _name(row.get("TableName"))
             expression = str(row.get("QueryDefinition", "") or "").strip()
             if not name or not expression:
                 continue
@@ -496,15 +531,15 @@ class PbixAdapter:
             levels_by_hierarchy.setdefault(key, []).append(
                 HierarchyLevel(
                     ordinal=int(row.get("Ordinal", 0) or 0),
-                    name=str(row.get("Name", "")).strip(),
-                    column=str(row.get("ColumnName", "")).strip(),
+                    name=_name(row.get("Name")),
+                    column=_name(row.get("ColumnName")),
                 )
             )
 
         out: list[Hierarchy] = []
         for row in _rows(_safe(raw, "tmschema_hierarchies")):
-            table = str(row.get("TableName", "")).strip()
-            name = str(row.get("Name", "")).strip()
+            table = _name(row.get("TableName"))
+            name = _name(row.get("Name"))
             if not table or not name:
                 continue
 
@@ -604,7 +639,7 @@ class PbixAdapter:
     def _power_query_by_table(self, raw: PBIXRay) -> dict[str, str]:
         out: dict[str, str] = {}
         for row in _rows(raw.power_query):
-            name = str(row.get("TableName", "")).strip()
+            name = _name(row.get("TableName"))
             if name and _present(row.get("Expression")):
                 out[name] = str(row.get("Expression"))
         return out
@@ -612,8 +647,8 @@ class PbixAdapter:
     def _calculated_column_expressions(self, raw: PBIXRay) -> dict[tuple[str, str], str]:
         out: dict[tuple[str, str], str] = {}
         for row in _rows(raw.dax_columns):
-            table = str(row.get("TableName", "")).strip()
-            column = str(row.get("ColumnName", "")).strip()
+            table = _name(row.get("TableName"))
+            column = _name(row.get("ColumnName"))
             expr = row.get("Expression")
             if table and column and _present(expr):
                 out[(table, column)] = str(expr)
@@ -622,27 +657,82 @@ class PbixAdapter:
     def _column_declarations(self, raw: PBIXRay) -> dict[tuple[str, str], dict]:
         """What the model says about each column, beyond its name and type.
 
-        `raw.schema` is the storage schema -- what a column *is made of*.
-        `tmschema_columns` is the semantic model's own record of what it *is*:
-        the data category, whether the author hid it, how it is formatted, and
+        `raw.schema` is the storage schema -- what a column *is made of*. This
+        is the semantic model's own record of what it *is*: the data category,
+        whether the author hid it, how it is formatted, what it sorts by, and
         any description they wrote. Only the first was ever read, which is why
         two other parts of this project ended up guessing at answers stated
         here: the map decided a column held a latitude by its name, and the
         chart picker decided one held an image by sniffing its bytes.
+
+        Read from the model's own `Column` table rather than through PBIXRay's
+        `tmschema_columns`, because that view ends in `WHERE Type IN (1, 2)`
+        and a *calculated table's* columns are type 4. Every one of them was
+        therefore invisible here -- 22 of them on Store Sales' `Date` table,
+        the table that file's own description tells authors to use, including
+        `Date[Date]` declaring `dd-mmm-yyyy` and `Date[DateKey]` declaring
+        itself hidden. `tmschema_columns` remains the fallback: it is missing
+        the calculated tables, which is better than being missing everything.
         """
+        by_key = self._declarations_from_store(raw)
+        if by_key:
+            return by_key
+
         found: dict[tuple[str, str], dict] = {}
         for row in _rows(_safe(raw, "tmschema_columns")):
-            table = str(row.get("TableName", "")).strip()
-            name = str(row.get("Name", "")).strip()
+            table = _name(row.get("TableName"))
+            name = _name(row.get("Name"))
             if not table or not name:
                 continue
             found[(table.casefold(), name.casefold())] = {
                 "data_category": _text(row.get("DataCategory")),
-                "is_hidden": bool(row.get("IsHidden")),
+                "is_hidden": _flag(row.get("IsHidden")),
                 "format_string": _text(row.get("FormatString")),
                 "description": _text(row.get("Description")),
                 "summarize_by": _SUMMARIZE_BY.get(row.get("SummarizeBy"), ""),
-                "is_key": bool(row.get("IsKey")),
+                "is_key": _flag(row.get("IsKey")),
+                "sort_by": "",
+            }
+        return found
+
+    def _declarations_from_store(self, raw: PBIXRay) -> dict[tuple[str, str], dict]:
+        """The same declarations, from the model's `Column` table unfiltered.
+
+        One query, every failure swallowed, and a caller that falls back to the
+        published view when this path is gone. The sort-by column is joined
+        here rather than fetched separately because it is a property of the
+        same row.
+        """
+        try:
+            reader = raw._metadata.source._db  # noqa: SLF001 -- see docstring
+            rows = _rows(
+                reader.query(
+                    "SELECT t.Name AS TableName, "
+                    "COALESCE(c.ExplicitName, c.InferredName) AS Name, "
+                    "c.DataCategory, c.Description, c.IsHidden, c.IsKey, "
+                    "c.SummarizeBy, c.FormatString, s.ExplicitName AS SortBy "
+                    "FROM [Column] c JOIN [Table] t ON c.TableID = t.ID "
+                    "LEFT JOIN [Column] s ON c.SortByColumnID = s.ID"
+                )
+            )
+        except Exception:  # noqa: BLE001 -- a private path, so anything at all
+            return {}
+
+        found: dict[tuple[str, str], dict] = {}
+        for row in rows:
+            table = _name(row.get("TableName"))
+            name = _name(row.get("Name"))
+            if not table or not name:
+                continue
+            sorts_by = _name(row.get("SortBy"))
+            found[(table.casefold(), name.casefold())] = {
+                "data_category": _text(row.get("DataCategory")),
+                "is_hidden": _flag(row.get("IsHidden")),
+                "format_string": _text(row.get("FormatString")),
+                "description": _text(row.get("Description")),
+                "summarize_by": _SUMMARIZE_BY.get(row.get("SummarizeBy"), ""),
+                "is_key": _flag(row.get("IsKey")),
+                "sort_by": "" if sorts_by == name else sorts_by,
             }
         return found
 
@@ -677,13 +767,13 @@ class PbixAdapter:
 
         found: dict[tuple[str, str], dict] = {}
         for row in rows:
-            table = str(row.get("TableName", "")).strip()
-            name = str(row.get("Name", "")).strip()
+            table = _name(row.get("TableName"))
+            name = _name(row.get("Name"))
             if not table or not name:
                 continue
             found[(table.casefold(), name.casefold())] = {
                 "format_string": _text(row.get("FormatString")),
-                "is_hidden": bool(row.get("IsHidden")),
+                "is_hidden": _flag(row.get("IsHidden")),
             }
         return found
 
@@ -761,7 +851,7 @@ class PbixAdapter:
         wanted = {"PBIDesktopVersion", "__PBI_TimeIntelligenceEnabled", "PBI_ProTooling"}
         found: dict[str, str] = {}
         for row in _rows(_safe(raw, "metadata")):
-            name = str(row.get("Name", "")).strip()
+            name = _name(row.get("Name"))
             if name in wanted:
                 found[name] = _text(row.get("Value"))
         return found
@@ -806,9 +896,9 @@ class PbixAdapter:
 
         found: dict[tuple[str, str], str] = {}
         for row in rows:
-            table = str(row.get("TableName", "")).strip()
-            name = str(row.get("Name", "")).strip()
-            sorts_by = str(row.get("SortBy", "")).strip()
+            table = _name(row.get("TableName"))
+            name = _name(row.get("Name"))
+            sorts_by = _name(row.get("SortBy"))
             if not table or not name or not sorts_by or sorts_by == name:
                 continue
             found[(table.casefold(), name.casefold())] = sorts_by
@@ -820,7 +910,7 @@ class PbixAdapter:
         for row in _rows(_safe(raw, "tmschema_partitions")):
             if row.get("Type") not in _AUTHORED_PARTITION:
                 continue
-            name = str(row.get("TableName", "")).strip()
+            name = _name(row.get("TableName"))
             mode = _STORAGE_MODE.get(row.get("Mode"), "")
             if name and mode:
                 found[name.casefold()] = mode
@@ -835,12 +925,12 @@ class PbixAdapter:
         """
         found: dict[str, dict] = {}
         for row in _rows(_safe(raw, "tmschema_tables")):
-            name = str(row.get("Name", "")).strip()
+            name = _name(row.get("Name"))
             if not name:
                 continue
             found[name.casefold()] = {
                 "description": _text(row.get("Description")),
-                "is_hidden": bool(row.get("IsHidden")),
+                "is_hidden": _flag(row.get("IsHidden")),
                 "data_category": _text(row.get("DataCategory")),
             }
         return found
@@ -851,12 +941,11 @@ class PbixAdapter:
         columns: list[Column] = []
         seen: set[tuple[str, str]] = set()
         declared = self._column_declarations(raw)
-        sorts_by = self._sort_by_columns(raw)
         properties = self._column_properties(raw)
 
         for row in _rows(raw.schema):
-            table = str(row.get("TableName", "")).strip()
-            name = str(row.get("ColumnName", "")).strip()
+            table = _name(row.get("TableName"))
+            name = _name(row.get("ColumnName"))
             if not table or not name:
                 continue
             seen.add((table, name))
@@ -873,7 +962,7 @@ class PbixAdapter:
                     is_hidden=says.get("is_hidden", False),
                     format_string=says.get("format_string", ""),
                     description=says.get("description", ""),
-                    sort_by=sorts_by.get((table.casefold(), name.casefold()), ""),
+                    sort_by=says.get("sort_by", ""),
                     summarize_by=says.get("summarize_by", ""),
                     is_key=says.get("is_key", False),
                     is_parameter=extra.get("is_parameter", False),
@@ -917,8 +1006,8 @@ class PbixAdapter:
         known_measures: set[str],
         declared: dict[tuple[str, str], dict] | None = None,
     ) -> Measure:
-        table = str(row.get("TableName", "")).strip()
-        name = str(row.get("Name", "")).strip()
+        table = _name(row.get("TableName"))
+        name = _name(row.get("Name"))
         # `row.get("Expression") or ""` looks safe but is not: a pandas NaN is
         # truthy in Python, so a genuinely missing expression would silently
         # become the literal three-character string "nan" instead of an empty
@@ -965,13 +1054,13 @@ class PbixAdapter:
     def _build_relationships(self, raw: PBIXRay) -> list[Relationship]:
         out: list[Relationship] = []
         for row in _rows(raw.relationships):
-            from_table = str(row.get("FromTableName", "")).strip()
-            from_column = str(row.get("FromColumnName", "")).strip()
-            to_table = str(row.get("ToTableName", "")).strip()
-            to_column = str(row.get("ToColumnName", "")).strip()
+            from_table = _name(row.get("FromTableName"))
+            from_column = _name(row.get("FromColumnName"))
+            to_table = _name(row.get("ToTableName"))
+            to_column = _name(row.get("ToColumnName"))
             cardinality = str(row.get("Cardinality", "")).strip()
             cross_filter = str(row.get("CrossFilteringBehavior", "")).strip()
-            is_active = bool(row.get("IsActive", True))
+            is_active = _flag(row.get("IsActive"))
 
             out.append(
                 Relationship(
@@ -1010,8 +1099,8 @@ def build_roles(frame) -> list[SecurityRole]:
     descriptions: dict[str, str | None] = {}
 
     for row in _rows(frame):
-        role = str(row.get("RoleName", "") or "").strip()
-        table = str(row.get("TableName", "") or "").strip()
+        role = _name(row.get("RoleName"))
+        table = _name(row.get("TableName"))
         if not role or not table:
             continue
         expression = str(row.get("FilterExpression", "") or "").strip()
@@ -1054,8 +1143,8 @@ def build_calculation_groups(groups_frame, items_frame) -> list[CalculationGroup
     """
     items: dict[str, list[CalculationItem]] = {}
     for row in _rows(items_frame):
-        table = str(row.get("TableName", "") or "").strip()
-        name = str(row.get("Name", "") or "").strip()
+        table = _name(row.get("TableName"))
+        name = _name(row.get("Name"))
         if not table or not name:
             continue
         expression = str(row.get("Expression", "") or "").strip()
@@ -1080,7 +1169,7 @@ def build_calculation_groups(groups_frame, items_frame) -> list[CalculationGroup
     out: list[CalculationGroup] = []
     seen: set[str] = set()
     for row in _rows(groups_frame):
-        table = str(row.get("TableName", "") or "").strip()
+        table = _name(row.get("TableName"))
         if not table or table in seen:
             continue
         seen.add(table)
@@ -1110,15 +1199,15 @@ def build_variations(frame, hierarchies_frame=None) -> list[ColumnVariation]:
     by_id: dict[str, str] = {}
     for row in _rows(hierarchies_frame):
         key = str(row.get("ID", "") or "").strip()
-        table = str(row.get("TableName", "") or "").strip()
-        name = str(row.get("Name", "") or "").strip()
+        table = _name(row.get("TableName"))
+        name = _name(row.get("Name"))
         if key and name:
             by_id[key] = f"{table}[{name}]" if table else name
 
     out: list[ColumnVariation] = []
     for row in _rows(frame):
-        table = str(row.get("TableName", "") or "").strip()
-        column = str(row.get("ColumnName", "") or "").strip()
+        table = _name(row.get("TableName"))
+        column = _name(row.get("ColumnName"))
         if not table or not column:
             continue
         hierarchy_key = str(row.get("DefaultHierarchyID", "") or "").strip()
@@ -1126,7 +1215,7 @@ def build_variations(frame, hierarchies_frame=None) -> list[ColumnVariation]:
             ColumnVariation(
                 table=table,
                 column=column,
-                name=str(row.get("Name", "") or "").strip() or "Variation",
+                name=_name(row.get("Name")) or "Variation",
                 default_hierarchy=by_id.get(hierarchy_key),
                 is_default=bool(int(row.get("IsDefault", 0) or 0)),
             )
@@ -1145,7 +1234,7 @@ def members_by_role(frame) -> dict[str, tuple[str, ...]]:
     """
     out: dict[str, list[str]] = {}
     for row in _rows(frame):
-        role = str(row.get("RoleName", "") or "").strip()
+        role = _name(row.get("RoleName"))
         member = str(row.get("MemberName", "") or "").strip()
         if role and member:
             out.setdefault(role, []).append(member)
@@ -1163,7 +1252,7 @@ def build_kpis(frame) -> list[Kpi]:
     """
     out: list[Kpi] = []
     for row in _rows(frame):
-        table = str(row.get("TableName", "") or "").strip()
+        table = _name(row.get("TableName"))
         measure = str(row.get("MeasureName", "") or "").strip()
         if not table or not measure:
             continue
@@ -1197,8 +1286,8 @@ def build_object_permissions(frame) -> list[ObjectPermission]:
     """
     out: list[ObjectPermission] = []
     for row in _rows(frame):
-        role = str(row.get("RoleName", "") or "").strip()
-        table = str(row.get("TableName", "") or "").strip()
+        role = _name(row.get("RoleName"))
+        table = _name(row.get("TableName"))
         permission = str(row.get("Permission", "") or "").strip()
         if not role or not table or not permission:
             continue
@@ -1230,7 +1319,7 @@ def build_perspectives(frame) -> list[Perspective]:
         members.setdefault(name, []).append(
             PerspectiveMember(
                 object_kind=str(row.get("ObjectType", "") or "").strip() or "Object",
-                table=str(row.get("TableName", "") or "").strip(),
+                table=_name(row.get("TableName")),
                 name=str(row.get("ObjectName", "") or "").strip(),
             )
         )

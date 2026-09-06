@@ -963,7 +963,14 @@ def test_the_frd_carries_the_join_sql_beneath_each_relationship() -> None:
     )
     text = document.to_markdown(built)
     assert "*The same join in SQL*" in text
-    assert 'FROM "Batch" JOIN "Site" ON "Batch"."SiteID" = "Site"."SiteID"' in text
+    # LEFT, not inner. A relationship listing always reads from the many side
+    # to the one, and a Power BI relationship does not discard the many side:
+    # a batch whose SiteID matches no site is still counted, under a blank
+    # member. An inner join here would document a narrowing the model does not
+    # perform -- and an agent handed this document would then reproduce it.
+    assert (
+        'FROM "Batch" LEFT JOIN "Site" ON "Batch"."SiteID" = "Site"."SiteID"' in text
+    )
 
 
 def test_a_brd_carries_no_join_sql() -> None:
@@ -975,3 +982,117 @@ def test_a_brd_carries_no_join_sql() -> None:
     graph = SemanticGraph(TmdlAdapter().extract(str(MODEL)))
     built = document.build(graph, document.Kind.BUSINESS, sql_grain=())
     assert "*The same join in SQL*" not in document.to_markdown(built)
+
+
+# -- which join keeps the right rows ------------------------------------------
+
+
+def _orphan_model():
+    """Two tables, three sales, and one of them pointing at no product."""
+    from concordance.model import Column, Measure, Relationship, SemanticModel, Table
+
+    model = SemanticModel(name="Orphans", source_path="x", source_type="pbix")
+    model.tables = [Table(name="Sales", fingerprint="a"), Table(name="Product", fingerprint="b")]
+    model.columns = [
+        Column(table="Sales", name="ProductID", data_type="int64", fingerprint="c1"),
+        Column(table="Sales", name="Amount", data_type="int64", fingerprint="c2"),
+        Column(table="Product", name="ProductID", data_type="int64", fingerprint="c3"),
+        Column(table="Product", name="Category", data_type="object", fingerprint="c4"),
+    ]
+    model.measures = [
+        Measure(
+            table="Sales",
+            name="Total",
+            expression="SUM(Sales[Amount])",
+            fingerprint="m1",
+            depends_on_columns=frozenset({("Sales", "Amount")}),
+        )
+    ]
+    model.relationships = [
+        Relationship(
+            from_table="Sales",
+            from_column="ProductID",
+            to_table="Product",
+            to_column="ProductID",
+            cardinality="M:1",
+            cross_filter="Single",
+            is_active=True,
+            fingerprint="r1",
+        )
+    ]
+    return model
+
+
+def _orphan_data():
+    duckdb = pytest.importorskip("duckdb")
+    connection = duckdb.connect()
+    connection.execute(
+        'CREATE TABLE "Product" AS '
+        "SELECT * FROM (VALUES (1,'Books'),(2,'Toys')) t(ProductID, Category)"
+    )
+    # 99 matches no product: 700 of the 1000 has nowhere to go.
+    connection.execute(
+        'CREATE TABLE "Sales" AS '
+        "SELECT * FROM (VALUES (1,100),(2,200),(99,700)) t(ProductID, Amount)"
+    )
+    return connection
+
+
+def test_a_fact_row_with_no_matching_dimension_is_not_dropped() -> None:
+    """An inner join here loses 700 out of 1000 and says nothing.
+
+    A Power BI relationship does not discard rows -- a sale whose ProductID
+    matches no product is still summed, under a blank member of whatever the
+    report grouped by. Every relationship in the three sample files leaves
+    `RelyOnReferentialIntegrity` at its default of 0, which is the engine
+    saying exactly that.
+    """
+    from concordance.generate.breakdown import one
+
+    model = _orphan_model()
+    connection = _orphan_data()
+
+    split = one(model, connection, "Total", "Product", "Category")
+    assert sum(s.value for s in split.slices) == 1000
+    assert {s.label: s.value for s in split.slices}["(Blank)"] == 700
+    assert "LEFT JOIN" in split.sql
+
+
+def test_the_dropped_row_used_to_be_blamed_on_the_measure() -> None:
+    """Why this is worth a test rather than a comment.
+
+    The parts came to 300 against a whole of 1000, so `_adds_up` returned
+    False, and the page says that in words: an average or a ratio, whose parts
+    mean nothing added together. A statement about the tool's own missing row,
+    presented to the reader as a fact about their measure.
+    """
+    from concordance.generate.breakdown import _adds_up, one
+
+    model = _orphan_model()
+    connection = _orphan_data()
+
+    split = one(model, connection, "Total", "Product", "Category")
+    parts = sum(s.value for s in split.slices)
+    assert _adds_up(parts, 1000.0) is True
+
+
+def test_a_hop_toward_the_many_side_stays_an_inner_join(model, measures) -> None:
+    """The other half, and the half the first attempt at this got wrong.
+
+    `OOS Results PM` reads `Calendar[Date]`, so the query starts at the
+    calendar and reaches out to the facts. An outer join there keeps every date
+    that has no test on it, and `COUNT(*) FILTER (...)` reports a real 0 where
+    DAX returns blank -- so February, which has no tests at all, appears with 0
+    and March then reports that 0 as its previous month.
+    """
+    sql = sql_for(model, measures, "OOS Results PM", grain=())
+    assert 'FROM "Calendar"' in sql
+    assert 'JOIN "TestResult"' in sql
+    assert 'LEFT JOIN "TestResult"' not in sql
+
+
+def test_a_hop_toward_the_one_side_is_a_left_join(model, measures) -> None:
+    """And going the usual direction -- fact out to dimension -- keeps the facts."""
+    sql = sql_for(model, measures, "OOS Rate")
+    assert 'LEFT JOIN "Batch"' in sql
+    assert 'LEFT JOIN "Site"' in sql

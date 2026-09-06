@@ -1122,6 +1122,36 @@ def to_dialect(sql: str, dialect: str) -> str:
         return sql
 
 
+#: Which join keeps the right rows, and it depends on which way the hop goes.
+#:
+#: A Power BI relationship does not discard rows. A sale whose ProductID
+#: matches no product is still summed; it lands under a blank member of
+#: whatever the report grouped by. `RelyOnReferentialIntegrity` is the flag
+#: that would let the engine assume otherwise, and it is 0 -- the default --
+#: on every relationship in all three sample files. An INNER JOIN drops that
+#: row: built as a case with one orphaned sale worth 700 out of 1000, the tool
+#: reported the total as 1000, the parts as summing to 300, and then -- because
+#: the parts did not reach the whole -- announced the measure as non-additive,
+#: which reads on the page as "this is an average or a ratio". An explanation
+#: of the tool's own dropped row, offered as a fact about the measure.
+#:
+#: So: LEFT JOIN when the hop goes toward the *one* side. Each row on the many
+#: side matches at most one row there, so nothing is invented and nothing is
+#: lost.
+#:
+#: And INNER when it goes the other way, which the first attempt at this got
+#: wrong. `OOS Results PM` reads `Calendar[Date]`, so the query starts at the
+#: calendar and reaches the facts -- and an outer join there keeps every date
+#: with no test on it, turning `COUNT(*) FILTER (...)` into a real 0 where DAX
+#: returns blank. February had no tests; it appeared with 0, and March then
+#: reported February's 0 as its previous month instead of blank. A wrong
+#: number arrived at silently, which is the exact failure the previous-period
+#: translation exists to avoid.
+def _join_kind(target: str, one_side: str) -> str:
+    """`LEFT JOIN` toward the one side of a relationship, `JOIN` toward the many."""
+    return "LEFT JOIN" if target == one_side else "JOIN"
+
+
 def translate(
     model,
     measure,
@@ -1229,7 +1259,7 @@ def translate(
                 if target in joined:
                     continue
                 joins.append(
-                    f"JOIN {compiler.q(target)} "
+                    f"{_join_kind(target, rt)} {compiler.q(target)} "
                     f"ON {compiler.col(lt, lc)} = {compiler.col(rt, rc)}"
                 )
                 joined.add(target)
@@ -1414,7 +1444,7 @@ def combine(
                     if target in joined:
                         continue
                     lines.append(
-                        f"JOIN {compiler.q(target)} "
+                        f"{_join_kind(target, rt)} {compiler.q(target)} "
                         f"ON {compiler.col(lt, lc)} = {compiler.col(rt, rc)}"
                     )
                     joined.add(target)
@@ -1528,7 +1558,7 @@ def joins(model, dialect: str = "duckdb", quote: str = '"') -> list[Join]:
     for rel in model.relationships:
         statement = (
             f"SELECT 1 FROM {compiler.q(rel.from_table)} "
-            f"JOIN {compiler.q(rel.to_table)} "
+            f"LEFT JOIN {compiler.q(rel.to_table)} "
             f"ON {compiler.col(rel.from_table, rel.from_column)} = "
             f"{compiler.col(rel.to_table, rel.to_column)}"
         )

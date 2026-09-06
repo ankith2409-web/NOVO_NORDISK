@@ -109,12 +109,15 @@ def test_columns_carry_what_the_model_says_they_are(sales) -> None:
     }
     assert categories[("Store", "Latitude")] == "Latitude"
     assert categories[("Store", "Longitude")] == "Longitude"
-    assert len(categories) == 21, len(categories)
+    # 23, not the 21 this once asserted: PBIXRay's published view of the
+    # columns ends in `WHERE Type IN (1, 2)`, and a calculated table's columns
+    # are type 4. Reading the model's own `Column` table instead found them.
+    assert len(categories) == 23, len(categories)
 
 
 def test_columns_carry_their_declared_format_and_visibility(sales) -> None:
-    assert sum(1 for c in sales.columns if c.format_string) == 28
-    assert sum(1 for c in sales.columns if c.is_hidden) == 12
+    assert sum(1 for c in sales.columns if c.format_string) == 29
+    assert sum(1 for c in sales.columns if c.is_hidden) == 14
 
 
 # -- what a missing reader would look like --------------------------------------
@@ -447,11 +450,14 @@ def test_columns_carry_whether_the_author_said_to_summarise_them(sales, store) -
     identifier rather than a quantity -- which this project had been working
     out by looking for "ID" at the end of a name."""
     marked = [c for c in sales.columns if c.summarize_by == "none"]
-    assert len(marked) == 65
+    assert len(marked) == 68
     assert {c.summarize_by for c in sales.columns} <= {
         "", "default", "none", "sum", "min", "max", "count", "average", "distinctcount"
     }
     assert [c.qualified_name for c in store.columns if c.is_key] == [
+        # `Date[Date]` is on a calculated table, so it was invisible until the
+        # declarations stopped coming through a view that filters those out.
+        "Date[Date]",
         "District[DM]",
         "Fiscal calendar[Month]",
         "Store[LocationID]",
@@ -812,3 +818,185 @@ def test_no_sample_model_renames_a_column_from_its_source() -> None:
         for row in authored[authored.SourceColumn != authored.Name].itertuples():
             renamed.append(f"{row.TableName}[{row.Name}] <- {row.SourceColumn}")
     assert renamed == [], renamed
+
+
+# -- does it read everything? ----------------------------------------------------
+#
+# The tests above pin counts, which catches a regression but not an omission
+# nobody thought of. These derive the answer from the file instead, so a column
+# the reader has never seen still has to turn up.
+
+PBIX_MODELS = ["Sales_Returns_Sample", "StoreSales", "Supply_Chain_Sample"]
+
+
+def _store(path: Path):
+    """The model's own metadata tables, which PBIXRay publishes a view of."""
+    from pbixray import PBIXRay
+
+    return PBIXRay(str(path))._metadata.source._db
+
+
+@pytest.mark.parametrize("name", PBIX_MODELS)
+def test_every_column_the_model_declares_is_extracted(name: str) -> None:
+    """Counted against the file's own `Column` table, not a hand-written number.
+
+    This is the test that would have caught the calculated-table gap on its own.
+    PBIXRay's published view of the columns ends in `WHERE Type IN (1, 2)` and a
+    calculated table's columns are type 4, so 22 columns of Store Sales' `Date`
+    table — the table that file's own description tells authors to use — were
+    absent from every declaration this tool read.
+    """
+    path = Path(f"data/models/{name}.pbix")
+    if not path.exists():
+        pytest.skip(f"model not present: {path}")
+
+    model = PbixAdapter().extract(str(path))
+    rows = _store(path).query(
+        "SELECT t.Name AS tbl, COALESCE(c.ExplicitName, c.InferredName) AS col "
+        "FROM [Column] c JOIN [Table] t ON c.TableID = t.ID"
+    )
+    extracted = {(c.table.casefold(), c.name.casefold()) for c in model.columns}
+    # The engine's own storage tables are not an author's columns.
+    declared = {
+        (str(r.tbl).casefold(), str(r.col).casefold())
+        for r in rows.itertuples()
+        if str(r.col) != "nan"
+        and not str(r.tbl).startswith(("H$", "R$", "U$"))
+        and not str(r.col).startswith("RowNumber-")
+    }
+    assert declared <= extracted, sorted(declared - extracted)
+
+
+@pytest.mark.parametrize("name", PBIX_MODELS)
+def test_every_declaration_matches_what_the_file_says(name: str) -> None:
+    """Reading a column is not the same as reading what the file says about it.
+
+    Format string, hidden, key and data category are checked cell by cell
+    against the source, so a reader that finds the column and drops its
+    declarations fails here rather than producing a quietly poorer document.
+    """
+    import pandas as pd
+
+    path = Path(f"data/models/{name}.pbix")
+    if not path.exists():
+        pytest.skip(f"model not present: {path}")
+
+    model = PbixAdapter().extract(str(path))
+    by_key = {(c.table.casefold(), c.name.casefold()): c for c in model.columns}
+    rows = _store(path).query(
+        "SELECT t.Name AS tbl, COALESCE(c.ExplicitName, c.InferredName) AS col, "
+        "c.IsHidden AS hidden, c.IsKey AS iskey, c.FormatString AS fmt, "
+        "c.DataCategory AS cat "
+        "FROM [Column] c JOIN [Table] t ON c.TableID = t.ID"
+    )
+
+    def said(value) -> str:
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return ""
+        return str(value).strip()
+
+    checked = 0
+    for row in rows.itertuples():
+        column = by_key.get((str(row.tbl).casefold(), str(row.col).casefold()))
+        if column is None:
+            continue
+        checked += 1
+        where = f"{row.tbl}[{row.col}]"
+        assert column.is_hidden == (row.hidden == 1), where
+        assert column.is_key == (row.iskey == 1), where
+        assert column.format_string == said(row.fmt), where
+        assert column.data_category == said(row.cat), where
+    assert checked >= len(model.columns), (checked, len(model.columns))
+
+
+@pytest.mark.parametrize("name", PBIX_MODELS)
+def test_a_column_name_survives_extraction_exactly(name: str) -> None:
+    """A name is an identity, and trimming one is a rename.
+
+    `Supply Analytics[Product ]` really does end in a space. Stripping it left
+    the model holding `Product` while the data held `Product `, so the query
+    this tool generated failed with "column not found", the report tile that
+    uses it could not be bound, and the implicit measure over it was dropped.
+    One trailing space, three wrong answers — and nothing said so.
+    """
+    from pbixray import PBIXRay
+
+    path = Path(f"data/models/{name}.pbix")
+    if not path.exists():
+        pytest.skip(f"model not present: {path}")
+
+    raw = PBIXRay(str(path))
+    model = PbixAdapter().extract(str(path))
+    for table in raw.tables:
+        in_data = list(raw.get_table(table).columns)
+        in_model = [c.name for c in model.columns if c.table == table]
+        assert set(in_data) <= set(in_model), {
+            "table": table,
+            "in the data, not the model": sorted(set(in_data) - set(in_model)),
+        }
+
+
+@pytest.mark.parametrize("name", PBIX_MODELS)
+def test_every_column_can_be_queried_by_the_name_the_model_holds(name: str) -> None:
+    """The end of the chain, and the only part a reader ever sees fail.
+
+    Everything above is bookkeeping until a query runs. This asks the loaded
+    data for every column the model claims, by the name the model holds, and a
+    single mismatch anywhere upstream surfaces here as a binder error.
+    """
+    from concordance.generate.evaluate import open_data
+
+    path = Path(f"data/models/{name}.pbix")
+    if not path.exists():
+        pytest.skip(f"model not present: {path}")
+
+    model = PbixAdapter().extract(str(path))
+    connection, _rows, reason = open_data(model)
+    if connection is None:
+        pytest.skip(reason)
+
+    stored = {t.name for t in model.tables if not t.is_calculated or True}
+    failed: list[str] = []
+    for column in model.columns:
+        if column.table not in stored or column.expression is not None:
+            continue  # a calculated column may not be materialised
+        table = column.table.replace('"', '""')
+        field = column.name.replace('"', '""')
+        try:
+            connection.execute(f'SELECT "{field}" FROM "{table}" LIMIT 1').fetchone()
+        except Exception as exc:  # noqa: BLE001 - the failure is the finding
+            failed.append(f"{column.qualified_name}: {str(exc).splitlines()[0]}")
+    assert failed == [], failed
+
+
+@pytest.mark.parametrize("name", PBIX_MODELS)
+def test_every_tile_field_binds_to_something_in_the_model(name: str) -> None:
+    """A tile bound to a field the model does not carry is reported as such.
+
+    That reporting is right, and it should be rare. When it is not rare it
+    means the two readers disagree about a name — which is exactly what the
+    trailing space did to `Supply Analytics[Product ]`.
+    """
+    path = Path(f"data/models/{name}.pbix")
+    if not path.exists():
+        pytest.skip(f"model not present: {path}")
+
+    model = PbixAdapter().extract(str(path))
+    known = {(c.table.casefold(), c.name.casefold()) for c in model.columns}
+    known |= {(m.table.casefold(), m.name.casefold()) for m in model.measures}
+    measures_by_name = {m.name.casefold() for m in model.measures}
+
+    unbound = [
+        f"{visual.page} · {field.qualified_name}"
+        for visual in model.visuals()
+        for field in visual.fields
+        if (field.table.casefold(), field.name.casefold()) not in known
+        and field.name.casefold() not in measures_by_name
+    ]
+    # One, and it is real: a Q&A visual on the Returns page still asks for
+    # `Sales[Dates]`, and that column does not exist under any name — not as a
+    # column, a hierarchy or a measure. The report outlived the field. The tool
+    # already says so on the tile rather than inventing a binding, so what this
+    # guards is that the list does not grow: a *new* entry means the two
+    # readers have started disagreeing about a name.
+    assert unbound == (["Returns · Sales[Dates]"] if name == "Sales_Returns_Sample" else []), unbound
