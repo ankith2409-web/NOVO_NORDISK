@@ -1226,3 +1226,64 @@ def test_the_declared_column_type_never_contradicts_the_data() -> None:
                 f"{row.TableName}[{row.ColumnName}]: declared {declared}, "
                 f"data is {row.PandasDataType}"
             )
+
+
+# -- the whole thing, on every model --------------------------------------------
+
+
+ALL_SOURCES = [
+    ("pbix", f"data/models/{n}.pbix")
+    for n in ("Sales_Returns_Sample", "StoreSales", "Supply_Chain_Sample")
+] + [("tmdl", p) for p in sorted(str(x) for x in Path("data/models").glob("*.SemanticModel"))]
+
+
+@pytest.mark.parametrize("kind,path", ALL_SOURCES, ids=lambda v: Path(str(v)).stem)
+def test_a_model_reads_end_to_end_without_a_single_failure(kind: str, path: str) -> None:
+    """Extract, resolve, query, document, serve — with nothing swallowed.
+
+    The individual tests above each check one link. This checks the chain, on
+    every model, because the failures worth catching were all of the kind that
+    leaves each link looking fine: a column read but not queryable, a tile
+    bound to nothing, a document that builds while missing a table's worth of
+    declarations.
+    """
+    from concordance.adapters.tmdl import TmdlAdapter
+    from concordance.generate import document as doc
+    from concordance.generate.evaluate import open_data
+    from concordance.graph.csg import SemanticGraph
+    from concordance.web import api
+
+    if not Path(path).exists():
+        pytest.skip(f"model not present: {path}")
+
+    model = (PbixAdapter() if kind == "pbix" else TmdlAdapter()).extract(path)
+    graph = SemanticGraph(model)
+
+    # Nothing in the model points at something the model does not have.
+    assert graph.unresolved == [], graph.unresolved
+
+    # Every stored column answers to the name the model holds for it.
+    connection, _rows, _reason = open_data(model)
+    if connection is not None:
+        tables = {t.name for t in model.tables}
+        for column in model.columns:
+            if column.table not in tables or column.expression is not None:
+                continue
+            field = column.name.replace('"', '""')
+            table = column.table.replace('"', '""')
+            connection.execute(f'SELECT "{field}" FROM "{table}" LIMIT 1').fetchone()
+
+    # Both documents render.
+    for kind_of in (doc.Kind.BUSINESS, doc.Kind.FUNCTIONAL):
+        grain = () if kind_of is doc.Kind.FUNCTIONAL else None
+        assert doc.to_markdown(doc.build(graph, kind_of, sql_grain=grain))
+
+    # And every route answers.
+    context = api.ApiContext(graph=graph)
+    for route in (
+        "/api/overview", "/api/values", "/api/dashboard", "/api/map", "/api/tables",
+        "/api/measures", "/api/requirements", "/api/review", "/api/dataset",
+        "/api/report", "/api/graph",
+    ):
+        status, _body = api.handle(context, route, {})
+        assert status == 200, (route, status)

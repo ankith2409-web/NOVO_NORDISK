@@ -162,7 +162,7 @@ footer { grid-column: 1 / -1; border-top: 1px solid var(--rule); padding-top: 24
      This reads them, writes the requirements documents from them, and translates each
      measure into SQL &mdash; or explains precisely why it cannot.</p>
   <div class="facts">
-    <div class="fact"><b>1,234</b><span>tests passing, 64 files</span></div>
+    <div class="fact"><b>1,274</b><span>tests passing, 64 files</span></div>
     <div class="fact"><b>3</b><span>input formats read</span></div>
     <div class="fact"><b>5</b><span>SQL dialects emitted</span></div>
     <div class="fact"><b>22</b><span>DAX functions refused, with reasons</span></div>
@@ -408,11 +408,24 @@ footer { grid-column: 1 / -1; border-top: 1px solid var(--rule); padding-top: 24
      the same as an unbuilt feature, and neither is the same as a blocked environment.</p>
 
   <div class="lim">
-    <h4>Figures are a snapshot <span class="tag t-design">by design</span></h4>
+    <h4>Joins keep unmatched rows unless the file says not to <span class="tag t-design">by design</span></h4>
+    <p>A Power BI relationship does not discard rows, so a translation joins outward
+       from the table being aggregated and keeps its rows; a group with no value is
+       labelled <code>(Blank)</code>. Where the author assumed referential integrity,
+       the join is inner, because the file has said those rows cannot exist.</p>
+    <p class="why"><b>The cost of getting it wrong is not a missing row:</b> with one
+       orphaned sale worth 700 of 1,000, an inner join reported the total as 1,000, the
+       parts as 300, and then announced the measure as an average or a ratio &mdash; an
+       explanation of the tool's own dropped row, offered as a fact about the measure.</p>
+  </div>
+
+  <div class="lim">
+    <h4>Figures are a snapshot, and the document dates it <span class="tag t-design">by design</span></h4>
     <p>Every number comes from the rows stored inside the file. That is what makes it checkable;
-       it is also as old as the file. A <code>.SemanticModel</code> folder carries no rows at all,
-       so it produces documents and browsing but no figures. A DirectQuery table has no rows in
-       the file either &mdash; those tables are reported by name.</p>
+       it is also as old as the last refresh, which the documents now state. A
+       <code>.SemanticModel</code> folder carries no rows at all, so it produces documents and
+       browsing but no figures. A DirectQuery table has no rows in the file either &mdash; those
+       tables are reported by name.</p>
   </div>
 
   <div class="lim">
@@ -502,7 +515,7 @@ footer { grid-column: 1 / -1; border-top: 1px solid var(--rule); padding-top: 24
 <section id="verification">
   <h2><span class="n">07</span>Verification</h2>
   <p class="lede">What is proven, and what is merely written.</p>
-  <p><b>1,234 tests pass across 64 files.</b> Guards are mutation-tested: the guard is broken
+  <p><b>1,274 tests pass across 64 files.</b> Guards are mutation-tested: the guard is broken
      deliberately and the test confirmed to go red, because a test that passes either way proves
      nothing. Two source audits run as tests &mdash; enumerating everything the file formats offer
      against everything the readers name &mdash; so a source that starts carrying data, or one a

@@ -132,7 +132,7 @@
     <div><b>What it is</b><span>Documentation and verification for Power BI semantic models</span></div>
     <div><b>Reads</b><span>.pbix files · .SemanticModel (TMDL) folders · SQL warehouses</span></div>
     <div><b>Produces</b><span>BRD &amp; FRD documents · DAX→SQL translations · a browsable model · drift reports</span></div>
-    <div><b>Verified by</b><span>1,234 passing tests across 64 files</span></div>
+    <div><b>Verified by</b><span>1,274 passing tests across 64 files</span></div>
   </div>
 </div>
 
@@ -334,7 +334,11 @@
       <tr><td>Store Sales</td><td class="n">32</td><td class="n">29</td><td>1 uses <code>ALL</code>; 1 is a constant; 1 ambiguous column name</td></tr>
       <tr><td>Supply Chain</td><td class="n">4</td><td class="n">4</td><td>—</td></tr>
     </table>
-    <p class="why" style="margin-top:2mm"><b>Read this carefully:</b> 6 of 58 looks like a failure
+    <p class="why" style="margin-top:2mm"><b>Every refusal names a construct.</b> Across all seven
+       sample models there is no measure left that fails for an unstated reason — the last one,
+       Supply Chain's <code>Manufactured (%)</code>, turned out to be a plain nested IF the parser
+       could not read because of two ampersands in the middle of it.</p>
+    <p class="why"><b>Read this carefully:</b> 6 of 58 looks like a failure
        and is not. Microsoft's Sales &amp; Returns sample is a demonstration of interactive DAX —
        it is built almost entirely from the functions above. A model written for reporting rather
        than for demonstration behaves like Store Sales.</p>
@@ -354,10 +358,30 @@
   </div>
 
   <div class="lim">
-    <h4>Figures come from a snapshot, not from a live source<span class="badge by-design">by design</span></h4>
+    <h4>Joins keep unmatched rows, unless the file says not to<span class="badge by-design">by design</span></h4>
+    <p>A Power BI relationship does not throw rows away: a sale whose product id
+       matches no product is still counted, under a blank member. So a translation
+       joins outward from the table being aggregated and keeps its rows, and any
+       group with no value is labelled <code>(Blank)</code> rather than dropped.
+       Where the author ticked "assume referential integrity", the file has said
+       those rows cannot exist, and the join is an inner one to match.</p>
+    <p class="why"><b>Why it is worth a paragraph:</b> the alternative is not a
+       missing row, it is a wrong explanation. With one orphaned sale worth 700 of
+       1,000, an inner join reported the total as 1,000, the parts as summing to
+       300, and then — because the parts did not reach the whole — announced the
+       measure as an average or a ratio. A statement about the tool's own dropped
+       row, presented as a fact about somebody's measure.</p>
+  </div>
+
+  <div class="lim">
+    <h4>Figures come from a snapshot, and the document says when<span class="badge by-design">by design</span></h4>
     <p>Every number is computed by running the measure's own SQL against the rows stored inside
        the <code>.pbix</code> file. That is what makes it checkable. It is also, by definition, as
-       old as the file.</p>
+       old as the last refresh — so the documents now carry a <b>Data loaded</b> line beside the
+       Power BI version that wrote the file. Sales &amp; Returns states figures from December 2019
+       in a document generated today, which is worth knowing before signing it.</p>
+    <p class="why"><b>When the file says nothing</b>, the line is absent rather than guessed. Five
+       of Store Sales' tables have never recorded a refresh at all.</p>
   </div>
 
   <div class="lim">
@@ -497,7 +521,7 @@
   <h2><span class="num">7</span>Verification</h2>
 
   <div class="lim">
-    <h4>1,234 tests pass; 44 are skipped<span class="badge blocked">environment</span></h4>
+    <h4>1,274 tests pass; 44 are skipped<span class="badge blocked">environment</span></h4>
     <p>43 of the 44 skip for one reason: <code>AdventureWorks_Sales.pbix</code> is not in the
        repository. It was only ever an upload and was lost when a container was reset. The tests
        that need it — 16 covering implicit measures, 7 covering hierarchies — are written and will
