@@ -1096,3 +1096,166 @@ def test_a_hop_toward_the_one_side_is_a_left_join(model, measures) -> None:
     sql = sql_for(model, measures, "OOS Rate")
     assert 'LEFT JOIN "Batch"' in sql
     assert 'LEFT JOIN "Site"' in sql
+
+
+def test_assuming_referential_integrity_makes_the_join_inner() -> None:
+    """The flag is the file saying which of the two joins is faithful.
+
+    Left at its default of false -- which it is on every relationship in all
+    six sample models -- the engine keeps unmatched rows and the translation
+    must too. Set to true, the author has declared those rows impossible, Power
+    BI uses an inner join, and a LEFT JOIN here would be documenting a
+    tolerance the model does not have.
+    """
+    from dataclasses import replace
+
+    from concordance.generate.breakdown import one
+
+    model = _orphan_model()
+    connection = _orphan_data()
+
+    assert "LEFT JOIN" in one(model, connection, "Total", "Product", "Category").sql
+
+    assumed = replace(
+        model,
+        relationships=[
+            replace(r, assume_referential_integrity=True) for r in model.relationships
+        ],
+    )
+    split = one(assumed, connection, "Total", "Product", "Category")
+    assert "LEFT JOIN" not in split.sql
+    assert 'JOIN "Product"' in split.sql
+    # And the orphan is gone, which is what the author said would happen.
+    assert sum(s.value for s in split.slices) == 300
+
+
+def test_the_integrity_flag_is_read_from_both_formats() -> None:
+    """Read in both adapters, because a guarantee that depends on which format
+    a model was saved in is not a guarantee."""
+    from concordance.adapters.pbix import PbixAdapter
+
+    tmdl = TmdlAdapter().extract(str(MODEL))
+    assert tmdl.relationships
+    assert all(not r.assume_referential_integrity for r in tmdl.relationships)
+
+    pbix = Path("data/models/StoreSales.pbix")
+    if pbix.exists():
+        model = PbixAdapter().extract(str(pbix))
+        assert model.relationships
+        assert all(not r.assume_referential_integrity for r in model.relationships)
+
+
+# -- the operators authors actually type ---------------------------------------
+
+
+def _ops_model():
+    from concordance.model import Column, Measure, SemanticModel, Table
+
+    model = SemanticModel(name="Ops", source_path="x", source_type="pbix")
+    model.tables = [Table(name="T", fingerprint="a")]
+    model.columns = [
+        Column(table="T", name="A", data_type="int64", fingerprint="c1"),
+        Column(table="T", name="B", data_type="int64", fingerprint="c2"),
+    ]
+    model.measures = [
+        Measure(
+            table="T",
+            name=name,
+            expression=expression,
+            fingerprint=name,
+            depends_on_tables=frozenset({"T"}),
+            depends_on_columns=frozenset({("T", "A"), ("T", "B")}),
+        )
+        for name, expression in (
+            ("Both", "CALCULATE(COUNTROWS(T), T[A] > 1 && T[B] < 5)"),
+            ("Either", "CALCULATE(COUNTROWS(T), T[A] > 2 || T[B] < 2)"),
+            ("Mixed", "CALCULATE(COUNTROWS(T), T[A] > 2 || T[A] = 1 && T[B] = 1)"),
+        )
+    ]
+    return model
+
+
+@pytest.mark.parametrize(
+    "measure,expected",
+    [
+        # Rows are (1,1) (2,4) (3,9) (4,1).
+        ("Both", 2),  # A>1 AND B<5    -> (2,4) (4,1)
+        ("Either", 3),  # A>2 OR B<2   -> (1,1) (3,9) (4,1)
+        # && binds tighter than ||, so this is A>2 OR (A=1 AND B=1):
+        # (3,9) and (4,1) on the left of the OR, (1,1) on the right.
+        ("Mixed", 3),
+    ],
+)
+def test_infix_and_or_translate_and_return_the_right_count(measure, expected) -> None:
+    """`&&` and `||` are how a DAX author writes AND and OR, and neither
+    parsed.
+
+    `&&` came through the lexer as two string-concatenations and `||` as
+    something the parser could not read at all, so Supply Chain's
+    `Manufactured (%)` -- a plain nested IF -- was reported as untranslatable
+    because of two ampersands in the middle of it.
+    """
+    duckdb = pytest.importorskip("duckdb")
+
+    model = _ops_model()
+    connection = duckdb.connect()
+    connection.execute(
+        'CREATE TABLE "T" AS SELECT * FROM (VALUES (1,1),(2,4),(3,9),(4,1)) t(A,B)'
+    )
+    found = translate(model, next(m for m in model.measures if m.name == measure), ())
+    assert found.translated, found.reason
+    assert connection.execute(found.sql).fetchone()[0] == expected
+
+
+def test_and_binds_tighter_than_or() -> None:
+    """DAX's own precedence, and getting it backwards changes the answer."""
+    from concordance.generate.sql import Parser
+    from concordance.normalize.dax import tokenize
+
+    tree = Parser(tokenize("[A] = 1 || [B] = 2 && [C] = 3")).parse()
+    # The top of the tree is the OR; the AND is inside its right branch.
+    assert tree.op == "||"
+    assert tree.right.op == "&&"
+
+
+def test_string_concatenation_is_still_a_single_ampersand() -> None:
+    """`&` and `&&` are different operators and the lexer has to keep them so."""
+    from concordance.generate.sql import Parser
+    from concordance.normalize.dax import tokenize
+
+    tree = Parser(tokenize('"a" & "b"')).parse()
+    assert tree.op == "&"
+
+
+def test_every_dax_expression_in_the_samples_either_parses_or_is_named() -> None:
+    """No expression fails for a reason nobody wrote down.
+
+    A refusal names the construct it refuses. Anything else -- a parser that
+    simply cannot read a shape -- is a gap, and this is where it surfaces.
+    """
+    import glob
+
+    from concordance.adapters.pbix import PbixAdapter
+    from concordance.generate.sql import Unsupported
+
+    models = []
+    for name in ("Sales_Returns_Sample", "StoreSales", "Supply_Chain_Sample"):
+        path = Path(f"data/models/{name}.pbix")
+        if path.exists():
+            models.append(PbixAdapter().extract(str(path)))
+    for folder in sorted(glob.glob("data/models/*.SemanticModel")):
+        models.append(TmdlAdapter().extract(folder))
+    if not models:
+        pytest.skip("no models present")
+
+    unreadable = []
+    for model in models:
+        for measure in model.measures:
+            found = translate(model, measure, ())
+            if found.translated or found.status is Status.BLOCKED:
+                continue
+            # Not blocked and not translated: the reason had better name a
+            # construct rather than shrug.
+            if "not something this translator" in found.reason:
+                unreadable.append((model.name, measure.qualified_name, found.reason))
+    assert unreadable == [], unreadable

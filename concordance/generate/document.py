@@ -100,6 +100,9 @@ class Document:
     #: Which tool wrote the file this was read from. A document somebody signs
     #: should say what it was read from precisely enough to fetch again.
     built_with: str = ""
+    #: When the rows behind every figure in this document were loaded. Empty
+    #: when the file does not record one, which is not the same as "now".
+    data_as_of: str = ""
     #: What moved since the version this model was compared against, if one was
     #: given. In the document as well as on the Drift tab, and for a reason a
     #: reviewer gave plainly: the document is what gets sent to someone, and
@@ -223,6 +226,9 @@ def build(
         },
         built_with=(getattr(graph.model, "provenance", {}) or {}).get(
             "PBIDesktopVersion", ""
+        ),
+        data_as_of=(
+            graph.model.data_as_of() if hasattr(graph.model, "data_as_of") else ""
         ),
         limits=tuple(
             (gap.feature, gap.count, gap.reason) for gap in graph.model.coverage_gaps
@@ -386,6 +392,10 @@ def to_markdown(document: Document) -> str:
     lines.append(f"**Source model:** `{document.source}`  ")
     if document.built_with:
         lines.append(f"**Built with:** Power BI Desktop {document.built_with}  ")
+    if document.data_as_of:
+        # Said where the figures are, because every one of them was computed
+        # from rows loaded then and not since.
+        lines.append(f"**Data loaded:** {document.data_as_of}  ")
     lines.append(f"**Generated:** {document.generated_on}  ")
     lines.append(
         f"**Requirements:** {counts['requirements']} "

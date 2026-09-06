@@ -153,6 +153,15 @@ class Relationship:
     cross_filter: str
     is_active: bool
     fingerprint: str
+    #: True when the author told Power BI it may assume every row on the many
+    #: side has a match on the one side.
+    #:
+    #: It decides which join is faithful. Left at its default of false -- which
+    #: it is on every relationship in all six sample models -- the engine keeps
+    #: fact rows that match nothing, under a blank member, and the translation
+    #: has to be a LEFT JOIN to agree. Set to true, the author has said those
+    #: rows cannot exist, the engine uses an inner join, and so does this.
+    assume_referential_integrity: bool = False
 
     @property
     def label(self) -> str:
@@ -184,6 +193,14 @@ class Table:
     description: str = ""
     #: True when the author hid the whole table from report authors.
     is_hidden: bool = False
+    #: When this table's rows were last loaded, as the file records it. Empty
+    #: when it says nothing, or says the sentinel it uses for "never".
+    #:
+    #: Every figure this project computes comes from the rows stored in the
+    #: file, which makes them checkable and also makes them exactly as old as
+    #: the last refresh. A document that states a number without stating when
+    #: the data behind it was pulled is asking to be read as current.
+    refreshed_at: str = ""
     #: Where this table's rows live: `"import"` when they are in the file,
     #: `"directquery"` when they are fetched from the source at query time,
     #: `"dual"` when either. Empty when the source does not say.
@@ -480,6 +497,21 @@ class SemanticModel:
     #: is the answer to "why does this model have eleven hidden date tables in
     #: it", which is otherwise the most confusing thing about reading one.
     provenance: dict[str, str] = field(default_factory=dict)
+
+    def data_as_of(self) -> str:
+        """When the rows behind this model's figures were loaded, if it says.
+
+        Over the tables that *hold* data, which excludes calculated ones: a
+        calculated table's timestamp is when the engine last recomputed it, and
+        Store Sales would otherwise report data "as of 2026" from five tables
+        that have never recorded a refresh at all.
+        """
+        stated = [
+            t.refreshed_at
+            for t in self.user_tables()
+            if t.refreshed_at and not t.is_calculated
+        ]
+        return max(stated, default="")
 
     def visuals(self) -> list[Visual]:
         """Every tile in the report, across all pages."""

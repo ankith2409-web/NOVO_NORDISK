@@ -328,7 +328,25 @@ class Parser:
     _COMPARISONS = ("=", "<>", "<=", ">=", "<", ">")
 
     def expression(self) -> object:
-        """Comparison is lowest precedence, then IN, then arithmetic."""
+        """`||`, then `&&`, then comparison, then IN, then arithmetic.
+
+        DAX's own order: `a > 1 && b < 2` is `(a > 1) && (b < 2)`, and
+        `a && b || c` is `(a && b) || c`.
+        """
+        node = self.conjunction()
+        while self.at_op("||"):
+            self.next()
+            node = Binary("||", node, self.conjunction())
+        return node
+
+    def conjunction(self) -> object:
+        node = self.comparison()
+        while self.at_op("&&"):
+            self.next()
+            node = Binary("&&", node, self.comparison())
+        return node
+
+    def comparison(self) -> object:
         node = self.additive()
         while True:
             if self.at_op(*self._COMPARISONS):
@@ -569,6 +587,15 @@ class Compiler:
             hops.append((lt, lc, rt, rc))
         return hops
 
+    def assumes_integrity(self, from_table: str, to_table: str) -> bool:
+        """Whether the relationship between two tables assumes every row matches."""
+        for rel in self.model.relationships:
+            if not rel.is_active:
+                continue
+            if {rel.from_table, rel.to_table} == {from_table, to_table}:
+                return rel.assume_referential_integrity
+        return False
+
     # -- expression compilation -------------------------------------------
 
     def compile(self, node: object, where: tuple[str, ...] = ()) -> _Fragment:
@@ -757,7 +784,11 @@ class Compiler:
     def _binary(self, node: Binary, where: tuple[str, ...]) -> _Fragment:
         left = self.compile(node.left, where)
         right = self.compile(node.right, where)
-        op = "||" if node.op == "&" else node.op
+        # DAX spells string concatenation `&` and SQL spells it `||`; DAX
+        # spells the logical operators `&&` and `||` and SQL spells them out.
+        # Both mappings live here, and the order matters: `||` means OR on the
+        # way in and concatenation on the way out.
+        op = {"&": "||", "&&": "AND", "||": "OR"}.get(node.op, node.op)
         return _Fragment(
             f"({left.sql} {op} {right.sql})",
             left.tables | right.tables,
@@ -966,14 +997,11 @@ class Compiler:
                 cols.add((period[1], period[2]))
                 continue
 
-            comparison = isinstance(arg, Binary) and arg.op in (
-                "=", "<>", "<", ">", "<=", ">=",
-            )
-            predicate = isinstance(arg, Call) and arg.name in ("NOT", "IN", "ISBLANK")
-            if not (comparison or predicate):
+            if not _is_row_filter(arg):
                 raise Unsupported(
                     "CALCULATE",
-                    "only accepts column comparisons, IN, NOT and ISBLANK as filters here",
+                    "only accepts column comparisons, IN, NOT, ISBLANK and those "
+                    "combined with && or || as filters here",
                 )
             frag = self.compile(arg, ())
             extra.append(frag.sql)
@@ -1147,8 +1175,31 @@ def to_dialect(sql: str, dialect: str) -> str:
 #: reported February's 0 as its previous month instead of blank. A wrong
 #: number arrived at silently, which is the exact failure the previous-period
 #: translation exists to avoid.
-def _join_kind(target: str, one_side: str) -> str:
-    """`LEFT JOIN` toward the one side of a relationship, `JOIN` toward the many."""
+def _is_row_filter(node: object) -> bool:
+    """Whether a CALCULATE argument restricts rows in a way SQL can express.
+
+    A comparison, one of the predicates, or any of those joined by `&&` / `||`
+    -- which is how authors actually write a two-part filter. Reading only the
+    single-comparison form meant `CALCULATE(..., T[A] > 1 && T[B] < 5)` was
+    refused as an unreadable shape, when it is two readable shapes and an AND.
+    """
+    if isinstance(node, Binary):
+        if node.op in ("&&", "||"):
+            return _is_row_filter(node.left) and _is_row_filter(node.right)
+        return node.op in ("=", "<>", "<", ">", "<=", ">=")
+    return isinstance(node, Call) and node.name in ("NOT", "IN", "ISBLANK")
+
+
+def _join_kind(target: str, one_side: str, assumed: bool = False) -> str:
+    """`LEFT JOIN` toward the one side of a relationship, `JOIN` toward the many.
+
+    Unless the author set "assume referential integrity" on the relationship,
+    which is them saying a row on the many side without a match cannot exist.
+    Power BI then uses an inner join, and so does this -- the flag is the one
+    place the file says which of the two is faithful.
+    """
+    if assumed:
+        return "JOIN"
     return "LEFT JOIN" if target == one_side else "JOIN"
 
 
@@ -1259,7 +1310,8 @@ def translate(
                 if target in joined:
                     continue
                 joins.append(
-                    f"{_join_kind(target, rt)} {compiler.q(target)} "
+                    f"{_join_kind(target, rt, compiler.assumes_integrity(lt, rt))} "
+                    f"{compiler.q(target)} "
                     f"ON {compiler.col(lt, lc)} = {compiler.col(rt, rc)}"
                 )
                 joined.add(target)
@@ -1444,7 +1496,8 @@ def combine(
                     if target in joined:
                         continue
                     lines.append(
-                        f"{_join_kind(target, rt)} {compiler.q(target)} "
+                        f"{_join_kind(target, rt, compiler.assumes_integrity(lt, rt))} "
+                        f"{compiler.q(target)} "
                         f"ON {compiler.col(lt, lc)} = {compiler.col(rt, rc)}"
                     )
                     joined.add(target)
@@ -1558,7 +1611,8 @@ def joins(model, dialect: str = "duckdb", quote: str = '"') -> list[Join]:
     for rel in model.relationships:
         statement = (
             f"SELECT 1 FROM {compiler.q(rel.from_table)} "
-            f"LEFT JOIN {compiler.q(rel.to_table)} "
+            f"{'JOIN' if rel.assume_referential_integrity else 'LEFT JOIN'} "
+            f"{compiler.q(rel.to_table)} "
             f"ON {compiler.col(rel.from_table, rel.from_column)} = "
             f"{compiler.col(rel.to_table, rel.to_column)}"
         )

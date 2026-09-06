@@ -38,7 +38,7 @@ class Token:
     raw: str     # exactly as it appeared in the source
 
 
-_OP_CHARS = set("+-*/^=<>&,(){}:.")
+_OP_CHARS = set("+-*/^=<>&|,(){}:.")
 _IDENT_START = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
 _IDENT_CONT = _IDENT_START | set("0123456789")
 
@@ -116,8 +116,13 @@ def tokenize(expr: str) -> list[Token]:
 
         # -- operators and punctuation ----------------------------------
         if ch in _OP_CHARS:
-            # Two-character comparison operators must stay together.
-            if expr.startswith((">=", "<=", "<>"), i):
+            # Two-character operators must stay together. `&&` and `||` are
+            # DAX's infix AND and OR, and splitting them turns `&&` into two
+            # string-concatenations and `||` into something the parser cannot
+            # read at all -- which is what happened to Supply Chain's
+            # `Manufactured (%)`, a plain nested IF that was reported as
+            # untranslatable because of two ampersands in the middle of it.
+            if expr.startswith((">=", "<=", "<>", "&&", "||"), i):
                 tokens.append(Token(Kind.OP, expr[i:i + 2], expr[i:i + 2]))
                 i += 2
                 continue

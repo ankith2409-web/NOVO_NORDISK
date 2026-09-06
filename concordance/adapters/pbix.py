@@ -161,6 +161,11 @@ _SUMMARIZE_BY = {
     8: "distinctcount",
 }
 
+#: What the engine writes for a partition that has never been loaded. A
+#: seventeenth-century date is a sentinel, not a refresh, and reporting it as
+#: one would date a document to before the invention of the spreadsheet.
+_NEVER_REFRESHED = "1699-"
+
 #: Where a partition's rows come from, in Power BI's own numbering. 2 is
 #: "default", which the engine writes on its own internal storage partitions
 #: and which says nothing about a table an author made.
@@ -325,6 +330,7 @@ class PbixAdapter:
 
         says_table = self._table_declarations(raw)
         storage = self._storage_modes(raw)
+        refreshed = self._refreshed(raw)
         parameter_tables = _parameter_tables(model.columns)
         for name in declared + implied + new_tables:
             query = power_query.get(name)
@@ -363,6 +369,7 @@ class PbixAdapter:
                     data_category=says.get("data_category", ""),
                     is_parameter=name in parameter_tables,
                     storage_mode=storage.get(name.casefold(), ""),
+                    refreshed_at=refreshed.get(name.casefold(), ""),
                 )
             )
         known_measures = {
@@ -916,6 +923,26 @@ class PbixAdapter:
                 found[name.casefold()] = mode
         return found
 
+    def _refreshed(self, raw: PBIXRay) -> dict[str, str]:
+        """When each table's rows were last loaded. See `Table.refreshed_at`.
+
+        The latest of a table's partitions, because a table refreshed in parts
+        is only as current as its newest part -- and a reader asking "how old
+        is this number" is asking about the data they can see.
+        """
+        found: dict[str, str] = {}
+        for row in _rows(_safe(raw, "tmschema_partitions")):
+            if row.get("Type") not in _AUTHORED_PARTITION:
+                continue
+            name = _name(row.get("TableName"))
+            when = _text(row.get("RefreshedTime"))
+            if not name or not when or when.startswith(_NEVER_REFRESHED):
+                continue
+            key = name.casefold()
+            if when > found.get(key, ""):
+                found[key] = when
+        return found
+
     def _table_declarations(self, raw: PBIXRay) -> dict[str, dict]:
         """What the author said about each table, in their own words.
 
@@ -1061,6 +1088,7 @@ class PbixAdapter:
             cardinality = str(row.get("Cardinality", "")).strip()
             cross_filter = str(row.get("CrossFilteringBehavior", "")).strip()
             is_active = _flag(row.get("IsActive"))
+            assumed = _flag(row.get("RelyOnReferentialIntegrity"))
 
             out.append(
                 Relationship(
@@ -1071,11 +1099,13 @@ class PbixAdapter:
                     cardinality=cardinality,
                     cross_filter=cross_filter,
                     is_active=is_active,
-                    # Direction, cardinality, cross-filter and active state all
-                    # change what the join does, so all of them are in the hash.
+                    assume_referential_integrity=assumed,
+                    # Direction, cardinality, cross-filter, active state and
+                    # whether integrity is assumed all change what the join
+                    # does, so all of them are in the hash.
                     fingerprint=fingerprint_parts(
                         from_table, from_column, to_table, to_column,
-                        cardinality, cross_filter, str(is_active),
+                        cardinality, cross_filter, str(is_active), str(assumed),
                     ),
                 )
             )

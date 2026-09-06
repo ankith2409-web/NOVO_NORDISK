@@ -850,6 +850,7 @@ class TmdlAdapter:
             cross_filter = node.properties.get("crossFilteringBehavior", "singleDirection")
             cross_filter = "Both" if cross_filter == "bothDirections" else "Single"
             is_active = node.properties.get("isActive", "true") != "false"
+            assumed = node.properties.get("relyOnReferentialIntegrity") == "true"
 
             model.relationships.append(
                 Relationship(
@@ -860,9 +861,10 @@ class TmdlAdapter:
                     cardinality=cardinality,
                     cross_filter=cross_filter,
                     is_active=is_active,
+                    assume_referential_integrity=assumed,
                     fingerprint=fingerprint_parts(
                         from_table, from_column, to_table, to_column,
-                        cardinality, cross_filter, str(is_active),
+                        cardinality, cross_filter, str(is_active), str(assumed),
                     ),
                 )
             )

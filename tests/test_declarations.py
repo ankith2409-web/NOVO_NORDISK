@@ -1000,3 +1000,229 @@ def test_every_tile_field_binds_to_something_in_the_model(name: str) -> None:
     # guards is that the list does not grow: a *new* entry means the two
     # readers have started disagreeing about a name.
     assert unbound == (["Returns · Sales[Dates]"] if name == "Sales_Returns_Sample" else []), unbound
+
+
+# -- how old is the number? ------------------------------------------------------
+
+
+def test_a_table_records_when_its_rows_were_loaded(sales) -> None:
+    """Every figure this tool produces comes from rows stored in the file.
+
+    That is what makes them checkable, and it also makes them exactly as old as
+    the last refresh — which the file records per partition and nobody was
+    reading.
+    """
+    dated = {t.name: t.refreshed_at for t in sales.user_tables() if t.refreshed_at}
+    assert len(dated) == 16
+    assert all(when.startswith("2019-") for when in dated.values()), dated
+
+
+def test_a_never_refreshed_partition_is_not_dated_to_1699(store) -> None:
+    """The engine writes a seventeenth-century sentinel for "never loaded".
+
+    Five of Store Sales' tables carry it. Reporting it as a refresh would date
+    the data to before the invention of the spreadsheet.
+    """
+    never = {"Store", "Sales", "Item", "Fiscal calendar", "District"}
+    for table in store.user_tables():
+        if table.name in never:
+            assert table.refreshed_at == "", (table.name, table.refreshed_at)
+    # The calculated tables were genuinely recomputed, and say so.
+    assert any(t.refreshed_at for t in store.user_tables() if t.is_calculated)
+
+
+def test_data_as_of_ignores_tables_the_engine_merely_recomputed(store, sales) -> None:
+    """A calculated table's timestamp is when it was last recalculated.
+
+    Rolling it into "when was this data loaded" would have Store Sales
+    reporting data as of 2026 on the strength of a recalculation, while the
+    five tables actually holding its sales have never recorded a refresh at
+    all. Saying nothing is the honest answer there.
+    """
+    assert store.data_as_of() == ""
+    assert sales.data_as_of() == "2019-12-10 18:44:09"
+
+
+def test_a_document_says_how_old_its_figures_are(sales) -> None:
+    """A seven-year gap between the data and the signature is worth a line."""
+    from concordance.generate import document as doc
+    from concordance.generate.document import Kind
+    from concordance.graph.csg import SemanticGraph
+
+    built = doc.build(SemanticGraph(sales), Kind.BUSINESS)
+    assert built.data_as_of == "2019-12-10 18:44:09"
+    assert "**Data loaded:** 2019-12-10" in doc.to_markdown(built)
+
+
+# -- the audit, one level deeper -------------------------------------------------
+#
+# `UNREAD` above asks which *sources* go unread. This asks which *fields* do,
+# inside the sources that are read — which is where the calculated-table
+# columns and the refresh times were hiding, one level below where anybody had
+# looked.
+
+#: Fields the adapter does not read, and why. Grouped by the frame they sit in.
+UNREAD_FIELDS: dict[str, dict[str, str]] = {
+    "relationships": {
+        # How many distinct keys each side has. A storage statistic; the data
+        # answers the same question and stays right after a refresh.
+        "FromKeyCount": "cardinality statistics",
+        "ToKeyCount": "cardinality statistics",
+    },
+    "tmschema_columns": {
+        # The declared type. Checked against what the reader infers from the
+        # data across all three files: they never disagree — every column
+        # either declares the matching type or declares 1, which is the
+        # engine's "automatic", i.e. the author never set one.
+        "DataType": "never disagrees with the type inferred from the data",
+        # Constraints on the values rather than statements about meaning.
+        "IsUnique": "a constraint, not a definition",
+        "IsNullable": "a constraint, not a definition",
+        # Identical to the column's own name in all six sample models.
+        "SourceColumn": "identical to the column name everywhere",
+        # Engine internals: storage hints, ids, ordering and timestamps.
+        "TableID": "internal id",
+        "IsAvailableInMDX": "engine internal",
+        "EncodingHint": "storage hint",
+        "LineageTag": "internal id",
+        "SourceLineageTag": "internal id",
+        "DisplayOrdinal": "field-list ordering",
+        "ModifiedTime": "timestamp",
+        "StructureModifiedTime": "timestamp",
+    },
+    "tmschema_extended_properties": {"ModifiedTime": "timestamp"},
+    "tmschema_hierarchies": {
+        "HideMembers": "presentation",
+        "TableID": "internal id",
+        "State": "engine internal",
+        "HierarchyStorageID": "internal id",
+        "LineageTag": "internal id",
+        "SourceLineageTag": "internal id",
+        "ModifiedTime": "timestamp",
+        "StructureModifiedTime": "timestamp",
+    },
+    "tmschema_levels": {
+        # Both are second spellings of a key already read by the other name.
+        "HierarchyName": "the level is keyed by HierarchyID instead",
+        "ColumnID": "the column is read by name instead",
+        "LineageTag": "internal id",
+        "SourceLineageTag": "internal id",
+        "ModifiedTime": "timestamp",
+    },
+    "tmschema_linguistic_metadata": {
+        # The synonyms themselves are read, counted and deliberately not used
+        # as vocabulary — see UNREAD. Which culture they belong to only matters
+        # to a consumer that uses them.
+        "CultureID": "internal id",
+        "CultureName": "only meaningful if the synonyms were used",
+        "ContentType": "encoding of a payload that is parsed anyway",
+        "ModifiedTime": "timestamp",
+    },
+    "tmschema_partitions": {
+        "TableID": "internal id",
+        "State": "engine internal",
+        "DataView": "engine internal",
+        "DataSourceID": "internal id",
+        "SystemFlags": "engine internal",
+        "ModifiedTime": "timestamp",
+    },
+    "tmschema_tables": {
+        "IsPrivate": "engine internal",
+        "ShowAsVariationsOnly": "marks the generated date tables, already detected by name",
+        "LineageTag": "internal id",
+        "SourceLineageTag": "internal id",
+        "ModifiedTime": "timestamp",
+        "StructureModifiedTime": "timestamp",
+    },
+    "tmschema_variations": {
+        "ColumnID": "the column is read by name instead",
+        "RelationshipID": "internal id",
+        "DefaultColumnID": "internal id",
+    },
+}
+
+
+def test_every_unread_field_is_unread_on_purpose() -> None:
+    """The source audit one level down.
+
+    `UNREAD` asks which sources go unread; this asks which *fields* do inside
+    the ones that are read. That is where the calculated-table columns were
+    hiding — the source was being read, and a `WHERE Type IN (1, 2)` inside it
+    was dropping a quarter of Store Sales' columns — and where the refresh
+    times were too.
+    """
+    import re
+
+    from pbixray import PBIXRay
+
+    path = Path("data/models/Sales_Returns_Sample.pbix")
+    if not path.exists():
+        pytest.skip(f"model not present: {path}")
+
+    source = Path("concordance/adapters/pbix.py").read_text()
+    named = {a or b for a, b in re.findall(r'raw\.(\w+)|_safe\(raw, "(\w+)"\)', source)}
+    raw = PBIXRay(str(path))
+
+    unread: dict[str, set[str]] = {}
+    for attribute in sorted(named - {""}):
+        try:
+            frame = getattr(raw, attribute)
+            if not len(frame):
+                continue
+            columns = list(frame.columns)
+        except Exception:  # noqa: BLE001 - not every attribute is a frame
+            continue
+        missing = {c for c in columns if f'"{c}"' not in source}
+        if missing:
+            unread[attribute] = missing
+
+    for frame, fields in unread.items():
+        stated = set(UNREAD_FIELDS.get(frame, {}))
+        assert fields == stated, {
+            "frame": frame,
+            "newly unread": sorted(fields - stated),
+            "now read, drop from UNREAD_FIELDS": sorted(stated - fields),
+        }
+    assert set(unread) == set(UNREAD_FIELDS), {
+        "frames not accounted for": sorted(set(unread) - set(UNREAD_FIELDS)),
+        "fully read now": sorted(set(UNREAD_FIELDS) - set(unread)),
+    }
+
+
+def test_the_declared_column_type_never_contradicts_the_data() -> None:
+    """Justifies the `DataType` entry above, rather than asserting it.
+
+    Every column either declares the type the reader infers from the data, or
+    declares 1 — the engine's "automatic", which is the author never having set
+    one. If a file ever turns up where they disagree, the declaration is the
+    better answer and this is where that should be noticed.
+    """
+    from pbixray import PBIXRay
+
+    #: Power BI's own numbering, for the types these files use.
+    equivalent = {
+        2: {"string"},
+        6: {"Int64"},
+        8: {"Float64"},
+        9: {"datetime64[ns]"},
+        17: {"bytes"},
+    }
+    for name in PBIX_MODELS:
+        path = Path(f"data/models/{name}.pbix")
+        if not path.exists():
+            continue
+        raw = PBIXRay(str(path))
+        merged = raw.schema.merge(
+            raw.tmschema_columns,
+            left_on=["TableName", "ColumnName"],
+            right_on=["TableName", "Name"],
+            how="inner",
+        )
+        for row in merged.itertuples():
+            declared = int(row.DataType) if row.DataType == row.DataType else 1
+            if declared == 1:
+                continue  # the author set none; the data decides
+            assert str(row.PandasDataType) in equivalent.get(declared, set()), (
+                f"{row.TableName}[{row.ColumnName}]: declared {declared}, "
+                f"data is {row.PandasDataType}"
+            )
