@@ -32,6 +32,7 @@ import {
 } from "@/components/icons";
 import { Copilot } from "@/components/Copilot";
 import { Intro } from "@/components/Intro";
+import { readRoute, writeRoute } from "@/lib/route";
 import { FAVICON_SVG, Wordmark } from "@/components/Logo";
 import { Divider } from "@/components/Divider";
 import { useResizable } from "@/lib/useResizable";
@@ -121,13 +122,23 @@ const DOCKED = "(min-width: 1024px)";
 export default function App() {
   // Restored eagerly rather than in an effect: a first paint on the Overview
   // followed by a jump to the remembered view is a flash, not a restore.
-  const [view, setViewState] = useState<ViewId>(
-    () => recallOneOf("view", VIEWS.map((entry) => entry.id)) ?? "overview",
-  );
+  //
+  // The address bar wins over the memory, and that order is the whole point:
+  // somebody following a link sent to them must land where the link says, not
+  // where their own browser was last.
+  const [view, setViewState] = useState<ViewId>(() => {
+    const ids = VIEWS.map((entry) => entry.id);
+    const asked = readRoute().view;
+    if (asked && (ids as string[]).includes(asked)) return asked as ViewId;
+    return recallOneOf("view", ids) ?? "overview";
+  });
 
   function setView(next: ViewId) {
     setViewState(next);
     remember("view", next);
+    // A reader chose this, so it earns a history entry: Back should return
+    // them to the page they came from, not to before the app loaded.
+    writeRoute({ view: next, model: activeRef.current }, "push");
   }
   const [overview, setOverview] = useState<OverviewData | null>(null);
   // Only used to draw the switcher. Which model is *active* lives in the API
@@ -135,6 +146,10 @@ export default function App() {
   // the switch.
   const [loaded, setLoaded] = useState<LoadedModel[]>([]);
   const [active, setActive] = useState("");
+  // Read by `setView`, which is called from handlers created on earlier
+  // renders: closing over `active` there would write a stale model into the
+  // address bar the first time somebody navigates after switching.
+  const activeRef = useRef("");
   // The model this server was started on, kept so removing an uploaded model
   // has somewhere to land. A ref rather than state: nothing renders from it,
   // and it is written once.
@@ -144,9 +159,25 @@ export default function App() {
   // again against the restored model, and briefly show one model's figures
   // under the other's name.
   const [resolved, setResolved] = useState(false);
-  // Shown once. Deliberately not waiting on the model to load: someone whose
-  // server is down should still be told what they are looking at.
-  const [intro, setIntro] = useState(() => recall("intro-seen") !== "yes");
+  // Opened on request, never on arrival.
+  //
+  // It used to open itself on a first visit, which put a full-screen overlay
+  // in front of the one page in this interface specifically built to orient
+  // somebody -- the Overview says what the file holds and offers six ways in,
+  // by the question each one answers. A modal explaining the page you are
+  // already being shown is a door in front of a door.
+  //
+  // It still exists, because it is the better introduction for somebody who
+  // wants one: the header's "Guide" opens it, and the Overview offers it by
+  // name to anyone who has not seen it yet.
+  const [intro, setIntro] = useState(false);
+  const [introSeen, setIntroSeen] = useState(() => recall("intro-seen") === "yes");
+
+  function openIntro() {
+    setIntro(true);
+    setIntroSeen(true);
+    remember("intro-seen", "yes");
+  }
 
   function closeIntro() {
     setIntro(false);
@@ -202,10 +233,14 @@ export default function App() {
   const [wide, setWide] = useState(() => window.matchMedia(DOCKED).matches);
   const [showCopilot, setShowCopilot] = useState(() => {
     const stored = recall("copilot");
-    // Only a deliberate choice is remembered. With none, the width decides --
-    // restoring "open" onto a phone-sized window would cover the work.
-    if (stored === "open" || stored === "closed") return stored === "open";
-    return window.matchMedia(DOCKED).matches;
+    // Only a deliberate choice is remembered, and with none it stays shut.
+    //
+    // It used to open itself on any window wide enough to dock it, which spent
+    // a fifth of a 1440px screen on four suggested questions and an empty box
+    // -- squeezing the charts and formulas somebody came to read to make room
+    // for something they had not asked for. The header button is right there,
+    // and once pressed the choice is remembered.
+    return stored === "open";
   });
 
   useEffect(() => {
@@ -256,11 +291,47 @@ export default function App() {
       // of would point every request at nothing.
       const names = result.data.models.map((entry) => entry.name);
       defaultModel.current = result.data.default;
-      const restored = recallOneOf("model", names) ?? result.data.default;
+      // Same order as the view, for the same reason. A link naming a model
+      // this server never loaded falls back rather than pointing every
+      // request at nothing.
+      const asked = readRoute().model;
+      const restored =
+        (asked && names.includes(asked) ? asked : null) ??
+        recallOneOf("model", names) ??
+        result.data.default;
       api.use(restored);
       setActive(restored);
     })();
   }, []);
+
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
+
+  // The address bar follows the app. Replaced rather than pushed: this fires
+  // for the state the app *arrived* in as well as for the state a reader chose,
+  // and a Back button that walks through a page's own start-up is one nobody
+  // trusts. A deliberate move pushes, in `setView` and `switchTo`.
+  useEffect(() => {
+    if (!active) return;
+    writeRoute({ view, model: active }, "replace");
+  }, [view, active]);
+
+  // Back, Forward, and a hand-edited address.
+  useEffect(() => {
+    function onPop() {
+      const asked = readRoute();
+      const ids = VIEWS.map((entry) => entry.id) as string[];
+      if (asked.view && ids.includes(asked.view)) setViewState(asked.view as ViewId);
+      if (asked.model && asked.model !== active) switchTo(asked.model);
+    }
+    window.addEventListener("popstate", onPop);
+    window.addEventListener("hashchange", onPop);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      window.removeEventListener("hashchange", onPop);
+    };
+  });
 
   const [uploading, setUploading] = useState(false);
 
@@ -341,6 +412,7 @@ export default function App() {
     if (name === active) return;
     api.use(name);
     remember("model", name);
+    writeRoute({ view, model: name }, "push");
     // Cleared rather than left showing the previous model's figures while the
     // next ones load. Stale-but-plausible numbers under a new model name is
     // the one thing this interface must never do.
@@ -501,7 +573,7 @@ export default function App() {
               Sign out
             </Button>
           )}
-          <Button tone="ghost" onClick={() => setIntro(true)}>
+          <Button tone="ghost" onClick={openIntro}>
             Guide
           </Button>
           {/* Shows the theme you are *in*, and says in its tooltip where a
@@ -623,7 +695,11 @@ export default function App() {
         <main key={active} className="min-h-0 flex-1 overflow-auto">
           {!resolved && <p className="p-4 font-mono text-xs text-faint">Connecting…</p>}
           {resolved && view === "overview" && (
-            <Overview overview={overview} onGo={goTo} />
+            <Overview
+                overview={overview}
+                onGo={goTo}
+                onTour={introSeen ? undefined : openIntro}
+              />
           )}
           {resolved && view === "model" && <Model focus={focusFor("model")} />}
           {resolved && view === "dashboard" && <Dashboard focus={focusFor("dashboard")} />}

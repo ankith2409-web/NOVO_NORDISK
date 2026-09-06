@@ -82,10 +82,14 @@ const WAYS_IN: {
 export function Overview({
   overview,
   onGo,
+  onTour,
 }: {
   overview: OverviewData | null;
   /** Navigate to a view. The cards below are the only reason this exists. */
   onGo?: (view: string, target: string) => void;
+  /** Open the guide. Offered here, to somebody who has not seen it, in place
+   *  of the overlay that used to open itself in front of this page. */
+  onTour?: () => void;
 }) {
   // The overview itself is fetched once by the shell and passed in; only the
   // review queue is this view's own.
@@ -141,7 +145,18 @@ export function Overview({
       </div>
 
       <section className="flex flex-col gap-2.5">
-        <h2 className="font-serif text-lg font-semibold">Where to start</h2>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <h2 className="font-serif text-lg font-semibold">Where to start</h2>
+          {onTour && (
+            <button
+              type="button"
+              onClick={onTour}
+              className="text-[12.5px] text-accent underline underline-offset-2"
+            >
+              New here? Take the two-minute tour
+            </button>
+          )}
+        </div>
         <p className="max-w-prose text-[13px] text-muted">
           Or press <kbd className="rounded border border-hairline px-1 font-mono text-[11px]">/</kbd>{" "}
           anywhere to search the whole model by name — measures, tables, columns,
