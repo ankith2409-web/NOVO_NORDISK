@@ -1,0 +1,526 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Concordance — Guide</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 16mm 16mm; }
+  * { box-sizing: border-box; }
+  html { font-size: 10.5pt; }
+  body {
+    margin: 0; color: #17181b; background: #fff;
+    font-family: "Charter", "Bitstream Charter", Georgia, "Times New Roman", serif;
+    line-height: 1.5;
+  }
+  h1, h2, h3, .ui { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
+
+  /* -- cover ------------------------------------------------------------- */
+  .cover { height: 245mm; display: flex; flex-direction: column; page-break-after: always; }
+  .cover .rule { height: 5px; background: #0b5f57; margin-bottom: 14mm; }
+  .cover .eyebrow { font-size: 8.5pt; letter-spacing: .16em; text-transform: uppercase;
+                    color: #6b7075; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  .cover h1 { font-size: 34pt; line-height: 1.04; margin: 4mm 0 0; letter-spacing: -.02em; }
+  .cover .sub { font-size: 13pt; color: #43484d; margin-top: 5mm; max-width: 118mm; line-height: 1.45; }
+  .cover .meta { margin-top: auto; font-size: 9pt; color: #43484d; }
+  .cover .meta div { padding: 1.6mm 0; border-top: 1px solid #dcdfe1; display: flex; gap: 6mm; }
+  .cover .meta b { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+                   font-weight: 600; width: 34mm; color: #6b7075; font-size: 8pt;
+                   letter-spacing: .04em; text-transform: uppercase; }
+
+  .cover .inside { display: grid; grid-template-columns: 1fr 1fr; gap: 10mm;
+                   margin-top: 14mm; padding-top: 8mm; border-top: 1px solid #dcdfe1; }
+  .cover .inside h4 { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+                      font-size: 8.5pt; letter-spacing: .06em; text-transform: uppercase;
+                      color: #0b5f57; margin: 0 0 3mm; font-weight: 600; }
+  .cover .inside ol { margin: 0; padding-left: 6mm; font-size: 9.5pt; color: #2a2e33; }
+  .cover .inside li { margin-bottom: 1.4mm; }
+  .cover .askew { font-size: 9pt; color: #6b7075; margin: 4mm 0 0; font-style: italic; }
+
+  /* -- structure --------------------------------------------------------- */
+  h2 { font-size: 15pt; margin: 0 0 1mm; letter-spacing: -.01em; }
+  h2 .num { color: #0b5f57; font-variant-numeric: tabular-nums; margin-right: 3mm; }
+  .lede { color: #43484d; margin: 0 0 5mm; font-size: 10.5pt; }
+  section { page-break-inside: avoid; margin-bottom: 7mm; }
+  .part { page-break-before: always; }
+  .parthead { border-top: 3px solid #0b5f57; padding-top: 3mm; margin-bottom: 6mm; }
+  .parthead h1 { font-size: 19pt; margin: 0; letter-spacing: -.015em; }
+  .parthead p { margin: 1.5mm 0 0; color: #43484d; font-size: 10pt; }
+
+  /* -- page cards -------------------------------------------------------- */
+  .page { border: 1px solid #dcdfe1; border-left: 3px solid #0b5f57;
+          padding: 4mm 5mm; margin-bottom: 4mm; page-break-inside: avoid; }
+  .page h3 { font-size: 12pt; margin: 0; display: flex; align-items: baseline; gap: 3mm; }
+  .page h3 .tag { font-size: 7.5pt; letter-spacing: .1em; text-transform: uppercase;
+                  color: #6b7075; font-weight: 600; }
+  .page .what { margin: 2mm 0 3mm; font-size: 10.5pt; }
+  .page dl { margin: 0; display: grid; grid-template-columns: 26mm 1fr; gap: 1.4mm 4mm;
+             font-size: 9.5pt; }
+  .page dt { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-weight: 600;
+             font-size: 8pt; letter-spacing: .04em; text-transform: uppercase; color: #6b7075;
+             padding-top: .4mm; }
+  .page dd { margin: 0; color: #2a2e33; }
+
+  /* -- limitations ------------------------------------------------------- */
+  .lim { border-top: 1px solid #dcdfe1; padding: 3mm 0; page-break-inside: avoid; }
+  .lim:first-of-type { border-top: 2px solid #17181b; }
+  .lim h4 { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 10pt;
+            margin: 0 0 1.5mm; font-weight: 600; }
+  .lim p { margin: 0 0 1.5mm; font-size: 9.5pt; }
+  .lim .why { color: #6b7075; font-size: 9pt; font-style: italic; }
+  .lim .why b { font-style: normal; font-weight: 600; color: #8a5a2b; }
+  .badge { display: inline-block; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+           font-size: 7pt; letter-spacing: .08em; text-transform: uppercase; font-weight: 600;
+           padding: .6mm 2mm; border-radius: 2px; vertical-align: 1.2mm; margin-left: 2mm; }
+  .by-design { background: #e3efe c; }
+  .by-design { background: #e4efec; color: #0b5f57; }
+  .not-yet   { background: #f3e9df; color: #8a5a2b; }
+  .blocked   { background: #eceef0; color: #43484d; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 9pt; margin: 2mm 0 0; }
+  th, td { text-align: left; padding: 1.6mm 2mm; border-bottom: 1px solid #e6e8ea; }
+  th { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 7.5pt;
+       letter-spacing: .06em; text-transform: uppercase; color: #6b7075; font-weight: 600;
+       border-bottom: 1px solid #b9bec2; }
+  th.n, td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 8.8pt;
+         background: #f2f4f5; padding: .3mm 1mm; border-radius: 2px; }
+  .note { background: #f7f8f9; border-left: 3px solid #b9bec2; padding: 3mm 4mm;
+          font-size: 9.5pt; margin: 3mm 0; }
+  ul { margin: 1.5mm 0; padding-left: 5mm; font-size: 9.5pt; }
+  li { margin-bottom: 1mm; }
+</style></head><body>
+
+<div class="cover">
+  <div class="rule"></div>
+  <div class="eyebrow">Novo Nordisk GBS Hackathon 2026 · Problem Statement 21</div>
+  <h1>Concordance</h1>
+  <p class="sub">Every page of the tool, in plain words — and an honest list of
+     everything it will not do.</p>
+
+  <div class="inside">
+    <div class="col">
+      <h4>Part 1 — What each page does</h4>
+      <ol>
+        <li>Overview — the front door</li>
+        <li>Dashboard — the report, explained</li>
+        <li>Dataset + SQL — everything at once</li>
+        <li>BRD &amp; FRD — the documents</li>
+        <li>Browse objects — the model itself</li>
+        <li>Drift — what changed</li>
+        <li>Warehouse — does the database agree?</li>
+        <li>To confirm — the queue</li>
+        <li>Copilot — ask it questions</li>
+        <li>Command line — no browser needed</li>
+      </ol>
+    </div>
+    <div class="col">
+      <h4>Part 2 — Limitations</h4>
+      <ol>
+        <li>Measures that cannot become SQL</li>
+        <li>Numbers and formatting</li>
+        <li>What cannot be read out of the file</li>
+        <li>Warehouse comparison</li>
+        <li>Charts and the dashboard</li>
+        <li>Chatbot</li>
+        <li>Verification</li>
+        <li>Scope</li>
+      </ol>
+      <p class="askew">Each limitation is labelled as a deliberate refusal,
+         something not built yet, or something the environment blocks.</p>
+    </div>
+  </div>
+
+  <div class="meta">
+    <div><b>Team</b><span>MetaRadar · Amity University</span></div>
+    <div><b>What it is</b><span>Documentation and verification for Power BI semantic models</span></div>
+    <div><b>Reads</b><span>.pbix files · .SemanticModel (TMDL) folders · SQL warehouses</span></div>
+    <div><b>Produces</b><span>BRD &amp; FRD documents · DAX→SQL translations · a browsable model · drift reports</span></div>
+    <div><b>Verified by</b><span>1,234 passing tests across 64 files</span></div>
+  </div>
+</div>
+
+<!-- ============================ PART 1 ============================ -->
+<div class="part">
+  <div class="parthead">
+    <h1>Part 1 — What each page does</h1>
+    <p>Ten places you can be in this tool. Each one answers a different question.</p>
+  </div>
+
+<div class="page">
+  <h3>Overview <span class="tag">the front door</span></h3>
+  <p class="what">Tells you what you have just opened: how many tables, measures and
+     report pages the file holds, and what the tool could <em>not</em> read from it.</p>
+  <dl>
+    <dt>Why it exists</dt><dd>Two different people open this tool. A reviewer wants to know what
+      the model reports on. Whoever maintains it wants the formulas. This page points each of them
+      at the right tab by the question they are asking, not by the tab's name.</dd>
+    <dt>What to do here</dt><dd>Read the counts, glance at the blind spots, then pick a door.</dd>
+  </dl>
+</div>
+
+<div class="page">
+  <h3>Dashboard <span class="tag">the report, explained</span></h3>
+  <p class="what">Shows the tiles from the actual Power BI report, and under each one the
+     formula that produces it — the DAX the author wrote, and the SQL that means the same thing.</p>
+  <dl>
+    <dt>Why it exists</dt><dd>Somebody asked twice in one review: "how do I know which formula
+      belongs to which number on the dashboard?" Every other page starts from the model. This one
+      starts from the screen you are looking at and works backwards.</dd>
+    <dt>What you see</dt><dd>Each headline number, computed by actually running its query against
+      the file's own rows — not copied from the report. Charts break it down by category, over
+      time, and on a map where the file records coordinates. Click a bar and the whole page
+      re-runs filtered to it.</dd>
+    <dt>Worth knowing</dt><dd>Numbers are shown the way the file asks for them —
+      <code>$45,184,554</code>, <code>42.29%</code> — and the raw figure the query returned is
+      always shown beside them, so you can check one against the other.</dd>
+  </dl>
+</div>
+
+<div class="page">
+  <h3>Dataset + SQL <span class="tag">everything at once</span></h3>
+  <p class="what">Every measure in the file, its DAX, and the SQL query that would produce the
+     same number — all on one page.</p>
+  <dl>
+    <dt>Why it exists</dt><dd>People arrive asking "what does this dataset compute, and how would
+      I get the same numbers myself?" Answering that used to mean opening each measure one at a
+      time and copying it out.</dd>
+    <dt>The grain selector</dt><dd>At the top you choose "one row per what" — per month, per
+      store, per product. This is not a filter. A DAX measure has no single SQL translation until
+      you say what you are grouping by, because <code>GROUP BY</code> <em>is</em> the filter
+      context written down. Change it and every query on the page is rewritten.</dd>
+    <dt>Also here</dt><dd>The joins between tables, written as SQL, in five dialects:
+      DuckDB, Snowflake, Databricks, Redshift and Athena.</dd>
+  </dl>
+</div>
+
+<div class="page">
+  <h3>BRD &amp; FRD <span class="tag">the documents</span></h3>
+  <p class="what">The Business and Functional Requirements Documents, written from the model
+     itself. Downloadable as Word or Markdown.</p>
+  <dl>
+    <dt>Why it exists</dt><dd>This is the thing the brief asked for: automating BRD and FRD
+      creation from a Power BI file.</dd>
+    <dt>What makes it trustworthy</dt><dd>Every sentence is tied to the object it came from and
+      carries a fingerprint of that object. Every sentence is also marked with how it was arrived
+      at: <em>the model states this directly</em>, <em>inferred from how the model is built</em>,
+      or <em>the model could not settle this — somebody has to decide</em>.</dd>
+    <dt>The business version</dt><dd>Written for someone who does not read DAX. Each metric says
+      what it currently comes to on the file's own data, so you are approving a definition you
+      have seen produce a number.</dd>
+  </dl>
+</div>
+
+<div class="page">
+  <h3>Browse objects <span class="tag">the model itself</span></h3>
+  <p class="what">The model as a tree: tables own their columns, measures and drill-down paths.
+     Click any object to see its definition, what it depends on, and what breaks if you change it.</p>
+  <dl>
+    <dt>Why a tree</dt><dd>A semantic model is mostly hierarchical, and a tree renders that at any
+      size without zooming, dragging or untangling lines. The genuinely graph-shaped question —
+      "what breaks if I change this" — is answered by naming the affected objects instead.</dd>
+    <dt>What to do here</dt><dd>Impact analysis before you edit something.</dd>
+  </dl>
+</div>
+
+<div class="page">
+  <h3>Drift <span class="tag">what changed</span></h3>
+  <p class="what">Compares two versions of the same model and tells you what moved — and, more
+     usefully, which written requirements are now in question because of it.</p>
+  <dl>
+    <dt>Why it exists</dt><dd>Any diff can list changed objects. The point here is the second
+      half: naming the requirements whose evidence sits on those objects, so a signed document
+      can be checked rather than trusted.</dd>
+    <dt>What you see</dt><dd>Each change with the fingerprint on both sides and the text each was
+      taken from — because "the hash moved" is not something a reviewer can act on.</dd>
+  </dl>
+</div>
+
+<div class="page">
+  <h3>Warehouse <span class="tag">does the database agree?</span></h3>
+  <p class="what">Takes a Power BI measure and a warehouse view that claims to compute the same
+     thing, and shows whether they actually read the same tables, columns and aggregations.</p>
+  <dl>
+    <dt>Three verdicts, not two</dt><dd><em>Agrees</em>, <em>differs</em>, and
+      <em>needs review</em>. The third is not hedging: deciding whether two arbitrary expressions
+      in two languages produce the same number is not decidable in general, so a difference that
+      may or may not matter is reported as exactly that.</dd>
+    <dt>What you see</dt><dd>The two definitions side by side with the differing parts marked.
+      The verdict is just a summary of that.</dd>
+  </dl>
+</div>
+
+<div class="page">
+  <h3>To confirm <span class="tag">the queue</span></h3>
+  <p class="what">Every statement the tool inferred rather than read, in one place, waiting for a
+     person to agree or disagree.</p>
+  <dl>
+    <dt>Why it exists</dt><dd>The model does not say what an inactive relationship is <em>for</em>.
+      A sentence claiming to know is a guess, and guesses belong in front of a person before a
+      document goes anywhere.</dd>
+    <dt>What to do here</dt><dd>Accept, reject or annotate each one. Decisions are recorded and
+      flow back into the documents.</dd>
+  </dl>
+</div>
+
+<div class="page">
+  <h3>Copilot <span class="tag">side panel, always there</span></h3>
+  <p class="what">Ask questions about the model in plain English — "what feeds Net Sales?",
+     "which measures use the Calendar table?" — and get answers.</p>
+  <dl>
+    <dt>How it answers</dt><dd>Not from memory. It calls tools that read the extracted model, so
+      an answer about your file comes from your file.</dd>
+    <dt>Needs</dt><dd>An API key in the server's environment. Without one it says so plainly
+      rather than making something up.</dd>
+  </dl>
+</div>
+
+<div class="page">
+  <h3>Command line <span class="tag">no browser needed</span></h3>
+  <p class="what">The same work, scriptable — for CI, for a batch of files, or for a machine with
+     no screen.</p>
+  <dl>
+    <dt>Commands</dt><dd><code>extract</code> · <code>inspect</code> · <code>explain</code> ·
+      <code>verify</code> · <code>ask</code> · <code>document</code> · <code>snapshot</code> ·
+      <code>drift</code> · <code>auditpack</code> · <code>serve</code></dd>
+    <dt>Most used</dt><dd><code>document --type brd</code> writes the business document;
+      <code>auditpack</code> bundles the model, its documents and the evidence into one
+      reviewable archive.</dd>
+  </dl>
+</div>
+</div>
+
+<!-- ============================ PART 2 ============================ -->
+<div class="part">
+  <div class="parthead">
+    <h1>Part 2 — Limitations</h1>
+    <p>What this tool does not do, and why. Three kinds are mixed together below and each is
+       labelled: a deliberate refusal, something not built yet, and something blocked by the
+       environment rather than by the design.</p>
+  </div>
+
+  <div class="note"><b>The general rule.</b> Where this tool cannot answer something, it says so
+    in the place the answer would have gone. It does not fill a gap with a plausible guess, and it
+    does not quietly drop the question. Almost every limitation below is visible somewhere in the
+    interface or in the generated document.</div>
+
+  <h2><span class="num">1</span>Measures that cannot become SQL</h2>
+  <p class="lede">The largest and most visible limit, and the one most often mistaken for a bug.</p>
+
+  <div class="lim">
+    <h4>22 DAX functions stop a translation<span class="badge by-design">by design</span></h4>
+    <p>A measure using any of them produces no SQL. Instead the tool explains, in report terms,
+       why no single query can stand for it.</p>
+    <ul>
+      <li><b>Depends on what the user clicked</b> — <code>ALL</code>, <code>ALLSELECTED</code>,
+          <code>ALLEXCEPT</code>, <code>REMOVEFILTERS</code>, <code>ISINSCOPE</code>,
+          <code>SELECTEDVALUE</code>, <code>ISFILTERED</code>, <code>HASONEVALUE</code>,
+          <code>RANKX</code>, <code>TOPN</code></li>
+      <li><b>Depends on which period the report is showing</b> — <code>TOTALYTD</code>,
+          <code>TOTALQTD</code>, <code>TOTALMTD</code>, <code>DATESYTD</code>,
+          <code>DATESBETWEEN</code>, <code>DATESINPERIOD</code>, <code>DATEADD</code>,
+          <code>SAMEPERIODLASTYEAR</code>, <code>PARALLELPERIOD</code></li>
+      <li><b>Changes the joins while it runs</b> — <code>USERELATIONSHIP</code>,
+          <code>CROSSFILTER</code></li>
+      <li><b>Points at a row being worked through elsewhere</b> — <code>EARLIER</code></li>
+    </ul>
+    <p class="why"><b>Why:</b> these measures genuinely have no fixed answer. Their result changes
+       with what is on screen. Producing a query anyway would give a number that looks
+       authoritative and is wrong. Eight time-shift patterns that <em>are</em> unambiguous — such
+       as previous month — were unblocked and now translate.</p>
+  </div>
+
+  <div class="lim">
+    <h4>What this costs in practice<span class="badge by-design">by design</span></h4>
+    <table>
+      <tr><th>Model</th><th class="n">Measures</th><th class="n">Figures computed</th><th>Main reason for the rest</th></tr>
+      <tr><td>Sales &amp; Returns</td><td class="n">58</td><td class="n">6</td><td>17 use <code>ALL</code>; 12 are per-period only; 7 use <code>ISINSCOPE</code></td></tr>
+      <tr><td>Store Sales</td><td class="n">32</td><td class="n">29</td><td>1 uses <code>ALL</code>; 1 is a constant; 1 ambiguous column name</td></tr>
+      <tr><td>Supply Chain</td><td class="n">4</td><td class="n">4</td><td>—</td></tr>
+    </table>
+    <p class="why" style="margin-top:2mm"><b>Read this carefully:</b> 6 of 58 looks like a failure
+       and is not. Microsoft's Sales &amp; Returns sample is a demonstration of interactive DAX —
+       it is built almost entirely from the functions above. A model written for reporting rather
+       than for demonstration behaves like Store Sales.</p>
+  </div>
+
+  <h2><span class="num">2</span>Numbers and formatting</h2>
+
+  <div class="lim">
+    <h4>Three kinds of format string are not applied<span class="badge by-design">by design</span></h4>
+    <p>Date pictures (<code>dd-mmm-yyyy</code>, <code>Long Date</code>), the trailing comma that
+       divides by a thousand, conditional formats with more than three sections, and formats that
+       hide negatives. Nine of the twelve distinct formats across the sample files render; the
+       three declined are all date pictures.</p>
+    <p class="why"><b>Why:</b> a half-applied format changes the number rather than its
+       appearance. Where a format is declined the figure is shown exactly as the query returned
+       it — always true, even when it is not what Power BI would draw.</p>
+  </div>
+
+  <div class="lim">
+    <h4>Figures come from a snapshot, not from a live source<span class="badge by-design">by design</span></h4>
+    <p>Every number is computed by running the measure's own SQL against the rows stored inside
+       the <code>.pbix</code> file. That is what makes it checkable. It is also, by definition, as
+       old as the file.</p>
+  </div>
+
+  <div class="lim">
+    <h4>A DirectQuery table has no rows here<span class="badge by-design">by design</span></h4>
+    <p>Its data is fetched from the source when the report runs, so the file carries none. The
+       tool reports those tables by name and explains that the absence is the file's shape rather
+       than a limit of the tool.</p>
+  </div>
+
+  <div class="lim">
+    <h4>A TMDL folder produces no figures at all<span class="badge by-design">by design</span></h4>
+    <p>A <code>.SemanticModel</code> folder describes the model without carrying the data behind
+       it. Everything else works — documents, browsing, drift, the chatbot — but nothing on those
+       pages can state what a measure comes to.</p>
+  </div>
+
+  <h2><span class="num">3</span>What cannot be read out of the file</h2>
+
+  <div class="lim">
+    <h4>Translated object names<span class="badge not-yet">not built</span></h4>
+    <p>A model translated into another language carries those names, but each is keyed by a bare
+       number whose meaning depends on the object type, and the library used to read the file
+       publishes no mapping for it.</p>
+    <p class="why"><b>Why not guessed:</b> attaching one measure's French name to a different
+       measure is worse than saying the translations were not read. The count is reported.</p>
+  </div>
+
+  <div class="lim">
+    <h4>Some row-level security detail<span class="badge blocked">reader limit</span></h4>
+    <p>Table filters inside a security role are read in full. A role that filters no table at all
+       produces no row in the source, and each role's model-level permission is never exposed —
+       so a role appears only if it restricts at least one table. Stated wherever security is
+       reported.</p>
+  </div>
+
+  <div class="lim">
+    <h4>Q&amp;A synonyms — read, counted, deliberately unused<span class="badge by-design">by design</span></h4>
+    <p>Power BI stores the alternative words people might use for a table or column. This looked
+       like the best remaining source for a business glossary. Reading them settled it: across the
+       three sample files all 565 terms are machine-generated — either the object's own name with
+       the spaces put back ("location ID" for <code>LocationID</code>) or a thesaurus suggestion.
+       Power BI proposes "artifact advertised" for <code>Product Advertised</code>.</p>
+    <p class="why"><b>Why:</b> a glossary where a reader cannot tell which entries a person stood
+       behind is worse than no glossary. The count is reported with this reasoning attached.</p>
+  </div>
+
+  <div class="lim">
+    <h4>Five internal sources, each with a recorded reason<span class="badge by-design">by design</span></h4>
+    <p>Storage statistics and per-column storage structures (the data itself answers the same
+       questions), engine settings, internal annotations whose meaningful parts are read from
+       better places, and calculated-table DAX which is read from partitions instead. On the TMDL
+       side: source column names (identical to the model's name in all six sample models),
+       compatibility level, and a KPI's choice of icon.</p>
+    <p class="why"><b>Kept honest:</b> both audits run as tests. A source that starts carrying
+       data, or one the reader quietly stops reading, fails the build.</p>
+  </div>
+
+  <div class="lim">
+    <h4>Report layout, theming and interaction settings<span class="badge by-design">by design</span></h4>
+    <p>Where a tile sits on the canvas, its size, colours, fonts and the mobile layout are not
+       read. Neither are drill-through page bindings or per-pair visual interaction overrides.</p>
+    <p class="why"><b>Why:</b> this documents what a report <em>says</em>, not how it is arranged.
+       Drill-through bindings are a genuine gap — a page reached by drilling through always shows
+       its figures under a filter passed in from elsewhere — and are the clearest next thing to
+       build.</p>
+  </div>
+
+  <div class="lim">
+    <h4>Filters in shapes the tool does not recognise<span class="badge by-design">by design</span></h4>
+    <p>Report-, page- and visual-level filters are read from both report formats, including
+       Top-N filters. Anything else is reported as <em>present but not interpreted</em>, by name.</p>
+    <p class="why"><b>Why it matters:</b> a filter nobody mentions is a filter nobody checks. This
+       is the failure the whole area exists to prevent — Power BI showing 387K where the tool
+       showed 1.2M, because the report was pinned to June and nothing said so.</p>
+  </div>
+
+  <h2><span class="num">4</span>Warehouse comparison</h2>
+
+  <div class="lim">
+    <h4>Snowflake and Databricks are not verified against a live account<span class="badge blocked">environment</span></h4>
+    <p>The SQL path is exercised end to end against DuckDB, whose information schema follows the
+       same standard Snowflake and Databricks implement. The Snowflake connector is unit-tested
+       against a fake cursor, which proves the query text, the case handling and the wiring.</p>
+    <p class="why"><b>What that cannot prove:</b> a real handshake. This project's sandbox blocks
+       outbound connections to <code>*.snowflakecomputing.com</code> at the network policy layer —
+       confirmed against a real trial account, not assumed. Authenticating for real has to happen
+       from a machine outside that policy.</p>
+  </div>
+
+  <div class="lim">
+    <h4>The comparison is structural, not semantic<span class="badge by-design">by design</span></h4>
+    <p>DAX and SQL never hash alike even when they compute the same number, so what is compared is
+       what each definition reads — tables, columns, aggregations. Two definitions can differ
+       structurally and produce identical numbers, or match structurally and differ in a
+       <code>WHERE</code> clause.</p>
+    <p class="why"><b>Why "needs review" exists:</b> proving two arbitrary expressions equivalent
+       is undecidable in general. Collapsing that verdict into either neighbour would misreport
+       it.</p>
+  </div>
+
+  <h2><span class="num">5</span>Charts and the dashboard</h2>
+
+  <div class="lim">
+    <h4>Fixed bounds on what gets drawn<span class="badge by-design">by design</span></h4>
+    <p>A chart shows at most 10 slices, with the remainder folded into a labelled "N more".
+       A column is only offered as a dimension when it has between 2 and 30 distinct values.
+       A time series is capped at 120 points, a sparkline at 40.</p>
+    <p class="why"><b>Why:</b> a chart with 400 bars is not a chart. The folded slice is labelled
+       and counted rather than dropped.</p>
+  </div>
+
+  <div class="lim">
+    <h4>The map needs coordinates in the file<span class="badge by-design">by design</span></h4>
+    <p>Where the model declares latitude and longitude columns, points are plotted at them.
+       Where it carries only a postcode or a city name, no map is drawn and the reason is stated.</p>
+    <p class="why"><b>Why:</b> turning a postcode into a position means a lookup against data
+       outside the file, and a map drawn from a guess puts a location somewhere it is not. Google
+       Maps as a base layer needs a key in the environment; without one, a built-in tile map is
+       used and the points are identical either way.</p>
+  </div>
+
+  <h2><span class="num">6</span>Chatbot</h2>
+
+  <div class="lim">
+    <h4>Needs a working API key<span class="badge blocked">deployment</span></h4>
+    <p>Five providers are supported with automatic fallback between them. With no key configured
+       the panel says so rather than degrading into guesswork.</p>
+  </div>
+
+  <div class="lim">
+    <h4>It can only answer what the tools can read<span class="badge by-design">by design</span></h4>
+    <p>Questions are answered by calling functions over the extracted model. A question the tools
+       cannot reach gets "I cannot answer that from this model" rather than a plausible
+       fabrication.</p>
+  </div>
+
+  <h2><span class="num">7</span>Verification</h2>
+
+  <div class="lim">
+    <h4>1,234 tests pass; 44 are skipped<span class="badge blocked">environment</span></h4>
+    <p>43 of the 44 skip for one reason: <code>AdventureWorks_Sales.pbix</code> is not in the
+       repository. It was only ever an upload and was lost when a container was reset. The tests
+       that need it — 16 covering implicit measures, 7 covering hierarchies — are written and will
+       run the moment the file is present. The 44th needs an optional dependency for one
+       authentication mode.</p>
+  </div>
+
+  <div class="lim">
+    <h4>What is not covered by tests<span class="badge blocked">environment</span></h4>
+    <p>A live Snowflake handshake, and a real API key against a real model provider. Both are
+       blocked by the sandbox rather than unwritten.</p>
+  </div>
+
+  <h2><span class="num">8</span>Scope</h2>
+
+  <div class="lim">
+    <h4>Three kinds of input<span class="badge by-design">by design</span></h4>
+    <p><code>.pbix</code> files (both the legacy report format and the newer per-file one),
+       <code>.SemanticModel</code> TMDL folders, and SQL warehouses through their information
+       schema. A model behind a Power BI Service URL can be opened by link, but that path is built
+       and waiting for API credentials — there is no key configured for
+       <code>app.powerbi.com</code>.</p>
+  </div>
+</div>
+
+</body></html>

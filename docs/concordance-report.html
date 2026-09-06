@@ -1,0 +1,525 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Concordance Technical Report</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@400;600;700&display=swap">
+<style>
+:root {
+  --ink:      #14171a;
+  --ink-2:    #3d454b;
+  --ink-3:    #6c757c;
+  --paper:    #f6f7f7;
+  --card:     #ffffff;
+  --rule:     #dfe3e4;
+  --rule-2:   #c3c9cb;
+  --accent:   #0b5f57;
+  --accent-2: #e2eeec;
+  --warn:     #8a5a2b;
+  --warn-2:   #f4ebe1;
+  --shadow:   0 1px 2px rgb(20 23 26 / .05), 0 8px 24px -12px rgb(20 23 26 / .12);
+  --sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --serif: "IBM Plex Serif", Georgia, serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ink: #e7eaeb; --ink-2: #b1babd; --ink-3: #838e92;
+    --paper: #0f1213; --card: #171b1d; --rule: #262c2f; --rule-2: #394145;
+    --accent: #5cc4b4; --accent-2: #12302c; --warn: #d19f6b; --warn-2: #2c2318;
+    --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 8px 24px -12px rgb(0 0 0 / .6);
+  }
+}
+:root[data-theme="dark"] {
+  --ink: #e7eaeb; --ink-2: #b1babd; --ink-3: #838e92;
+  --paper: #0f1213; --card: #171b1d; --rule: #262c2f; --rule-2: #394145;
+  --accent: #5cc4b4; --accent-2: #12302c; --warn: #d19f6b; --warn-2: #2c2318;
+  --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 8px 24px -12px rgb(0 0 0 / .6);
+}
+
+body { background: var(--paper); color: var(--ink); font-family: var(--sans);
+       font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 1160px; margin: 0 auto; padding: 0 24px 96px;
+        display: grid; grid-template-columns: 200px minmax(0,1fr); gap: 48px; }
+@media (max-width: 900px) { .wrap { grid-template-columns: minmax(0,1fr); gap: 0; } }
+
+/* ---- masthead ---- */
+header { grid-column: 1 / -1; padding: 56px 0 40px; border-bottom: 1px solid var(--rule); }
+.bar { height: 4px; width: 84px; background: var(--accent); margin-bottom: 28px; }
+.eyebrow { font-size: 11.5px; letter-spacing: .16em; text-transform: uppercase;
+           color: var(--ink-3); font-weight: 500; }
+h1 { font-family: var(--serif); font-weight: 700; font-size: clamp(40px, 6.5vw, 68px);
+     line-height: 1.02; letter-spacing: -.025em; margin: 12px 0 0; text-wrap: balance; }
+.tagline { font-family: var(--serif); font-size: clamp(17px, 2.2vw, 21px); color: var(--ink-2);
+           max-width: 34em; margin: 18px 0 0; line-height: 1.5; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr));
+         gap: 1px; background: var(--rule); border: 1px solid var(--rule);
+         margin-top: 36px; }
+.fact { background: var(--paper); padding: 14px 16px; }
+.fact b { display: block; font-family: var(--mono); font-size: 22px; font-weight: 500;
+          color: var(--accent); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.fact span { font-size: 12px; color: var(--ink-3); }
+
+/* ---- contents rail ---- */
+nav { position: sticky; top: 24px; align-self: start; padding-top: 44px; font-size: 13.5px; }
+@media (max-width: 900px) { nav { display: none; } }
+nav p { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3);
+        font-weight: 600; margin: 0 0 12px; }
+nav a { display: block; color: var(--ink-2); text-decoration: none; padding: 5px 0 5px 12px;
+        border-left: 2px solid var(--rule); transition: color .15s, border-color .15s; }
+nav a:hover { color: var(--accent); border-left-color: var(--accent); }
+nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+main { padding-top: 44px; min-width: 0; }
+section { margin-bottom: 64px; scroll-margin-top: 24px; }
+h2 { font-family: var(--serif); font-size: 30px; font-weight: 600; letter-spacing: -.02em;
+     margin: 0 0 6px; display: flex; align-items: baseline; gap: 14px; text-wrap: balance; }
+h2 .n { font-family: var(--mono); font-size: 15px; color: var(--accent); font-weight: 500; }
+h3 { font-size: 17px; font-weight: 600; margin: 32px 0 8px; letter-spacing: -.01em; }
+.lede { color: var(--ink-2); font-size: 17px; max-width: 62ch; margin: 0 0 24px;
+        font-family: var(--serif); }
+p { max-width: 68ch; }
+code { font-family: var(--mono); font-size: .875em; background: var(--rule);
+       padding: 1px 5px; border-radius: 3px; }
+a { color: var(--accent); }
+
+/* ---- figure ---- */
+figure { margin: 0 0 28px; }
+.frame { background: var(--card); border: 1px solid var(--rule); border-radius: 6px;
+         padding: 24px; overflow-x: auto; box-shadow: var(--shadow); }
+figure svg { display: block; max-width: 100%; height: auto; min-width: 880px; color: var(--ink); }
+figcaption { font-size: 13.5px; color: var(--ink-3); margin-top: 12px; max-width: 68ch; }
+
+/* ---- stage list ---- */
+.stages { display: grid; gap: 1px; background: var(--rule); border: 1px solid var(--rule);
+          border-radius: 6px; overflow: hidden; }
+.stage { background: var(--card); padding: 16px 20px; display: grid;
+         grid-template-columns: 132px minmax(0,1fr); gap: 20px; align-items: baseline; }
+@media (max-width: 620px) { .stage { grid-template-columns: minmax(0,1fr); gap: 4px; } }
+.stage dt { font-family: var(--mono); font-size: 13px; color: var(--accent); font-weight: 500; }
+.stage dd { margin: 0; font-size: 15px; color: var(--ink-2); }
+.stage dd b { color: var(--ink); font-weight: 600; }
+
+/* ---- page cards ---- */
+.pages { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px,1fr)); gap: 16px; }
+.pg { background: var(--card); border: 1px solid var(--rule); border-radius: 6px;
+      padding: 18px 20px; box-shadow: var(--shadow); }
+.pg h4 { margin: 0; font-size: 16px; font-weight: 600; }
+.pg .role { font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+            color: var(--ink-3); font-weight: 600; margin-top: 3px; }
+.pg p { font-size: 14.5px; color: var(--ink-2); margin: 10px 0 0; max-width: none; }
+
+/* ---- limitations ---- */
+.lim { border-top: 1px solid var(--rule); padding: 18px 0; }
+.lim:first-of-type { border-top: 2px solid var(--rule-2); }
+.lim h4 { margin: 0 0 6px; font-size: 15.5px; font-weight: 600;
+          display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.tag { font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; font-weight: 600;
+       padding: 2px 7px; border-radius: 3px; white-space: nowrap; }
+.t-design { background: var(--accent-2); color: var(--accent); }
+.t-notyet { background: var(--warn-2); color: var(--warn); }
+.t-env    { background: var(--rule); color: var(--ink-3); }
+.lim p { font-size: 14.5px; color: var(--ink-2); margin: 0 0 6px; }
+.lim .why { font-size: 13.5px; color: var(--ink-3); }
+.lim .why b { color: var(--warn); font-weight: 600; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 14px 0 0; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--rule); }
+th { font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3);
+     font-weight: 600; border-bottom: 1px solid var(--rule-2); }
+th.n, td.n { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); }
+td b { color: var(--accent); font-weight: 500; }
+
+.callout { background: var(--card); border: 1px solid var(--rule); border-left: 3px solid var(--accent);
+           border-radius: 0 6px 6px 0; padding: 16px 20px; margin: 24px 0; }
+.callout p { margin: 0; font-size: 15px; }
+.callout b { color: var(--ink); }
+
+footer { grid-column: 1 / -1; border-top: 1px solid var(--rule); padding-top: 24px;
+         font-size: 13px; color: var(--ink-3); display: flex; flex-wrap: wrap; gap: 6px 24px; }
+
+@media print {
+  @page { size: A4; margin: 14mm; }
+  :root { --paper: #fff; --card: #fff; }
+  body { background: #fff; font-size: 10.5pt; }
+  .wrap { grid-template-columns: 1fr; gap: 0; max-width: none; padding: 0 0 8mm; }
+  nav { display: none; }
+  header { padding: 0 0 8mm; }
+  main { padding-top: 8mm; }
+  section { page-break-inside: avoid; margin-bottom: 10mm; }
+  #architecture, #limits { page-break-before: always; }
+  .frame { box-shadow: none; padding: 6mm; }
+  figure svg { min-width: 0; }
+  .pg, .callout, .stages { box-shadow: none; }
+  .lim, .pg, .stage { page-break-inside: avoid; }
+  h1 { font-size: 34pt; }
+  h2 { font-size: 19pt; }
+}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="bar"></div>
+  <div class="eyebrow">Novo Nordisk GBS Hackathon 2026 &middot; Problem Statement 21 &middot; Team MetaRadar</div>
+  <h1>Concordance</h1>
+  <p class="tagline">A Power&nbsp;BI semantic model states thousands of facts about itself.
+     This reads them, writes the requirements documents from them, and translates each
+     measure into SQL &mdash; or explains precisely why it cannot.</p>
+  <div class="facts">
+    <div class="fact"><b>1,234</b><span>tests passing, 64 files</span></div>
+    <div class="fact"><b>3</b><span>input formats read</span></div>
+    <div class="fact"><b>5</b><span>SQL dialects emitted</span></div>
+    <div class="fact"><b>22</b><span>DAX functions refused, with reasons</span></div>
+    <div class="fact"><b>54k</b><span>lines across app, UI and tests</span></div>
+  </div>
+</header>
+
+<nav aria-label="Contents">
+  <p>Contents</p>
+  <a href="#thesis">The idea</a>
+  <a href="#architecture">Architecture</a>
+  <a href="#pipeline">The pipeline</a>
+  <a href="#surfaces">What you can open</a>
+  <a href="#refusals">Principled refusals</a>
+  <a href="#limits">Limitations</a>
+  <a href="#verification">Verification</a>
+</nav>
+
+<main>
+
+<section id="thesis">
+  <h2><span class="n">01</span>The idea</h2>
+  <p class="lede">A measure has no value until a filter context is named.</p>
+  <p>That single sentence is the whole design. Power BI's <code>Net Sales</code> is not a number;
+     it is a calculation waiting to be told which rows it applies to. Ask it over a whole file and
+     you get 1.2M. Ask it on a page pinned to June and you get 387K. Both are correct answers to
+     different questions, and a tool that shows one without naming the question is not
+     documenting the model &mdash; it is misreporting it.</p>
+  <p>So every figure here travels with the query that produced it and the filter it was computed
+     under. Where a measure has no single answer, no number is invented; the reason is given in
+     terms of the report, because that is the thing the reader has actually seen.</p>
+  <div class="callout">
+    <p><b>The same rule applied to reading.</b> A model declares far more about itself than a
+       schema dump shows &mdash; how each measure should be rendered, which column orders another,
+       which table is the calendar, which column holds a latitude. Every one of those was being
+       inferred or guessed at some point in this project's history, and every one is now read from
+       the file. What is still not read is listed in &sect;06 with the reason attached.</p>
+  </div>
+</section>
+
+<section id="architecture">
+  <h2><span class="n">02</span>Architecture</h2>
+  <p class="lede">Three kinds of source collapse into one shape, and everything downstream is
+     written once.</p>
+
+  <figure>
+    <div class="frame">
+      <svg viewBox="0 0 1000 420" role="img" aria-label="Three source formats are read by format-specific adapters into a single SemanticModel. A dependency graph and the file's own rows, loaded into DuckDB, feed five generators, which surface through a web interface and a command line.">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+          <marker id="ara" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#0b5f57"/>
+          </marker>
+        </defs>
+        <style>
+          .bx  { fill: none; stroke: currentColor; stroke-width: 1.2; rx: 4; opacity: .85; }
+          .bxa { fill: none; stroke: #0b5f57; stroke-width: 1.8; rx: 4; }
+          .lb  { font-family: "IBM Plex Sans", sans-serif; font-size: 12.5px; fill: currentColor; font-weight: 600; }
+          .sm  { font-family: "IBM Plex Mono", monospace; font-size: 10px; fill: currentColor; opacity: .58; }
+          .ed  { stroke: currentColor; stroke-width: 1.1; fill: none; opacity: .48; }
+          .eda { stroke: #0b5f57; stroke-width: 1.5; fill: none; }
+          .cap { font-family: "IBM Plex Mono", monospace; font-size: 10px; fill: #0b5f57; }
+          .bnd { font-family: "IBM Plex Mono", monospace; font-size: 9.5px; fill: currentColor; opacity: .45; letter-spacing: .14em; }
+        </style>
+
+        <text class="bnd" x="30"  y="18">SOURCES</text>
+        <text class="bnd" x="250" y="18">ADAPTERS</text>
+        <text class="bnd" x="424" y="18">ONE SHAPE</text>
+        <text class="bnd" x="676" y="18">GENERATORS</text>
+        <text class="bnd" x="896" y="18">SURFACES</text>
+
+        <!-- sources -->
+        <rect class="bx" x="30" y="44" width="172" height="42"/>
+        <text class="lb" x="42" y="64">.pbix file</text>
+        <text class="sm" x="42" y="78">model + report layer</text>
+
+        <rect class="bx" x="30" y="100" width="172" height="42"/>
+        <text class="lb" x="42" y="120">.SemanticModel</text>
+        <text class="sm" x="42" y="134">TMDL, no rows</text>
+
+        <rect class="bx" x="30" y="156" width="172" height="42"/>
+        <text class="lb" x="42" y="176">SQL warehouse</text>
+        <text class="sm" x="42" y="190">information_schema</text>
+
+        <!-- adapters -->
+        <rect class="bx" x="250" y="80" width="126" height="82"/>
+        <text class="lb" x="262" y="102">Adapters</text>
+        <text class="sm" x="262" y="120">pbix · tmdl · sql</text>
+        <text class="sm" x="262" y="136">read every fact</text>
+        <text class="sm" x="262" y="150">the file states</text>
+
+        <path class="ed" d="M202,64  C226,64 228,106 248,114" marker-end="url(#ar)"/>
+        <path class="ed" d="M202,121 L246,121" marker-end="url(#ar)"/>
+        <path class="ed" d="M202,177 C226,177 228,136 248,128" marker-end="url(#ar)"/>
+
+        <!-- one shape -->
+        <rect class="bxa" x="424" y="68" width="200" height="56"/>
+        <text class="lb" x="436" y="89" fill="#0b5f57">SemanticModel</text>
+        <text class="sm" x="436" y="104">tables · columns · measures</text>
+        <text class="sm" x="436" y="117">relationships · filters</text>
+        <path class="eda" d="M376,118 L422,100" marker-end="url(#ara)"/>
+
+        <rect class="bx" x="424" y="146" width="200" height="42"/>
+        <text class="lb" x="436" y="166">Dependency graph</text>
+        <text class="sm" x="436" y="180">what a change breaks</text>
+        <path class="ed" d="M524,124 L524,144" marker-end="url(#ar)"/>
+
+        <rect class="bx" x="424" y="210" width="200" height="42"/>
+        <text class="lb" x="436" y="230">DuckDB</text>
+        <text class="sm" x="436" y="244">the file&#39;s own rows</text>
+
+        <!-- rows edge, in its own lane down the left -->
+        <path class="ed" d="M40,86 C10,150 6,286 300,286 L424,258" marker-end="url(#ar)"/>
+        <text class="cap" x="120" y="304">rows lifted straight out of the .pbix</text>
+
+        <!-- generators -->
+        <rect class="bx"  x="676" y="44"  width="196" height="32"/>
+        <text class="lb" x="688" y="64">Requirements → BRD / FRD</text>
+        <rect class="bxa" x="676" y="88"  width="196" height="32"/>
+        <text class="lb" x="688" y="108" fill="#0b5f57">DAX → SQL translator</text>
+        <rect class="bx"  x="676" y="132" width="196" height="32"/>
+        <text class="lb" x="688" y="152">Dashboard + breakdowns</text>
+        <rect class="bx"  x="676" y="176" width="196" height="32"/>
+        <text class="lb" x="688" y="196">Drift between versions</text>
+        <rect class="bx"  x="676" y="220" width="196" height="32"/>
+        <text class="lb" x="688" y="240">Warehouse comparison</text>
+
+        <path class="ed"  d="M624,88  C648,86 652,62 674,60"  marker-end="url(#ar)"/>
+        <path class="eda" d="M624,100 L674,103" marker-end="url(#ara)"/>
+        <path class="ed"  d="M624,166 C648,164 652,150 674,148" marker-end="url(#ar)"/>
+        <path class="ed"  d="M624,174 C648,180 652,190 674,192" marker-end="url(#ar)"/>
+        <path class="eda" d="M624,232 C648,234 652,236 674,236" marker-end="url(#ara)"/>
+        <text class="cap" x="628" y="272">every figure, with the</text>
+        <text class="cap" x="628" y="286">query that produced it</text>
+
+        <!-- surfaces -->
+        <rect class="bx" x="896" y="86" width="98" height="42"/>
+        <text class="lb" x="908" y="106">Web UI</text>
+        <text class="sm" x="908" y="120">8 pages + chat</text>
+        <rect class="bx" x="896" y="158" width="98" height="42"/>
+        <text class="lb" x="908" y="178">CLI</text>
+        <text class="sm" x="908" y="192">10 commands</text>
+        <path class="ed" d="M872,104 L894,106" marker-end="url(#ar)"/>
+        <path class="ed" d="M872,192 C882,190 886,184 894,181" marker-end="url(#ar)"/>
+
+        <line class="ed" x1="30" y1="344" x2="994" y2="344" opacity=".25"/>
+        <text class="sm" x="30" y="368">A file has one adapter. Everything to the right of SemanticModel is written once and works over all</text>
+        <text class="sm" x="30" y="384">three sources — which is why a warehouse view gets a BRD by the same path a .pbix does.</text>
+      </svg>
+    </div>
+    <figcaption><b>Figure 1.</b> The single normalisation point is the whole architecture. Adapters
+      absorb format differences; nothing downstream knows or cares which file it came from. The
+      teal path carries the discipline: the file&rsquo;s own rows go into DuckDB, and every figure
+      comes back out with the query that produced it.</figcaption>
+  </figure>
+</section>
+
+<section id="pipeline">
+  <h2><span class="n">03</span>The pipeline</h2>
+  <p class="lede">What happens between opening a file and reading a document.</p>
+  <dl class="stages">
+    <div class="stage"><dt>read</dt><dd>The adapter pulls <b>every declaration the file makes</b> —
+      not just tables and formulas, but format strings, sort-by columns, data categories, hidden
+      flags, descriptions, storage mode, and the report's own filters at report, page and tile
+      scope.</dd></div>
+    <div class="stage"><dt>normalise</dt><dd>All of it lands in one <code>SemanticModel</code>.
+      Each object is <b>fingerprinted</b> over the thing that defines it, so an edit to a formula
+      changes its identity and an edit to whitespace does not.</dd></div>
+    <div class="stage"><dt>relate</dt><dd>A dependency graph is built across measures, columns,
+      tables and drill paths — the basis for <b>impact analysis</b> and for pointing at the
+      requirements a change puts in question.</dd></div>
+    <div class="stage"><dt>compute</dt><dd>The file's own rows are loaded into an in-memory DuckDB.
+      Every figure shown anywhere is <b>produced by running a query</b>, never copied from the
+      report.</dd></div>
+    <div class="stage"><dt>translate</dt><dd>Each measure's DAX is lexed into an AST and rendered
+      as SQL at a stated grain — or <b>refused with a reason</b>. Five dialects.</dd></div>
+    <div class="stage"><dt>derive</dt><dd>Requirements are generated, each <b>bound by fingerprint</b>
+      to the object it came from and marked with whether the model states it or the tool inferred
+      it.</dd></div>
+    <div class="stage"><dt>surface</dt><dd>Eight web pages, a chatbot with tools over the model,
+      and ten CLI commands — all reading the same structure.</dd></div>
+  </dl>
+</section>
+
+<section id="surfaces">
+  <h2><span class="n">04</span>What you can open</h2>
+  <p class="lede">Eight pages, each answering a different question. Fuller descriptions in the
+     accompanying guide.</p>
+  <div class="pages">
+    <div class="pg"><h4>Overview</h4><div class="role">The front door</div>
+      <p>What this file holds, and what could not be read from it. Points a reviewer and a
+         maintainer at different tabs.</p></div>
+    <div class="pg"><h4>Dashboard</h4><div class="role">The report, explained</div>
+      <p>The report's tiles with the DAX and SQL behind each. Figures computed live, with charts,
+         cross-filtering and a real map.</p></div>
+    <div class="pg"><h4>Dataset + SQL</h4><div class="role">Everything at once</div>
+      <p>Every measure, its DAX, and the equivalent SQL at a grain you choose. Joins included.</p></div>
+    <div class="pg"><h4>BRD &amp; FRD</h4><div class="role">The documents</div>
+      <p>Generated requirements, each bound to its evidence and marked with how it was arrived
+         at. Word or Markdown.</p></div>
+    <div class="pg"><h4>Browse objects</h4><div class="role">The model itself</div>
+      <p>Tables, columns, measures and hierarchies as a tree, with impact analysis on any
+         object.</p></div>
+    <div class="pg"><h4>Drift</h4><div class="role">What changed</div>
+      <p>Two versions compared, and the requirements a change puts in question.</p></div>
+    <div class="pg"><h4>Warehouse</h4><div class="role">Does the database agree?</div>
+      <p>A Power BI measure against a warehouse view, structurally compared. Three verdicts.</p></div>
+    <div class="pg"><h4>To confirm</h4><div class="role">The queue</div>
+      <p>Everything inferred rather than read, waiting on a person's decision.</p></div>
+  </div>
+</section>
+
+<section id="refusals">
+  <h2><span class="n">05</span>Principled refusals</h2>
+  <p class="lede">The most important thing this tool does is decline to answer.</p>
+  <p>Twenty-two DAX functions stop a translation. A measure using <code>ALL</code>,
+     <code>ISINSCOPE</code>, <code>SELECTEDVALUE</code>, <code>RANKX</code>,
+     <code>TOTALYTD</code> or their relatives has no fixed answer &mdash; its result changes with
+     what the user has clicked or which period the report is showing. Emitting a query anyway
+     would produce a number that looks authoritative and is wrong.</p>
+  <table>
+    <thead><tr><th>Sample model</th><th class="n">Measures</th><th class="n">Computed</th><th>Why the rest are refused</th></tr></thead>
+    <tbody>
+      <tr><td>Sales &amp; Returns</td><td class="n">58</td><td class="n">6</td><td>17 use <code>ALL</code>; 12 are per-period only; 7 use <code>ISINSCOPE</code></td></tr>
+      <tr><td>Store Sales</td><td class="n">32</td><td class="n"><b>29</b></td><td>one <code>ALL</code>; one constant; one ambiguous column name</td></tr>
+      <tr><td>Supply Chain</td><td class="n">4</td><td class="n"><b>4</b></td><td>&mdash;</td></tr>
+    </tbody>
+  </table>
+  <p style="margin-top:14px">6 of 58 reads as a failure and is not. Microsoft's Sales &amp; Returns
+     is a demonstration of interactive DAX, built almost entirely from those functions. A model
+     written for reporting rather than for demonstration behaves like Store Sales.</p>
+  <p>Eight time-shift patterns that <em>are</em> unambiguous &mdash; previous month, previous
+     quarter and their kin &mdash; were originally refused too. A reviewer called that out as
+     over-cautious and was right: such a measure names its own grain, so it is translated at that
+     grain and nowhere else.</p>
+</section>
+
+<section id="limits">
+  <h2><span class="n">06</span>Limitations</h2>
+  <p class="lede">Everything this tool does not do, labelled by kind. A deliberate refusal is not
+     the same as an unbuilt feature, and neither is the same as a blocked environment.</p>
+
+  <div class="lim">
+    <h4>Figures are a snapshot <span class="tag t-design">by design</span></h4>
+    <p>Every number comes from the rows stored inside the file. That is what makes it checkable;
+       it is also as old as the file. A <code>.SemanticModel</code> folder carries no rows at all,
+       so it produces documents and browsing but no figures. A DirectQuery table has no rows in
+       the file either &mdash; those tables are reported by name.</p>
+  </div>
+
+  <div class="lim">
+    <h4>Three kinds of number format are not applied <span class="tag t-design">by design</span></h4>
+    <p>Date pictures, the trailing comma that divides by a thousand, conditional formats beyond
+       three sections, and formats that hide negatives. Nine of the twelve distinct formats across
+       the sample files render; the three declined are all date pictures.</p>
+    <p class="why"><b>Why:</b> a half-applied format changes the number, not its appearance. Where
+       one is declined the raw figure is shown &mdash; always true, even when it is not what Power
+       BI would draw.</p>
+  </div>
+
+  <div class="lim">
+    <h4>Translated object names are counted, not attached <span class="tag t-notyet">not built</span></h4>
+    <p>Each translated name is keyed by a bare integer whose meaning depends on the object type,
+       and the reader publishes no mapping for that enum.</p>
+    <p class="why"><b>Why not guessed:</b> calling one measure by another's French name is worse
+       than saying the translations were not read.</p>
+  </div>
+
+  <div class="lim">
+    <h4>Some row-level security detail is invisible to the reader <span class="tag t-env">reader limit</span></h4>
+    <p>Table filters inside a role are read in full, but a role that filters no table produces no
+       row in the source, and model-level permissions are never exposed. Stated wherever security
+       is reported.</p>
+  </div>
+
+  <div class="lim">
+    <h4>Q&amp;A synonyms are read and deliberately unused <span class="tag t-design">by design</span></h4>
+    <p>This looked like the best remaining source for a business glossary. Reading them settled
+       it: across the three sample files all 565 terms are machine-generated &mdash; the object's
+       own name respaced, or a thesaurus suggestion. Power BI proposes &ldquo;artifact
+       advertised&rdquo; for <code>Product Advertised</code>.</p>
+    <p class="why"><b>Why:</b> a glossary where a reader cannot tell which entries a person stood
+       behind is worse than no glossary. The count is reported with the reasoning attached.</p>
+  </div>
+
+  <div class="lim">
+    <h4>Layout, theming and drill-through bindings are not read <span class="tag t-design">by design</span></h4>
+    <p>Tile positions, sizes, colours, fonts and mobile layouts are outside scope &mdash; this
+       documents what a report says, not how it is arranged.</p>
+    <p class="why"><b>The genuine gap:</b> drill-through page bindings. A page reached by drilling
+       through always shows its figures under a filter passed in from another page, and that is a
+       filter context this does not yet name. It is the clearest next thing to build.</p>
+  </div>
+
+  <div class="lim">
+    <h4>Snowflake and Databricks are not verified live <span class="tag t-env">environment</span></h4>
+    <p>The SQL path runs end to end against DuckDB, whose information schema follows the same
+       standard both implement, and the Snowflake connector is unit-tested against a fake cursor
+       &mdash; proving the query text, case handling and wiring.</p>
+    <p class="why"><b>What that cannot prove:</b> a real handshake. This sandbox blocks outbound
+       connections to <code>*.snowflakecomputing.com</code> at the network policy layer, confirmed
+       against a real trial account rather than assumed.</p>
+  </div>
+
+  <div class="lim">
+    <h4>Warehouse comparison is structural, not semantic <span class="tag t-design">by design</span></h4>
+    <p>DAX and SQL never hash alike even when they compute the same number, so what is compared is
+       what each definition reads. Proving two arbitrary expressions equivalent is undecidable in
+       general &mdash; which is why &ldquo;needs review&rdquo; is a real verdict rather than
+       hedging.</p>
+  </div>
+
+  <div class="lim">
+    <h4>Charts have fixed bounds <span class="tag t-design">by design</span></h4>
+    <p>At most 10 slices with the remainder folded into a labelled &ldquo;N more&rdquo;; a column
+       is offered as a dimension only at 2&ndash;30 distinct values; 120 points on a time series,
+       40 on a sparkline. The map needs coordinates declared in the file &mdash; a postcode is not
+       geocoded, because a map drawn from a guess puts a location somewhere it is not.</p>
+  </div>
+
+  <div class="lim">
+    <h4>The chatbot needs a key <span class="tag t-env">deployment</span></h4>
+    <p>Five providers with automatic fallback. With none configured the panel says so rather than
+       degrading into guesswork, and it answers only from tools that read the extracted model.</p>
+  </div>
+
+  <div class="lim">
+    <h4>Power BI Service links await credentials <span class="tag t-env">deployment</span></h4>
+    <p>Opening a model from a direct URL works, with full protection against requests being
+       redirected at internal addresses. The <code>app.powerbi.com</code> path is built and
+       waiting for an API key.</p>
+  </div>
+</section>
+
+<section id="verification">
+  <h2><span class="n">07</span>Verification</h2>
+  <p class="lede">What is proven, and what is merely written.</p>
+  <p><b>1,234 tests pass across 64 files.</b> Guards are mutation-tested: the guard is broken
+     deliberately and the test confirmed to go red, because a test that passes either way proves
+     nothing. Two source audits run as tests &mdash; enumerating everything the file formats offer
+     against everything the readers name &mdash; so a source that starts carrying data, or one a
+     reader quietly stops reading, fails the build.</p>
+  <p><b>44 tests are skipped</b>, and 43 of them for one reason: <code>AdventureWorks_Sales.pbix</code>
+     is not in the repository. It was only ever an upload and was lost when a container reset. The
+     tests are written and run the moment the file is present. The 44th needs an optional
+     dependency for one authentication mode.</p>
+  <p><b>Two things are untested rather than unwritten:</b> a live Snowflake handshake and a real
+     model-provider key, both blocked by the sandbox rather than by the design.</p>
+</section>
+
+</main>
+
+<footer>
+  <span>Concordance &middot; Team MetaRadar, Amity University</span>
+  <span>Novo Nordisk GBS Hackathon 2026, Problem Statement 21</span>
+</footer>
+</div>
+</body></html>
